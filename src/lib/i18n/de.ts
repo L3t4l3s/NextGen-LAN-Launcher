@@ -304,7 +304,7 @@ export const de: Messages = {
   "problem.transport.no_server.step.wait": "Bereits gestartete Downloads laufen automatisch an, sobald der Server da ist.",
   "problem.catalog.key_missing.title": "Key für den Katalog-Ordner fehlt",
   "problem.catalog.key_missing.cause":
-    "In diesem Build ist kein Key für eti_launcher hinterlegt. Ohne ihn kommen weder Spieleliste noch Cover an.",
+    "Es ist kein gültiger Key für eti_launcher hinterlegt – weder eingebaut noch in den Einstellungen. Ohne ihn kommen weder Spieleliste noch Cover an.",
   "problem.catalog.key_missing.step.settings": "Einstellungen → Erweitert → Key des Katalog-Ordners eintragen (von der Orga).",
   "problem.transport.folder_mode.title": "Ordner-Modus aktiv",
   "problem.transport.folder_mode.cause": "Du bedienst Resilio Sync selbst. Der Launcher zeigt dir die Keys zum Einfügen.",

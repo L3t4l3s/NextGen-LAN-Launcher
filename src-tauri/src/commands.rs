@@ -31,9 +31,9 @@ pub struct BootstrapInfo {
     pub transport_mode: TransportMode,
     pub transport_error: Option<String>,
     pub needs_setup: bool,
-    /// The built-in key for the catalog share (`eti_launcher`) is valid (not
-    /// the placeholder). Together with a non-empty `settings.catalogKey` the
-    /// frontend derives whether the launcher can detect the sync server.
+    /// The built-in key for the catalog share (`eti_launcher`) parses (a fork
+    /// may ship without one). Together with a non-empty `settings.catalogKey`
+    /// the frontend derives whether the launcher can detect the sync server.
     pub builtin_catalog_key: bool,
     pub dirs: DirsInfo,
 }

@@ -186,7 +186,7 @@ export interface BootstrapInfo {
   transportMode: TransportMode;
   transportError: string | null;
   needsSetup: boolean;
-  /** The built-in catalog share key is valid (not the placeholder). */
+  /** The built-in catalog share key parses; a fork may ship without one. */
   builtinCatalogKey: boolean;
   dirs: { config: string; data: string; cache: string; logs: string };
 }

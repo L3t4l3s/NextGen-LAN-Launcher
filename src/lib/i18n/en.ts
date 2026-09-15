@@ -301,7 +301,7 @@ export const en: Messages = {
   "problem.transport.no_server.step.wait": "Downloads you already started continue automatically once the server is there.",
   "problem.catalog.key_missing.title": "Catalog share key missing",
   "problem.catalog.key_missing.cause":
-    "This build has no key for eti_launcher. Without it neither the game list nor covers arrive.",
+    "No valid key for eti_launcher is available – neither built in nor in the settings. Without it neither the game list nor covers arrive.",
   "problem.catalog.key_missing.step.settings": "Settings → Advanced → enter the catalog share key (from the organisers).",
   "problem.transport.folder_mode.title": "Folder mode active",
   "problem.transport.folder_mode.cause": "You operate Resilio Sync yourself. The launcher shows you the keys to paste.",

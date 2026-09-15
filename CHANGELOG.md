@@ -5,10 +5,12 @@
 - Statusleiste und LAN-Ansicht zeigen, ob ein Sync-Server gefunden wurde (mindestens ein Peer
   am Katalog-Ordner `eti_launcher`). „Alle Spiele“ zeigt weiterhin den kompletten Katalog.
 - Der Launcher fügt den Katalog-Ordner `eti_launcher` im verwalteten Modus selbst zu Resilio hinzu.
-  Der Read-only-Key ist fest hinterlegt (`BUILTIN_CATALOG_KEY`, noch ein Platzhalter) und kann in
-  den Einstellungen überschrieben werden. Eine geänderte `game.db` wird automatisch nachgeladen.
+  Der Read-only-Key ist fest hinterlegt (`BUILTIN_CATALOG_KEY`, der öffentliche ETI-Key aus
+  `sync_server.tar`) und kann in den Einstellungen überschrieben werden. Eine geänderte `game.db`
+  wird automatisch nachgeladen.
 - „Installieren“ ohne Sync-Server reiht den Download ein und zeigt einen Hinweis statt
-  „Download gestartet“. Diagnose meldet `transport.no_server` und `catalog.key_missing`.
+  „Download gestartet“. Diagnose meldet `transport.no_server`; `catalog.key_missing` bleibt als
+  Absicherung für Builds ohne gültigen Key.
 - Netzwerk-Check: getrennte oder ungenutzte Adapter („Kein Internet“, kein Verkehr) werden nicht
   mehr als Fehler gemeldet. Ein öffentlicher Zweitadapter neben einem privaten/Domänen-Adapter
   ergibt nur noch eine Warnung.

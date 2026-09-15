@@ -56,10 +56,12 @@ impl ShareKey {
 }
 
 /// Read-only key of the ETI catalog share (`eti_launcher`), built into the
-/// launcher like the original ETI client does. PLACEHOLDER: replace with the
-/// real key. The underscores make it fail `READ_ONLY_KEY_RE` on purpose, so
-/// until then the launcher treats the catalog share as "not configured".
-pub const BUILTIN_CATALOG_KEY: &str = "B_PLACEHOLDER_REPLACE_WITH_ETI_LAUNCHER_KEY_";
+/// launcher like the original ETI client does. Source: the public
+/// `sync_server.tar` from eti-lan.xyz (`/root/eti-config.conf`, variable
+/// `eti_call`, used by `/etc/init.d/eti` to add `/lan/eti_launcher`). The key
+/// is identical for every ETI client and distributed openly; a LAN with its
+/// own catalog overrides it via `settings.catalogKey`.
+pub const BUILTIN_CATALOG_KEY: &str = "BICDWADB4KCVNR6FCAGYTHEKZBYVUGTZX";
 
 /// Effective catalog key: a valid settings override wins, otherwise the
 /// built-in key. `None` when neither parses. An invalid override is logged and
@@ -519,6 +521,10 @@ mod tests {
             Some(valid.to_string())
         );
         let builtin = ShareKey::parse(BUILTIN_CATALOG_KEY);
+        assert!(
+            builtin.is_some(),
+            "built-in catalog key must be a valid read-only key"
+        );
         assert_eq!(catalog_share_key(None), builtin);
         assert_eq!(catalog_share_key(Some("   ")), builtin);
         assert_eq!(catalog_share_key(Some("garbage")), builtin);
