@@ -1,4 +1,50 @@
 fn main() {
+    // Short commit id so installers of the same version can be told apart in
+    // the status bar and the log (CI sets GITHUB_SHA; local builds ask git).
+    let build_id = std::env::var("GITHUB_SHA")
+        .ok()
+        .filter(|s| s.len() >= 7)
+        .map(|s| s[..7].to_string())
+        .or_else(|| {
+            std::process::Command::new("git")
+                .args(["rev-parse", "--short=7", "HEAD"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "dev".to_string());
+    println!("cargo:rustc-env=NLL_BUILD_ID={build_id}");
+    println!("cargo:rerun-if-env-changed=GITHUB_SHA");
+    // Re-run when the commit changes: HEAD itself plus the branch ref it points
+    // to (HEAD only holds "ref: refs/heads/x" on a branch). Only existing
+    // files are registered, otherwise Cargo would rebuild every time.
+    let git_path = |what: &str| -> Option<String> {
+        std::process::Command::new("git")
+            .args(["rev-parse", "--git-path", what])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|p| std::path::Path::new(p).is_file())
+    };
+    let head_ref = std::process::Command::new("git")
+        .args(["symbolic-ref", "-q", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    for what in ["HEAD", "packed-refs"]
+        .into_iter()
+        .map(str::to_string)
+        .chain(head_ref)
+    {
+        if let Some(path) = git_path(&what) {
+            println!("cargo:rerun-if-changed={path}");
+        }
+    }
+
     let mut attrs = tauri_build::Attributes::new();
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         // The ETI game scripts call `netsh advfirewall` and write to HKLM, so the

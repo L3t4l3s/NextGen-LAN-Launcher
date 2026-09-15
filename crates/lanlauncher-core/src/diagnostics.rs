@@ -349,17 +349,12 @@ pub fn check_clock(server_time: Option<chrono::DateTime<chrono::Utc>>) -> Vec<Pr
 
 /// Orphaned sync engine processes not started by this launcher instance.
 pub fn check_orphans(our_pid: Option<u32>) -> Vec<Problem> {
-    let names = crate::transport::resilio::process_names();
-    let mut sys = sysinfo::System::new();
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    let sys = crate::transport::resilio::scan_processes();
     let strangers: Vec<String> = sys
         .processes()
         .iter()
         .filter(|(pid, p)| {
-            Some(pid.as_u32()) != our_pid
-                && names
-                    .iter()
-                    .any(|n| p.name().to_string_lossy().eq_ignore_ascii_case(n))
+            Some(pid.as_u32()) != our_pid && crate::transport::resilio::is_sync_engine(p.name())
         })
         .map(|(pid, p)| format!("{} ({})", p.name().to_string_lossy(), pid.as_u32()))
         .collect();

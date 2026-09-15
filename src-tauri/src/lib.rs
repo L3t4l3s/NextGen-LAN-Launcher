@@ -27,6 +27,12 @@ pub const EVENT_UPDATED: &str = "event-updated";
 /// Emitted with the new game count after `game.db` changed on disk.
 pub const CATALOG_EVENT: &str = "catalog-updated";
 
+/// `<semver> (<commit>)`, shown in the status bar and the first log line so
+/// installers of the same version can be told apart.
+pub(crate) fn app_version() -> String {
+    format!("{} ({})", env!("CARGO_PKG_VERSION"), env!("NLL_BUILD_ID"))
+}
+
 fn is_demo() -> bool {
     std::env::args().any(|a| a == "--demo")
         || std::env::var("LANLAUNCHER_DEMO")
@@ -367,7 +373,14 @@ pub fn run() {
                 config: app.path().app_config_dir()?,
                 data: app.path().app_data_dir()?,
                 cache: app.path().app_cache_dir()?,
+                // Same directory the log plugin's `LogDir` target uses.
+                logs: app.path().app_log_dir()?,
             };
+            log::info!(
+                "NextGen LAN Launcher {} starting; log dir {}",
+                app_version(),
+                dirs.logs.display()
+            );
             for d in [&dirs.config, &dirs.data, &dirs.cache] {
                 let _ = std::fs::create_dir_all(d);
             }
@@ -557,22 +570,34 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
             return;
         }
         let mut last = signature(st.default_root_path().await);
+        // Whether any load has succeeded yet (the startup load counts when it
+        // produced games). Until then an unchanged game.db is retried, because
+        // the file may have been locked or half-synced at start.
+        let mut ever_loaded = match st.manager.read().await.as_ref() {
+            Some(m) => m.catalog_len().await > 0,
+            None => false,
+        };
         loop {
             tokio::time::sleep(Duration::from_secs(10)).await;
             let now = signature(st.default_root_path().await);
             // A vanished game.db keeps the old catalog. A changed one is
             // loaded once; if it is half-written and fails quick_check, the
-            // next size/mtime change retries. Covers are only re-extracted
-            // when assets.eti itself changed.
-            if now.0.is_some() && now != last {
-                let assets_changed = now.1 != last.1;
+            // next size/mtime change retries. Covers are re-extracted when
+            // assets.eti changed or nothing was ever loaded.
+            let changed = now != last;
+            if now.0.is_some() && (changed || !ever_loaded) {
+                let assets_changed = now.1 != last.1 || !ever_loaded;
                 last = now;
                 match reload_catalog(&st, assets_changed).await {
                     Some(n) => {
+                        ever_loaded = true;
                         log::info!("catalog reloaded: {n} games");
                         let _ = app5.emit(CATALOG_EVENT, n);
                     }
-                    None => log::warn!("catalog changed on disk but could not be loaded yet"),
+                    None if changed => {
+                        log::warn!("catalog changed on disk but could not be loaded yet")
+                    }
+                    None => log::debug!("catalog still not loadable; retrying"),
                 }
             }
         }

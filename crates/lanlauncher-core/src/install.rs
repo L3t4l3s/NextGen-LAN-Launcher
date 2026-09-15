@@ -719,6 +719,10 @@ impl InstallManager {
         self.catalog.read().await.clone()
     }
 
+    pub async fn catalog_len(&self) -> usize {
+        self.catalog.read().await.games.len()
+    }
+
     async fn game(&self, id: &str) -> Result<Game> {
         self.catalog
             .read()

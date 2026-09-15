@@ -250,9 +250,17 @@ pub fn extract_atomically(
         .parent()
         .ok_or_else(|| Error::Archive("destination has no parent".into()))?;
     let staging = parent.join(".nll-staging");
-    let old = parent.join(".nll-old");
     let _ = std::fs::remove_dir_all(&staging);
-    let _ = std::fs::remove_dir_all(&old);
+    // Leftovers of earlier swaps (a locked file kept `.nll-old*` alive) are
+    // removed best-effort; the rename below never targets an existing name,
+    // which on Windows fails with ERROR_ALREADY_EXISTS (183).
+    if let Ok(rd) = std::fs::read_dir(parent) {
+        for e in rd.flatten() {
+            if e.file_name().to_string_lossy().starts_with(".nll-old") {
+                let _ = std::fs::remove_dir_all(e.path());
+            }
+        }
+    }
     let files = match extract(archive, &staging, cancel, progress) {
         Ok(n) => n,
         Err(e) => {
@@ -260,6 +268,14 @@ pub fn extract_atomically(
             return Err(e);
         }
     };
+    let mut old = parent.join(".nll-old");
+    if old.exists() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        old = parent.join(format!(".nll-old-{stamp}"));
+    }
     if final_dir.exists() {
         std::fs::rename(final_dir, &old).map_err(|e| Error::io(final_dir, e))?;
     }
@@ -345,6 +361,28 @@ mod tests {
             &local
         )
         .is_err());
+    }
+
+    #[test]
+    fn leftover_old_dir_does_not_block_the_swap() {
+        let tmp = tempfile::tempdir().unwrap();
+        let local = tmp.path().join("local");
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::write(local.join("stale.txt"), "old").unwrap();
+        // A previous swap left `.nll-old` behind (e.g. a locked file on Windows).
+        let leftover = tmp.path().join(".nll-old");
+        std::fs::create_dir_all(leftover.join("sub")).unwrap();
+        std::fs::write(leftover.join("sub").join("x"), "x").unwrap();
+        let n = extract_atomically(&fixture("sample_game.rar"), &local, None, None).unwrap();
+        assert_eq!(n, 3);
+        assert!(local.join("game.exe").is_file());
+        assert!(!local.join("stale.txt").exists());
+        let leftovers: Vec<_> = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".nll-old"))
+            .collect();
+        assert!(leftovers.is_empty(), "old dirs must be cleaned up");
     }
 
     #[test]

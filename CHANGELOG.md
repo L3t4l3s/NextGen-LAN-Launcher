@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Resilio-Suche prüft auch `%APPDATA%\Resilio Sync` (Standard des Resilio-Installers) und den
+  Pfad laufender Sync-Prozesse. Statusleiste und Log nennen Version plus Commit; „Log-Ordner
+  öffnen“ zeigt auf den tatsächlichen Log-Ordner. Ein beim Start nicht ladbarer Katalog wird
+  automatisch erneut versucht.
 - Vorhandene Installationen des ETI-Launchers werden übernommen statt bei jedem Start neu
   geprüft, entpackt und eingerichtet (Spielstände in `local/` bleiben erhalten). „Reparieren“
   erzwingt weiterhin die volle Prüfung.

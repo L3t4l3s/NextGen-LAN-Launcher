@@ -565,19 +565,14 @@ impl ResilioTransport {
         let pid_from_file: Option<u32> = std::fs::read_to_string(&pid_file)
             .ok()
             .and_then(|s| s.trim().parse().ok());
-        let mut sys = sysinfo::System::new();
-        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        let sys = scan_processes();
         for (pid, proc_) in sys.processes() {
-            let name = proc_.name().to_string_lossy().to_string();
             let from_our_storage = proc_.cmd().iter().any(|a| {
                 a.to_string_lossy()
                     .contains(&*self.config.storage_dir.to_string_lossy())
             });
             let is_ours = pid_from_file == Some(pid.as_u32()) || from_our_storage;
-            if is_ours
-                && process_names().iter().any(|n| name.eq_ignore_ascii_case(n))
-                && proc_.kill()
-            {
+            if is_ours && is_sync_engine(proc_.name()) && proc_.kill() {
                 killed += 1;
             }
         }
@@ -804,6 +799,9 @@ pub struct WinEnv {
     pub program_files: Vec<PathBuf>,
     /// `%LOCALAPPDATA%` of the current (possibly elevated) account.
     pub local_app_data: Option<PathBuf>,
+    /// `%APPDATA%` (Roaming): the per-user Resilio installer puts
+    /// `Resilio Sync.exe` there, next to its storage folder.
+    pub roaming_app_data: Option<PathBuf>,
     /// Entries of `%PATH%`.
     pub path: Vec<PathBuf>,
     /// Profile directories under `C:\Users`, for a per-user Resilio installed
@@ -823,6 +821,7 @@ impl WinEnv {
             }
         }
         env.local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+        env.roaming_app_data = std::env::var_os("APPDATA").map(PathBuf::from);
         if let Some(path) = std::env::var_os("PATH") {
             env.path = std::env::split_paths(&path)
                 .filter(|p| !p.as_os_str().is_empty())
@@ -847,6 +846,9 @@ impl WinEnv {
 /// bundled engine, PATH, other user profiles, registry. Pure, no IO.
 pub fn windows_candidates(env: &WinEnv) -> Vec<PathBuf> {
     let mut out = Vec::new();
+    if let Some(roaming) = &env.roaming_app_data {
+        out.push(roaming.join("Resilio Sync").join("Resilio Sync.exe"));
+    }
     if let Some(local) = &env.local_app_data {
         out.push(local.join("Resilio Sync").join("Resilio Sync.exe"));
     }
@@ -861,13 +863,15 @@ pub fn windows_candidates(env: &WinEnv) -> Vec<PathBuf> {
         out.extend(WINDOWS_BINARY_NAMES.iter().map(|n| dir.join(n)));
     }
     for profile in &env.user_profiles {
-        out.push(
-            profile
-                .join("AppData")
-                .join("Local")
-                .join("Resilio Sync")
-                .join("Resilio Sync.exe"),
-        );
+        for sub in ["Roaming", "Local"] {
+            out.push(
+                profile
+                    .join("AppData")
+                    .join(sub)
+                    .join("Resilio Sync")
+                    .join("Resilio Sync.exe"),
+            );
+        }
     }
     for dir in &env.registry_install_dirs {
         out.extend(WINDOWS_BINARY_NAMES.iter().map(|n| dir.join(n)));
@@ -905,6 +909,41 @@ pub fn parse_reg_query_output(out: &str) -> Option<PathBuf> {
         let value = value.trim().trim_end_matches(['\\', '/']);
         (!value.is_empty()).then(|| PathBuf::from(value))
     })
+}
+
+/// Is this a sync engine process name (see [`process_names`])?
+pub fn is_sync_engine(name: &std::ffi::OsStr) -> bool {
+    let name = name.to_string_lossy();
+    process_names().iter().any(|n| name.eq_ignore_ascii_case(n))
+}
+
+/// Process table with only what the launcher needs (name, executable,
+/// command line), shared by orphan cleanup, diagnostics and binary discovery.
+pub fn scan_processes() -> sysinfo::System {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        true,
+        sysinfo::ProcessRefreshKind::nothing()
+            .with_exe(sysinfo::UpdateKind::Always)
+            .with_cmd(sysinfo::UpdateKind::Always),
+    );
+    sys
+}
+
+/// Executables of sync engines that are running right now (any user), a
+/// reliable hint where an installation lives.
+pub fn running_binaries() -> Vec<PathBuf> {
+    let sys = scan_processes();
+    let mut out: Vec<PathBuf> = sys
+        .processes()
+        .values()
+        .filter(|p| is_sync_engine(p.name()))
+        .filter_map(|p| p.exe().map(Path::to_path_buf))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// Outcome of the binary search, including every path that was probed so a
@@ -948,6 +987,9 @@ pub fn locate_binary_detailed(
             candidates.push(base.join(n));
         }
     }
+    // A running engine (the user's own Resilio, the ETI launcher's btsync)
+    // ranks after the bundled/pinned binary but before guessing paths.
+    candidates.extend(running_binaries());
     if cfg!(target_os = "windows") {
         candidates.extend(windows_candidates(&WinEnv::from_process()));
     } else if cfg!(target_os = "macos") {
@@ -1066,6 +1108,7 @@ mod tests {
                 PathBuf::from(r"C:\Program Files (x86)"),
             ],
             local_app_data: Some(PathBuf::from(r"C:\Users\admin\AppData\Local")),
+            roaming_app_data: Some(PathBuf::from(r"C:\Users\admin\AppData\Roaming")),
             path: vec![PathBuf::from(r"C:\Tools"), PathBuf::from(r"C:\Tools")],
             user_profiles: vec![PathBuf::from(r"C:\Users\schim")],
             registry_install_dirs: vec![PathBuf::from(r"D:\Apps\Resilio Sync")],
@@ -1076,9 +1119,15 @@ mod tests {
             .map(|p| super::super::normalise_dir(p))
             .collect();
         let has = |x: &str| s.iter().any(|c| c.eq_ignore_ascii_case(x));
-        assert!(
-            s[0].eq_ignore_ascii_case("C:/Users/admin/AppData/Local/Resilio Sync/Resilio Sync.exe")
-        );
+        // The per-user installer's default (Roaming) comes first.
+        assert!(s[0]
+            .eq_ignore_ascii_case("C:/Users/admin/AppData/Roaming/Resilio Sync/Resilio Sync.exe"));
+        assert!(has(
+            "C:/Users/admin/AppData/Local/Resilio Sync/Resilio Sync.exe"
+        ));
+        assert!(has(
+            "C:/Users/schim/AppData/Roaming/Resilio Sync/Resilio Sync.exe"
+        ));
         assert!(has("C:/Program Files/eti/lan launcher/btsync.exe"));
         assert!(has("C:/Tools/rslsync.exe"));
         assert!(has(

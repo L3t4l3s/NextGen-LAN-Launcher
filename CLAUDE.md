@@ -62,7 +62,10 @@ WebKitGTK-Entwicklungspakete (siehe unten).
   ohne GUI durch.
 - Manuelle End-to-End-Prüfung unter Linux ohne Bildschirm: `Xvfb :99`, App mit `--demo` starten,
   mit `xdotool` klicken, mit `import -window root` (ImageMagick) Screenshots ziehen. Log liegt in
-  `<XDG_DATA_HOME>/xyz.nextgen-lan.launcher/logs/launcher.log`.
+  `<XDG_DATA_HOME>/xyz.nextgen-lan.launcher/logs/launcher.log` (Windows:
+  `%LOCALAPPDATA%\xyz.nextgen-lan.launcher\logs\launcher.log`, macOS:
+  `~/Library/Logs/xyz.nextgen-lan.launcher/`; das ist Tauris App-Log-Ordner, nicht der
+  Roaming-Datenordner mit `settings.json`). Die Statusleiste zeigt `v<version> (<commit>)`.
 
 ## Bekannte Stolperfallen
 

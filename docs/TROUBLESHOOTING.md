@@ -19,7 +19,9 @@ the background.
 | No covers | `eti_launcher/update/assets.eti` missing, unreadable, or not a (gzip) tar. | Extraction result is logged (`covers: …`); Diagnose shows `catalog.covers_missing` when the file exists but the cache is empty. |
 | Game starts but LAN browser empty (Mac) | Bonjour service inside the bottle, firewall. | See manifest notes (e.g. wc3). |
 
-Logs: **Diagnose → Log-Ordner öffnen** (`<data dir>/logs/launcher.log`).
+Logs: **Diagnose → Log-Ordner öffnen**. Windows: `%LOCALAPPDATA%\xyz.nextgen-lan.launcher\logs\launcher.log`
+(not the Roaming folder that holds `settings.json`), macOS: `~/Library/Logs/xyz.nextgen-lan.launcher/`,
+Linux: `~/.local/share/xyz.nextgen-lan.launcher/logs/`. The first line names version and commit.
 
 ## Folder mode
 

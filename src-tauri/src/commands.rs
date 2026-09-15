@@ -26,7 +26,8 @@ pub struct BootstrapInfo {
     pub settings: Settings,
     pub demo: bool,
     pub platform: &'static str,
-    pub version: &'static str,
+    /// `<semver> (<build id>)`, e.g. `0.1.0 (dc6722c)`.
+    pub version: String,
     pub event: EventBundle,
     pub transport_mode: TransportMode,
     pub transport_error: Option<String>,
@@ -133,7 +134,7 @@ pub async fn get_bootstrap(state: State<'_, Arc<AppState>>) -> Cmd<BootstrapInfo
         transport_error: state.transport_error.read().await.clone(),
         demo: state.demo,
         platform: Manifest::current_platform(),
-        version: env!("CARGO_PKG_VERSION"),
+        version: crate::app_version(),
         event,
         dirs: DirsInfo {
             config: state.dirs.config.to_string_lossy().to_string(),

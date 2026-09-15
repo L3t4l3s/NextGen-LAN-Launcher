@@ -76,11 +76,16 @@ pub async fn apply(
                 let s = state.settings.read().await;
                 (s.resilio_binary.clone(), s.sync_port)
             };
-            let located = lanlauncher_core::transport::resilio::locate_binary_detailed(
-                override_path.as_deref(),
-                state.resource_dir.as_deref(),
-                &state.dirs.data,
-            );
+            let (resource_dir, data_dir) = (state.resource_dir.clone(), state.dirs.data.clone());
+            let located = tauri::async_runtime::spawn_blocking(move || {
+                lanlauncher_core::transport::resilio::locate_binary_detailed(
+                    override_path.as_deref(),
+                    resource_dir.as_deref(),
+                    &data_dir,
+                )
+            })
+            .await
+            .map_err(|e| format!("err.resilio_not_found|{e}"))?;
             let binary = located
                 .found
                 .ok_or_else(|| format!("err.resilio_not_found|{}", located.probed.len()))?;

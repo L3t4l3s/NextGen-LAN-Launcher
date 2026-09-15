@@ -28,7 +28,6 @@ sha2 = "0.11"
 hex = "0.4"
 sysinfo = "0.38"
 walkdir = "2.5"
-directories = "6.0"
 async-trait = "0.1"
 futures = "0.3"
 

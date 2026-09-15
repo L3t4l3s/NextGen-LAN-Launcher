@@ -26,38 +26,14 @@ pub struct AppDirs {
     pub config: PathBuf,
     pub data: PathBuf,
     pub cache: PathBuf,
+    /// Where the log plugin writes `launcher.log`: the shell fills this from
+    /// Tauri's app log dir (`%LOCALAPPDATA%\<id>\logs` on Windows,
+    /// `~/Library/Logs/<id>` on macOS, `$XDG_DATA_HOME/<id>/logs` on Linux),
+    /// so "open log folder" shows the real location.
+    pub logs: PathBuf,
 }
 
 impl AppDirs {
-    /// Resolve OS-specific directories. Falls back to `./.nll` when the
-    /// platform does not expose standard directories (containers, tests).
-    pub fn resolve() -> Self {
-        if let Some(dirs) =
-            directories::ProjectDirs::from("xyz", "nextgen-lan", "NextGen LAN Launcher")
-        {
-            return Self {
-                config: dirs.config_dir().to_path_buf(),
-                data: dirs.data_dir().to_path_buf(),
-                cache: dirs.cache_dir().to_path_buf(),
-            };
-        }
-        let base = PathBuf::from(".nll");
-        Self {
-            config: base.join("config"),
-            data: base.join("data"),
-            cache: base.join("cache"),
-        }
-    }
-
-    pub fn in_dir(base: impl AsRef<Path>) -> Self {
-        let base = base.as_ref();
-        Self {
-            config: base.join("config"),
-            data: base.join("data"),
-            cache: base.join("cache"),
-        }
-    }
-
     pub fn settings_file(&self) -> PathBuf {
         self.config.join("settings.json")
     }
@@ -71,7 +47,7 @@ impl AppDirs {
     }
 
     pub fn logs_dir(&self) -> PathBuf {
-        self.data.join("logs")
+        self.logs.clone()
     }
 }
 
