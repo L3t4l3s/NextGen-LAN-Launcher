@@ -32,6 +32,12 @@ pub struct LaunchPlan {
     pub runner: String,
     /// Windows scripts need elevation for `netsh`/`reg`.
     pub needs_elevation: bool,
+    /// Windows only: the complete command line after `program`, passed
+    /// verbatim (`raw_arg`) because `cmd.exe /C` has its own quoting rules
+    /// that std's argument escaping would break. When set, `args` is only
+    /// informational.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_command_line: Option<String>,
 }
 
 /// Inputs shared by the platform launchers.
@@ -54,11 +60,28 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
     }
 }
 
-/// Resolve the executable relative to `local/` from manifest + receipt.
+/// Resolve the executable relative to `local/`. A user choice stored in the
+/// receipt wins over the manifest (the manifest may target another package
+/// revision); an explicit alternative always comes from the manifest.
 pub fn resolve_exe(ctx: &LaunchContext<'_>) -> Result<(PathBuf, Vec<String>, PathBuf, Runner)> {
     let platform = Manifest::current_platform();
-    if let Some(m) = ctx.manifest {
-        let spec = m.launch_for(platform);
+    let spec = ctx.manifest.map(|m| m.launch_for(platform));
+    if let (None, Some(exe)) = (
+        ctx.alternative,
+        ctx.receipt.and_then(|r| r.exe_override.as_ref()),
+    ) {
+        if !crate::manifest::is_safe_relative(exe) {
+            return Err(Error::Launch("stored executable path is invalid".into()));
+        }
+        let exe_path = ctx.paths.local_dir.join(exe.replace('\\', "/"));
+        let cwd = exe_path
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| ctx.paths.local_dir.clone());
+        let runner = spec.as_ref().map(|s| s.runner).unwrap_or(Runner::Auto);
+        return Ok((exe_path, Vec::new(), cwd, runner));
+    }
+    if let Some(spec) = spec {
         let (exe, args, workdir) = match ctx.alternative {
             Some(i) => {
                 let alt = spec
@@ -78,20 +101,7 @@ pub fn resolve_exe(ctx: &LaunchContext<'_>) -> Result<(PathBuf, Vec<String>, Pat
             return Ok((exe_path, args, cwd, spec.runner));
         }
     }
-    if let Some(exe) = ctx.receipt.and_then(|r| r.exe_override.as_ref()) {
-        if !crate::manifest::is_safe_relative(exe) {
-            return Err(Error::Launch("stored executable path is invalid".into()));
-        }
-        let exe_path = ctx.paths.local_dir.join(exe.replace('\\', "/"));
-        let cwd = exe_path
-            .parent()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| ctx.paths.local_dir.clone());
-        return Ok((exe_path, Vec::new(), cwd, Runner::Auto));
-    }
-    Err(Error::Launch(
-        "no executable known for this game; choose one".into(),
-    ))
+    Err(Error::Code("err.no_executable".into()))
 }
 
 /// Substitute ETI script variables the manifests may reference.
@@ -109,7 +119,8 @@ pub fn expand_args(args: &[String], ctx: &LaunchContext<'_>) -> Vec<String> {
 /// Spawn the plan as a detached child process. Returns the PID.
 pub async fn spawn(plan: &LaunchPlan) -> Result<u32> {
     let mut cmd = tokio::process::Command::new(&plan.program);
-    cmd.args(&plan.args).current_dir(&plan.cwd).envs(&plan.env);
+    cmd.current_dir(&plan.cwd).envs(&plan.env);
+    apply_args(&mut cmd, plan);
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
@@ -122,6 +133,23 @@ pub async fn spawn(plan: &LaunchPlan) -> Result<u32> {
         let _ = child.wait().await;
     });
     Ok(pid)
+}
+
+#[cfg(windows)]
+fn apply_args(cmd: &mut tokio::process::Command, plan: &LaunchPlan) {
+    match &plan.raw_command_line {
+        Some(raw) => {
+            cmd.raw_arg(raw);
+        }
+        None => {
+            cmd.args(&plan.args);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn apply_args(cmd: &mut tokio::process::Command, plan: &LaunchPlan) {
+    cmd.args(&plan.args);
 }
 
 /// Candidate executables inside `local/` for the "choose executable" dialog.

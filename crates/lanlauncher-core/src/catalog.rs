@@ -408,6 +408,29 @@ pub fn extract_covers(assets_tar: &Path, dest_dir: &Path) -> Result<usize> {
     Ok(written)
 }
 
+/// Locate a preview video shipped in the launcher share
+/// (`eti_launcher/video/<id>.mp4`, as mirrored in the eti-lan/LAN-Launcher repo).
+pub fn find_video(library_root: &Path, game_id: &str) -> Option<std::path::PathBuf> {
+    for dir in video_dirs(library_root) {
+        for ext in ["mp4", "webm"] {
+            let p = dir.join(format!("{game_id}.{ext}"));
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// Folders inside a library root that may hold preview videos.
+pub fn video_dirs(library_root: &Path) -> Vec<std::path::PathBuf> {
+    let base = library_root.join(crate::paths::LAUNCHER_SHARE_ID);
+    ["video", "videos", "update/video"]
+        .iter()
+        .map(|d| base.join(d))
+        .collect()
+}
+
 /// Locate a cached cover for a game id.
 pub fn find_cover(covers_dir: &Path, game_id: &str) -> Option<std::path::PathBuf> {
     ["jpg", "png", "jpeg"]

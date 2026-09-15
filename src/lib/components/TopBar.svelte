@@ -1,7 +1,7 @@
 <script lang="ts">
   import { app, type View } from "$lib/stores/app.svelte";
   import { api } from "$lib/api";
-  import { t } from "$lib/i18n";
+  import { t, userText } from "$lib/i18n";
 
   let refreshing = $state(false);
 
@@ -19,7 +19,7 @@
       await app.reloadGames();
       app.toast("success", t("nav.refresh.done", { count: n }));
     } catch (e) {
-      app.toast("error", String(e));
+      app.toast("error", userText(e));
     } finally {
       refreshing = false;
     }

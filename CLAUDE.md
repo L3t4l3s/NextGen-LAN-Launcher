@@ -33,8 +33,8 @@ Der Fortschrittswert des Sync-Engines ist reine Anzeige (`crates/lanlauncher-cor
 | `themes/`, `tools/dev-lanpage/` | Beispiel-Themes, lokale LANPage-Attrappe. |
 | `.github/workflows/` | `ci.yml` (Tests + Builds für Win/macOS/Linux), `release.yml` (Installer bei Tag `v*`). |
 
-Sprachen: Code und Kommentare Englisch, UI-Texte in `src/lib/i18n/{de,en}.ts` (Deutsch ist Standard),
-Nutzerdokumentation (`README.md`, `CHANGELOG.md`) Deutsch.
+Sprachen: Code, Kommentare, `README.md` und `docs/` Englisch; UI-Texte in `src/lib/i18n/{de,en}.ts`
+(Deutsch ist Standard); `CHANGELOG.md` Deutsch.
 
 ## Prüfungen vor einem Commit
 
@@ -87,6 +87,15 @@ WebKitGTK-Entwicklungspakete (siehe unten).
   Adminrechte (`netsh`, `reg add HKLM`). Die App fordert per Manifest Elevation an
   (`src-tauri/build.rs`, abschaltbar mit `NLL_NO_ELEVATION=1`).
 - **Clippy:** In `resilio.rs` müssen alle Items vor `mod tests` stehen (`items_after_test_module`).
+- **Fehlertexte:** Tauri-Commands und Fix-Aktionen geben keine deutschen Sätze zurück, sondern Codes
+  (`err.<name>` bzw. `msg.<name>`, optional mit `|detail`). Das Frontend übersetzt sie mit
+  `userText()` aus `src/lib/i18n/index.ts`; neue Codes brauchen Einträge in `de.ts` und `en.ts`.
+- **Nebenläufige Jobs:** Prüf-, Entpack- und Setup-Jobs tragen eine Generation. `tick()` verwirft
+  Ergebnisse, deren Generation nicht mehr zum aktuellen Job passt (z. B. nach „Reparieren“ während
+  einer laufenden Prüfung). Beim Ändern der Job-Logik diese Zuordnung beibehalten.
+- **Windows-Skriptstart:** `cmd.exe /S /C "<script> …"` wird als *eine* rohe Zeichenkette übergeben
+  (`LaunchPlan::raw_command_line`), weil die Argument-Escapes der Standardbibliothek die
+  cmd-Quoting-Regeln brechen.
 
 ## Linux-Build-Abhängigkeiten
 

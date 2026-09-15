@@ -115,7 +115,12 @@ pub struct Observation {
 
 impl Observation {
     /// Gather the on-disk part of an observation.
-    pub fn from_disk(paths: &GamePaths, game: &Game, required_files: &[String]) -> Self {
+    pub fn from_disk(
+        paths: &GamePaths,
+        game: &Game,
+        required_files: &[String],
+        disks: &crate::library::DiskTable,
+    ) -> Self {
         let archive_len = std::fs::metadata(&paths.archive)
             .ok()
             .filter(|m| m.is_file())
@@ -149,14 +154,7 @@ impl Observation {
             local_present,
             required_files_ok,
             transport: None,
-            disk_free: crate::library::disk_space(&paths.share_dir)
-                .or_else(|| {
-                    paths
-                        .share_dir
-                        .parent()
-                        .and_then(crate::library::disk_space)
-                })
-                .map(|(free, _)| free),
+            disk_free: disks.free_for(&paths.share_dir),
         }
     }
 }
@@ -333,7 +331,7 @@ impl Tracker {
         // 1. Installed state from the receipt wins for playability.
         if !self.phase.is_busy() || self.phase == Phase::Queued {
             if let Some(r) = &obs.receipt {
-                if obs.local_present && !matches!(self.phase, Phase::Failed) {
+                if obs.local_present && !matches!(self.phase, Phase::Failed | Phase::Paused) {
                     let newer_in_catalog = r.revision != obs.catalog_revision;
                     let newer_on_disk = obs
                         .version_ini
@@ -576,6 +574,9 @@ type ManifestResolver = Box<dyn Fn(&Game, &GamePaths) -> Option<Manifest> + Send
 struct ActiveWork {
     cancel: Arc<AtomicBool>,
     handle: tokio::task::JoinHandle<()>,
+    /// Ties results to the job that produced them; a stale result from a
+    /// cancelled job must never touch the current job's bookkeeping.
+    generation: u64,
 }
 
 /// Drives trackers against a transport.
@@ -584,6 +585,7 @@ pub struct InstallManager {
     catalog: RwLock<Catalog>,
     trackers: Mutex<HashMap<String, Tracker>>,
     work: Mutex<HashMap<String, ActiveWork>>,
+    generation: std::sync::atomic::AtomicU64,
     progress: Arc<std::sync::Mutex<HashMap<String, f64>>>,
     results: Arc<std::sync::Mutex<Vec<WorkResult>>>,
     pub policy: Policy,
@@ -597,19 +599,44 @@ pub struct InstallManager {
 enum WorkResult {
     Verified {
         game_id: String,
+        generation: u64,
         result: Result<Verification>,
         archive_len: Option<u64>,
     },
     Extracted {
         game_id: String,
+        generation: u64,
         result: Result<u64>,
         archive_len: u64,
         revision: String,
     },
     SetupDone {
         game_id: String,
+        generation: u64,
         result: Result<()>,
     },
+}
+
+impl WorkResult {
+    fn key(&self) -> (&str, u64) {
+        match self {
+            WorkResult::Verified {
+                game_id,
+                generation,
+                ..
+            }
+            | WorkResult::Extracted {
+                game_id,
+                generation,
+                ..
+            }
+            | WorkResult::SetupDone {
+                game_id,
+                generation,
+                ..
+            } => (game_id, *generation),
+        }
+    }
 }
 
 impl InstallManager {
@@ -626,6 +653,7 @@ impl InstallManager {
             catalog: RwLock::new(catalog),
             trackers: Mutex::new(HashMap::new()),
             work: Mutex::new(HashMap::new()),
+            generation: std::sync::atomic::AtomicU64::new(0),
             progress: Arc::new(std::sync::Mutex::new(HashMap::new())),
             results: Arc::new(std::sync::Mutex::new(Vec::new())),
             policy: Policy::default(),
@@ -691,6 +719,7 @@ impl InstallManager {
         self.cancel_work(game_id).await;
         let game = self.game(game_id).await?;
         let paths = self.paths_for(&game)?;
+        let _ = self.transport.set_paused(&paths.share_dir, false).await;
         let _ = std::fs::remove_dir_all(extract::staging_dir(&paths.local_dir));
         let _ = self
             .transport
@@ -786,7 +815,7 @@ impl InstallManager {
             .await
             .unwrap_or_default()
             .into_iter()
-            .map(|s| (s.dir.clone(), s))
+            .map(|s| (crate::transport::normalise_dir(&s.dir), s))
             .collect();
         let results: Vec<WorkResult> = self
             .results
@@ -796,15 +825,23 @@ impl InstallManager {
         let progress_snapshot: HashMap<String, f64> =
             self.progress.lock().map(|p| p.clone()).unwrap_or_default();
 
+        let disks = crate::library::DiskTable::refresh();
         let mut out = Vec::new();
         let mut trackers = self.trackers.lock().await;
 
         for r in results {
+            let (rid, rgen) = r.key();
+            let current = self.work.lock().await.get(rid).map(|w| w.generation);
+            if current != Some(rgen) {
+                log::info!("tick: dropping stale work result for {rid} (gen {rgen})");
+                continue;
+            }
             match r {
                 WorkResult::Verified {
                     game_id,
                     result,
                     archive_len,
+                    ..
                 } => {
                     self.work.lock().await.remove(&game_id);
                     if let Some(t) = trackers.get_mut(&game_id) {
@@ -839,6 +876,7 @@ impl InstallManager {
                     result,
                     archive_len,
                     revision,
+                    ..
                 } => {
                     self.work.lock().await.remove(&game_id);
                     if let Some(t) = trackers.get_mut(&game_id) {
@@ -889,7 +927,9 @@ impl InstallManager {
                         }
                     }
                 }
-                WorkResult::SetupDone { game_id, result } => {
+                WorkResult::SetupDone {
+                    game_id, result, ..
+                } => {
                     self.work.lock().await.remove(&game_id);
                     if let Some(t) = trackers.get_mut(&game_id) {
                         match result {
@@ -932,8 +972,10 @@ impl InstallManager {
                 .as_ref()
                 .map(|m| m.launch_for(Manifest::current_platform()).required_files)
                 .unwrap_or_default();
-            let mut obs = Observation::from_disk(&paths, &game, &required);
-            obs.transport = share_statuses.get(&paths.share_dir).cloned();
+            let mut obs = Observation::from_disk(&paths, &game, &required, &disks);
+            obs.transport = share_statuses
+                .get(&crate::transport::normalise_dir(&paths.share_dir))
+                .cloned();
             let tracker = trackers.get_mut(&id).expect("tracker exists");
             if let Some(p) = progress_snapshot.get(&id) {
                 tracker.work_progress = *p;
@@ -990,6 +1032,7 @@ impl InstallManager {
         let progress = self.progress.clone();
         let game_id = id.to_string();
         let c2 = cancel.clone();
+        let generation = self.next_generation();
         let handle = tokio::task::spawn_blocking(move || {
             let gid = game_id.clone();
             let mut cb = |done: u64, total: u64, _: &str| {
@@ -1008,15 +1051,20 @@ impl InstallManager {
             if let Ok(mut r) = results.lock() {
                 r.push(WorkResult::Verified {
                     game_id,
+                    generation,
                     result,
                     archive_len,
                 });
             }
         });
-        self.work
-            .lock()
-            .await
-            .insert(id.to_string(), ActiveWork { cancel, handle });
+        self.work.lock().await.insert(
+            id.to_string(),
+            ActiveWork {
+                cancel,
+                handle,
+                generation,
+            },
+        );
     }
 
     async fn spawn_extract(&self, id: &str, paths: &GamePaths, archive_len: u64, revision: String) {
@@ -1027,6 +1075,7 @@ impl InstallManager {
         let progress = self.progress.clone();
         let game_id = id.to_string();
         let c2 = cancel.clone();
+        let generation = self.next_generation();
         let handle = tokio::task::spawn_blocking(move || {
             let gid = game_id.clone();
             let mut cb = |done: u64, total: u64, _: &str| {
@@ -1046,16 +1095,21 @@ impl InstallManager {
             if let Ok(mut r) = results.lock() {
                 r.push(WorkResult::Extracted {
                     game_id,
+                    generation,
                     result,
                     archive_len,
                     revision,
                 });
             }
         });
-        self.work
-            .lock()
-            .await
-            .insert(id.to_string(), ActiveWork { cancel, handle });
+        self.work.lock().await.insert(
+            id.to_string(),
+            ActiveWork {
+                cancel,
+                handle,
+                generation,
+            },
+        );
     }
 
     async fn spawn_setup(&self, id: &str, paths: &GamePaths, manifest: Option<Manifest>) {
@@ -1064,16 +1118,29 @@ impl InstallManager {
         let hook = self.setup_hook.clone();
         let paths = paths.clone();
         let game_id = id.to_string();
+        let generation = self.next_generation();
         let handle = tokio::spawn(async move {
             let result = hook.run_setup(&paths, manifest.as_ref()).await;
             if let Ok(mut r) = results.lock() {
-                r.push(WorkResult::SetupDone { game_id, result });
+                r.push(WorkResult::SetupDone {
+                    game_id,
+                    generation,
+                    result,
+                });
             }
         });
-        self.work
-            .lock()
-            .await
-            .insert(id.to_string(), ActiveWork { cancel, handle });
+        self.work.lock().await.insert(
+            id.to_string(),
+            ActiveWork {
+                cancel,
+                handle,
+                generation,
+            },
+        );
+    }
+
+    fn next_generation(&self) -> u64 {
+        self.generation.fetch_add(1, Ordering::Relaxed) + 1
     }
 
     pub async fn tracker_phase(&self, game_id: &str) -> Option<Phase> {

@@ -196,6 +196,29 @@ export const de: Messages = {
   "toast.error": "Fehler: {detail}",
   "toast.fix_done": "Erledigt",
 
+  // Backend result codes
+  "err.not_ready": "Der Launcher startet noch, bitte kurz warten.",
+  "err.unknown_game": "Unbekanntes Spiel.",
+  "err.no_library": "Kein Spiele-Ordner konfiguriert.",
+  "err.demo_no_play": "Im Demo-Modus werden keine Spiele gestartet.",
+  "err.invalid_path": "Ungültiger Pfad.",
+  "err.not_installed": "Das Spiel ist nicht installiert.",
+  "err.create_folder": "Ordner kann nicht angelegt werden: {detail}",
+  "err.no_catalog": "Kein Katalog gefunden. Der Ordner eti_launcher wird zuerst synchronisiert – bitte warten oder die Diagnose prüfen.",
+  "err.unsupported_link": "Dieser Link-Typ wird nicht geöffnet.",
+  "err.key_folder_mode_only": "Der Key wird nur im Ordner-Modus angezeigt.",
+  "err.powershell": "PowerShell konnte nicht gestartet werden: {detail}",
+  "err.windows_only": "Diese Aktion gibt es nur unter Windows.",
+  "err.resilio_not_found": "Resilio Sync wurde nicht gefunden (weder mitgeliefert noch installiert). Ordner-Modus aktiv.",
+  "err.resilio_start_failed": "Resilio Sync konnte nicht gestartet werden: {detail}",
+  "err.no_executable": "Für dieses Spiel ist keine Startdatei bekannt – bitte über „Startdatei wählen“ festlegen.",
+  "err.start_script_missing": "Im Spielordner fehlt game_start.cmd.",
+  "msg.profile_private": "Netzwerkprofil auf „Privat“ gesetzt.",
+  "msg.firewall_added": "Firewall-Regeln für alle Netzwerkprofile angelegt.",
+  "msg.transport_restarted": "Sync-Dienst neu gestartet.",
+  "msg.repair_started": "Reparatur gestartet.",
+  "msg.defender_exclusion_added": "Ausnahme für Windows Defender hinzugefügt.",
+
   // Problem catalogue. Each code has .title, .cause and steps.
   "problem.network.public_profile.title": "Windows-Netzwerkprofil ist „Öffentlich“ ({adapter})",
   "problem.network.public_profile.cause":

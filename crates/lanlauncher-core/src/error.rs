@@ -28,6 +28,9 @@ pub enum Error {
     Settings(String),
     #[error("launch error: {0}")]
     Launch(String),
+    /// A stable, user-facing code (`err.<name>`) the frontend translates.
+    #[error("{0}")]
+    Code(String),
     #[error("{0}")]
     Other(String),
 }

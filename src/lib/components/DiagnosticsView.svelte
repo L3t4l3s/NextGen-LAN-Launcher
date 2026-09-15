@@ -1,7 +1,7 @@
 <script lang="ts">
   import { app } from "$lib/stores/app.svelte";
   import { api } from "$lib/api";
-  import { t } from "$lib/i18n";
+  import { t, userText } from "$lib/i18n";
   import type { Report } from "$lib/types";
   import ProblemCard from "./ProblemCard.svelte";
   import { onMount } from "svelte";
@@ -14,7 +14,7 @@
     try {
       report = await api.diagnostics();
     } catch (e) {
-      app.toast("error", String(e));
+      app.toast("error", userText(e));
     } finally {
       running = false;
     }
@@ -34,7 +34,7 @@
       app.toast("success", t("toast.fix_done"));
       await run();
     } catch (e) {
-      app.toast("error", String(e));
+      app.toast("error", userText(e));
     }
   }
 </script>

@@ -2,7 +2,7 @@
   import type { Problem } from "$lib/types";
   import { api } from "$lib/api";
   import { app } from "$lib/stores/app.svelte";
-  import { has, t } from "$lib/i18n";
+  import { has, t, userText } from "$lib/i18n";
   import { formatBytes } from "$lib/format";
 
   let { problem, compact = false, onfixed }: { problem: Problem; compact?: boolean; onfixed?: () => void } = $props();
@@ -12,7 +12,10 @@
   // Byte parameters are rendered human-readable.
   const params = $derived.by(() => {
     const p: Record<string, string> = { ...problem.params };
-    for (const k of Object.keys(p)) if (k.endsWith("_bytes")) p[k] = formatBytes(Number(p[k]));
+    for (const k of Object.keys(p)) {
+      if (k.endsWith("_bytes")) p[k] = formatBytes(Number(p[k]));
+      if (k === "detail") p[k] = userText(p[k]);
+    }
     return p;
   });
 
@@ -21,10 +24,10 @@
     fixing = true;
     try {
       const msg = await api.applyFix(problem.fix);
-      app.toast("success", msg || t("toast.fix_done"));
+      app.toast("success", msg ? userText(msg) : t("toast.fix_done"));
       onfixed?.();
     } catch (e) {
-      app.toast("error", t("toast.error", { detail: String(e) }));
+      app.toast("error", t("toast.error", { detail: userText(e) }));
     } finally {
       fixing = false;
     }

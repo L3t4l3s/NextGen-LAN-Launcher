@@ -1,7 +1,7 @@
 <script lang="ts">
   import { app } from "$lib/stores/app.svelte";
   import { api } from "$lib/api";
-  import { t } from "$lib/i18n";
+  import { t, userText } from "$lib/i18n";
   import { formatBytes, formatPercent, formatSpeed } from "$lib/format";
   import ProblemCard from "./ProblemCard.svelte";
 
@@ -15,7 +15,7 @@
     try {
       await fn();
     } catch (e) {
-      app.toast("error", String(e));
+      app.toast("error", userText(e));
     }
   }
 </script>

@@ -12,48 +12,59 @@ pub fn legacy_tools_dir() -> PathBuf {
     Path::new(&pf).join("eti").join("lan launcher")
 }
 
-/// Command line for `game_start.cmd "<game_path>" <id> <lang> "<player>"`.
-/// We run through `cmd.exe /C` so `exit` inside the script ends only the
-/// script's shell.
+/// `cmd.exe /S /C "<script> <args…>"` for `game_start.cmd "<game_path>" <id> <lang> "<player>"`.
+///
+/// `/S` makes cmd strip exactly the outer pair of quotes, so paths with
+/// spaces and the quoted player name survive intact. The whole string is
+/// passed verbatim (`LaunchPlan::raw_command_line`).
 pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
     if !ctx.paths.start_script.is_file() {
-        return Err(Error::Launch(
-            "game_start.cmd is missing in the game folder".into(),
-        ));
+        return Err(Error::Code("err.start_script_missing".into()));
     }
-    let comspec =
-        std::env::var("ComSpec").unwrap_or_else(|_| r"C:\Windows\System32\cmd.exe".into());
+    let raw = script_command_line(
+        &ctx.paths.start_script,
+        &ctx.paths.share_dir,
+        ctx.game_id,
+        &ctx.settings.game_language,
+        &ctx.settings.safe_player_name(),
+    );
     Ok(LaunchPlan {
-        program: PathBuf::from(comspec),
-        args: script_args(
-            &ctx.paths.start_script,
-            &ctx.paths.share_dir,
-            ctx.game_id,
-            &ctx.settings.game_language,
-            &ctx.settings.safe_player_name(),
-        ),
+        program: PathBuf::from(comspec()),
+        args: vec!["/S".into(), "/C".into(), raw.clone()],
         cwd: ctx.paths.share_dir.clone(),
         env: BTreeMap::new(),
         runner: "game_start.cmd".into(),
         needs_elevation: true,
+        raw_command_line: Some(format!("/S /C {raw}")),
     })
 }
 
-pub fn script_args(
+fn comspec() -> String {
+    std::env::var("ComSpec").unwrap_or_else(|_| r"C:\Windows\System32\cmd.exe".into())
+}
+
+fn quote(s: &str) -> String {
+    // cmd has no escape for a double quote inside a quoted string; the
+    // player name is already sanitised (no quotes) by Settings::safe_player_name.
+    format!("\"{}\"", s.replace('"', ""))
+}
+
+/// The ETI contract: `game_start.cmd "%game_path%" %game_id% %game_lang% "%player%"`.
+pub fn script_command_line(
     script: &Path,
     share_dir: &Path,
     game_id: &str,
     lang: &str,
     player: &str,
-) -> Vec<String> {
-    vec![
-        "/C".into(),
-        format!("\"{}\"", script.display()),
-        format!("\"{}\"", share_dir.display()),
-        game_id.to_string(),
-        lang.to_string(),
-        format!("\"{player}\""),
-    ]
+) -> String {
+    format!(
+        "\"{} {} {} {} {}\"",
+        quote(&script.to_string_lossy()),
+        quote(&share_dir.to_string_lossy()),
+        game_id,
+        lang,
+        quote(player)
+    )
 }
 
 /// Plan for the one-time `game_setup.cmd "<game_path>" <id>`.
@@ -61,20 +72,20 @@ pub fn setup_plan(paths: &crate::paths::GamePaths, game_id: &str) -> Option<Laun
     if !paths.setup_script.is_file() {
         return None;
     }
-    let comspec =
-        std::env::var("ComSpec").unwrap_or_else(|_| r"C:\Windows\System32\cmd.exe".into());
+    let raw = format!(
+        "\"{} {} {}\"",
+        quote(&paths.setup_script.to_string_lossy()),
+        quote(&paths.share_dir.to_string_lossy()),
+        game_id
+    );
     Some(LaunchPlan {
-        program: PathBuf::from(comspec),
-        args: vec![
-            "/C".into(),
-            format!("\"{}\"", paths.setup_script.display()),
-            format!("\"{}\"", paths.share_dir.display()),
-            game_id.to_string(),
-        ],
+        program: PathBuf::from(comspec()),
+        args: vec!["/S".into(), "/C".into(), raw.clone()],
         cwd: paths.share_dir.clone(),
         env: BTreeMap::new(),
         runner: "game_setup.cmd".into(),
         needs_elevation: true,
+        raw_command_line: Some(format!("/S /C {raw}")),
     })
 }
 
@@ -83,18 +94,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn script_arguments_follow_eti_contract() {
-        let args = script_args(
-            Path::new(r"D:\LAN\quake3\game_start.cmd"),
-            Path::new(r"D:\LAN\quake3"),
+    fn command_line_follows_eti_contract_and_cmd_quoting() {
+        let line = script_command_line(
+            Path::new(r"D:\LAN Party\quake3\game_start.cmd"),
+            Path::new(r"D:\LAN Party\quake3"),
             "quake3",
             "de",
             "Player One",
         );
-        assert_eq!(args[1], r#""D:\LAN\quake3\game_start.cmd""#);
-        assert_eq!(args[2], r#""D:\LAN\quake3""#);
-        assert_eq!(args[3], "quake3");
-        assert_eq!(args[4], "de");
-        assert_eq!(args[5], r#""Player One""#);
+        assert_eq!(
+            line,
+            r#"""D:\LAN Party\quake3\game_start.cmd" "D:\LAN Party\quake3" quake3 de "Player One"""#
+        );
+        assert_eq!(quote("Ev\"il"), "\"Evil\"");
     }
 }

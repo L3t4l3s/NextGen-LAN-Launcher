@@ -20,7 +20,7 @@ async fn powershell(script: &str) -> Result<String, String> {
         ])
         .output()
         .await
-        .map_err(|e| format!("PowerShell konnte nicht gestartet werden: {e}"))?;
+        .map_err(|e| format!("err.powershell|{e}"))?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).to_string())
     } else {
@@ -30,7 +30,7 @@ async fn powershell(script: &str) -> Result<String, String> {
 
 #[cfg(not(target_os = "windows"))]
 async fn powershell(_script: &str) -> Result<String, String> {
-    Err("Diese Aktion gibt es nur unter Windows.".into())
+    Err("err.windows_only".into())
 }
 
 /// Current Windows network profiles (empty on other platforms).
@@ -57,7 +57,7 @@ async fn netsh(args: &[String]) -> Result<(), String> {
 
 #[cfg(not(target_os = "windows"))]
 async fn netsh(_args: &[String]) -> Result<(), String> {
-    Err("Firewall-Regeln werden nur unter Windows gesetzt.".into())
+    Err("err.windows_only".into())
 }
 
 pub async fn apply(
@@ -69,33 +69,28 @@ pub async fn apply(
     match fix {
         FixAction::SetNetworkProfilePrivate { interface_index } => {
             powershell(&diagnostics::ps_set_private(interface_index)).await?;
-            Ok("Netzwerkprofil auf „Privat“ gesetzt.".into())
+            Ok("msg.profile_private".into())
         }
         FixAction::AddFirewallRules => {
             let binary = lanlauncher_core::transport::resilio::locate_binary(
                 state.resource_dir.as_deref(),
                 &state.dirs.data,
             )
-            .ok_or("Resilio Sync wurde nicht gefunden.")?;
+            .ok_or("err.resilio_not_found")?;
             let port = state.settings.read().await.sync_port;
             for rule in diagnostics::firewall_rules(&binary, port) {
                 netsh(&rule).await?;
             }
-            Ok("Firewall-Regeln für alle Netzwerkprofile angelegt.".into())
+            Ok("msg.firewall_added".into())
         }
         FixAction::RestartTransport => {
             crate::commands::restart_transport_inner(state).await?;
-            Ok("Sync-Dienst neu gestartet.".into())
+            Ok("msg.transport_restarted".into())
         }
         FixAction::RepairGame { game_id } => {
-            let m = state
-                .manager
-                .read()
-                .await
-                .clone()
-                .ok_or("Launcher startet noch.")?;
+            let m = state.manager.read().await.clone().ok_or("err.not_ready")?;
             m.repair(&game_id).await.map_err(|e| e.to_string())?;
-            Ok("Reparatur gestartet.".into())
+            Ok("msg.repair_started".into())
         }
         FixAction::OpenFolder { path } => {
             let p = Path::new(&path);
@@ -116,7 +111,7 @@ pub async fn apply(
         FixAction::AddDefenderExclusion { path } => {
             let escaped = path.replace('\'', "''");
             powershell(&format!("Add-MpPreference -ExclusionPath '{escaped}'")).await?;
-            Ok("Ausnahme für Windows Defender hinzugefügt.".into())
+            Ok("msg.defender_exclusion_added".into())
         }
     }
 }

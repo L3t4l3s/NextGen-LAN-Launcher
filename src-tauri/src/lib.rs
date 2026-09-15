@@ -70,6 +70,29 @@ impl SetupHook for AppSetupHook {
     }
 }
 
+/// Only the preview-video folders of the library are exposed to the WebView
+/// through the asset protocol; `game.db` (share keys) and game files stay out
+/// of reach. Folders of roots that were removed are revoked again.
+pub(crate) fn update_media_scope(
+    app: &tauri::AppHandle,
+    old_roots: &[lanlauncher_core::library::LibraryRoot],
+    library: &Library,
+) {
+    let scope = app.asset_protocol_scope();
+    for root in old_roots {
+        if !library.roots.iter().any(|r| r.path == root.path) {
+            for dir in lanlauncher_core::catalog::video_dirs(&root.path) {
+                let _ = scope.forbid_directory(&dir, false);
+            }
+        }
+    }
+    for root in &library.roots {
+        for dir in lanlauncher_core::catalog::video_dirs(&root.path) {
+            let _ = scope.allow_directory(&dir, false);
+        }
+    }
+}
+
 pub(crate) fn demo_catalog() -> Catalog {
     let conn = rusqlite::Connection::open_in_memory().expect("in-memory sqlite");
     conn.execute_batch(include_str!("../demo/demo_catalog.sql"))
@@ -100,21 +123,40 @@ pub(crate) async fn build_transport(state: &AppState) -> (Arc<dyn Transport>, Op
         }
         TransportMode::Folder => (Arc::new(FolderTransport::new()), None),
         TransportMode::Managed => {
-            let settings = state.settings.read().await;
-            match resilio::locate_binary(state.resource_dir.as_deref(), &state.dirs.data) {
+            let (lan_only, port) = {
+                let settings = state.settings.read().await;
+                (settings.lan_mode, settings.sync_port)
+            };
+            let mut binary =
+                resilio::locate_binary(state.resource_dir.as_deref(), &state.dirs.data);
+            if binary.is_none() {
+                match resilio::install_bundled_windows(
+                    state.resource_dir.as_deref(),
+                    &state.dirs.data,
+                )
+                .await
+                {
+                    Ok(found) => binary = found,
+                    Err(e) => log::warn!("bundled Resilio installer failed: {e}"),
+                }
+            }
+            match binary {
                 Some(binary) => {
                     let mut cfg = ResilioConfig::new(binary, state.dirs.transport_dir());
-                    cfg.lan_only = settings.lan_mode;
-                    cfg.listening_port = settings.sync_port;
+                    cfg.lan_only = lan_only;
+                    cfg.listening_port = port;
                     let t = ResilioTransport::new(cfg);
                     match t.start().await {
                         Ok(()) => (Arc::new(t), None),
-                        Err(e) => (Arc::new(FolderTransport::new()), Some(format!("Resilio Sync konnte nicht gestartet werden: {e}"))),
+                        Err(e) => (
+                            Arc::new(FolderTransport::new()),
+                            Some(format!("err.resilio_start_failed|{e}")),
+                        ),
                     }
                 }
                 None => (
                     Arc::new(FolderTransport::new()),
-                    Some("Resilio Sync wurde nicht gefunden (weder mitgeliefert noch installiert). Ordner-Modus aktiv.".into()),
+                    Some("err.resilio_not_found".into()),
                 ),
             }
         }
@@ -139,6 +181,7 @@ pub(crate) fn build_manager(
     transport: Arc<dyn Transport>,
     catalog: Catalog,
     library: Arc<std::sync::RwLock<Library>>,
+    lan_only: bool,
 ) -> Arc<InstallManager> {
     let lib_for_paths = library.clone();
     let manifests = state.manifests.clone();
@@ -161,7 +204,7 @@ pub(crate) fn build_manager(
         },
         Arc::new(AppSetupHook),
     );
-    manager.lan_only = true;
+    manager.lan_only = lan_only;
     Arc::new(manager)
 }
 
@@ -217,7 +260,10 @@ pub fn run() {
                 });
             let manifests =
                 ManifestStore::new(Some(dirs.data.join("manifests")), bundled_manifests);
+            let library = Arc::new(std::sync::RwLock::new(settings.library.clone()));
+            update_media_scope(app.handle(), &[], &settings.library);
             let state = Arc::new(AppState {
+                library,
                 dirs,
                 demo,
                 settings: RwLock::new(settings),
@@ -266,9 +312,7 @@ pub fn run() {
 }
 
 async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
-    let library = Arc::new(std::sync::RwLock::new(
-        state.settings.read().await.library.clone(),
-    ));
+    let library = state.library.clone();
     let (transport, error) = build_transport(&state).await;
     *state.transport_error.write().await = error;
     *state.transport.write().await = Some(transport.clone());
@@ -279,12 +323,20 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
         let lib = library.read().map(|l| l.clone()).unwrap_or_default();
         load_catalog_from_library(&lib, &state.dirs).unwrap_or_default()
     };
-    let manager = build_manager(&state, transport.clone(), catalog, library.clone());
+    let lan_only = state.settings.read().await.lan_mode;
+    let manager = build_manager(
+        &state,
+        transport.clone(),
+        catalog,
+        library.clone(),
+        lan_only,
+    );
     manager.adopt_existing().await;
     *state.manager.write().await = Some(manager.clone());
 
     // Keep the shared library in sync with settings changes.
     let lib_sync = library.clone();
+    let app_lib = app.clone();
     let st = state.clone();
     tauri::async_runtime::spawn(async move {
         loop {
@@ -292,7 +344,8 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
                 let s = st.settings.read().await;
                 if let Ok(mut l) = lib_sync.write() {
                     if *l != s.library {
-                        *l = s.library.clone();
+                        let old = std::mem::replace(&mut *l, s.library.clone());
+                        update_media_scope(&app_lib, &old.roots, &s.library);
                     }
                 }
             }

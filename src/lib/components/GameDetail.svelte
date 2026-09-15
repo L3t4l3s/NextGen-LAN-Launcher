@@ -2,7 +2,7 @@
   import type { GameView, LaunchPlan } from "$lib/types";
   import { app } from "$lib/stores/app.svelte";
   import { api, confirmDialog, copyText, coverSrc } from "$lib/api";
-  import { t } from "$lib/i18n";
+  import { t, userText } from "$lib/i18n";
   import { formatBytes, formatPercent, formatRevision, formatSpeed, placeholderGradient, stripHtml } from "$lib/format";
   import { isBusy, isPlayable, phaseBadge } from "$lib/phase";
   import ProblemCard from "./ProblemCard.svelte";
@@ -41,7 +41,7 @@
       await fn();
       if (toast) app.toast("success", toast);
     } catch (e) {
-      app.toast("error", t("toast.error", { detail: String(e) }));
+      app.toast("error", t("toast.error", { detail: userText(e) }));
     } finally {
       working = false;
     }
@@ -84,7 +84,7 @@
     try {
       plan = await api.launchPlan(game.id, alternative ?? undefined);
     } catch (e) {
-      app.toast("error", String(e));
+      app.toast("error", userText(e));
     }
   }
 
@@ -98,7 +98,10 @@
 
 <div class="detail">
   <div class="hero" style:background={game.cover ? undefined : placeholderGradient(game.id)}>
-    {#if game.cover}<img src={coverSrc(game.cover)} alt="" />{:else}<span class="initials">{game.title.slice(0, 2)}</span>{/if}
+    {#if game.video}
+      <!-- svelte-ignore a11y_media_has_caption -->
+      <video src={coverSrc(game.video)} autoplay muted loop playsinline poster={coverSrc(game.cover) ?? undefined}></video>
+    {:else if game.cover}<img src={coverSrc(game.cover)} alt="" />{:else}<span class="initials">{game.title.slice(0, 2)}</span>{/if}
     <button class="close ghost" onclick={onclose} title={t("action.close")}>✕</button>
   </div>
 
@@ -260,7 +263,8 @@
     color: rgba(255, 255, 255, 0.55);
     letter-spacing: -0.03em;
   }
-  .hero img {
+  .hero img,
+  .hero video {
     width: 100%;
     height: 100%;
     object-fit: cover;

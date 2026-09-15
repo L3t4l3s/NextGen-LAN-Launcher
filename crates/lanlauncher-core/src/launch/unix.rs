@@ -104,6 +104,7 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
                 env,
                 runner: "native (.app)".into(),
                 needs_elevation: false,
+                raw_command_line: None,
             });
         }
         return Ok(LaunchPlan {
@@ -113,6 +114,7 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
             env,
             runner: "native".into(),
             needs_elevation: false,
+            raw_command_line: None,
         });
     }
 
@@ -149,6 +151,7 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
                 env,
                 runner: "CrossOver".into(),
                 needs_elevation: false,
+                raw_command_line: None,
             })
         }
         Runner::Proton => {
@@ -169,6 +172,7 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
                 env,
                 runner: "Proton".into(),
                 needs_elevation: false,
+                raw_command_line: None,
             })
         }
         _ => {
@@ -184,6 +188,7 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
                 env,
                 runner: "Wine".into(),
                 needs_elevation: false,
+                raw_command_line: None,
             })
         }
     }

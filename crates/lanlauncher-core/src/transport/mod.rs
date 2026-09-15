@@ -92,6 +92,10 @@ pub struct ShareOptions {
 #[async_trait]
 pub trait Transport: Send + Sync {
     fn kind(&self) -> TransportKind;
+    /// PID of the sync engine process this transport started, if any.
+    fn process_id(&self) -> Option<u32> {
+        None
+    }
     /// Bring the transport up (start the process, wait for the API).
     async fn start(&self) -> Result<()>;
     /// Shut the transport down cleanly.
@@ -115,4 +119,16 @@ pub fn partial_path(final_path: &Path) -> PathBuf {
     let mut s = final_path.as_os_str().to_owned();
     s.push(PARTIAL_SUFFIX);
     PathBuf::from(s)
+}
+
+/// Directory key for matching engine-reported paths against our own: the
+/// engine may differ in separators, trailing slashes and (on Windows) case.
+pub fn normalise_dir(path: &Path) -> String {
+    let s = path.to_string_lossy().replace('\\', "/");
+    let s = s.trim_end_matches('/');
+    if cfg!(target_os = "windows") {
+        s.to_ascii_lowercase()
+    } else {
+        s.to_string()
+    }
 }

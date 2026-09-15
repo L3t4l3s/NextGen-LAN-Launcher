@@ -47,6 +47,7 @@ function g(
     genre,
     readme,
     cover: null,
+    video: null,
     manifest:
       id === "amongus" || id === "goldsrc" || id === "quake3"
         ? {

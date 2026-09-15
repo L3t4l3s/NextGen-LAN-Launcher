@@ -1,73 +1,80 @@
 # NextGen LAN Launcher
 
-Ein plattformübergreifender Nachfolger des **ETI LAN Launchers** (eti-lan.xyz) für LAN-Partys:
-Spiele aus dem bestehenden ETI-Ökosystem (Sync-Server, `game.db`, `.eti`-Pakete, LANPage)
-installieren und starten – auf **Windows 10/11, macOS und Linux**, mit einem modernen,
-pro LAN anpassbaren Interface und klaren Hilfetexten, wenn etwas nicht funktioniert.
+A cross-platform successor to the **ETI LAN Launcher** (eti-lan.xyz) for LAN parties: install and
+start games from the existing ETI ecosystem (sync server, `game.db`, `.eti` packages, LANPage) on
+**Windows 10/11, macOS and Linux**, with a modern interface that organisers can re-brand per
+event and with clear instructions whenever something does not work.
 
-> Status: **0.1.0 – Grundstein.** Kernlogik und Oberfläche sind fertig und getestet, der
-> Betrieb gegen einen echten Sync-Server muss auf der nächsten LAN verifiziert werden
-> (siehe [Offene Punkte](#offene-punkte)).
+> Status: **0.1.0 – foundation.** Core logic and UI are complete and tested; operation against a
+> real sync server still has to be verified at the next LAN (see [Open items](#open-items)).
 
-![Bibliothek](screenshots/01-library.png)
+![Library](screenshots/01-library.png)
 
-## Was anders ist als beim alten Launcher
+## What is different from the old launcher
 
-| Problem auf der letzten LAN | Lösung hier |
+| Problem at the last LAN | Solution here |
 |---|---|
-| Sync hängt bei 99 %, „Installieren“ wird nie „Spielen“ | Der Launcher **prüft das Archiv selbst** (CRC-Test) und entpackt, sobald die Datei vollständig auf der Platte liegt – unabhängig davon, was der Sync anzeigt. `crates/lanlauncher-core/src/install.rs` |
-| „Too many workers“ beim Start | Genau eine vom Launcher gesteuerte Sync-Instanz; verwaiste Prozesse werden beim Start aufgeräumt. |
-| Windows stellt das LAN auf „Öffentliches Netzwerk“ | Diagnose erkennt das Profil und stellt es per Klick auf „Privat“; Firewall-Regeln gelten für alle Profile. |
-| Unklare Icon-Leiste | Oben beschriftete Reiter: Bibliothek · Downloads · LAN · Diagnose, rechts Einstellungen. |
-| Reparieren-Button versteckt | „Reparieren“, „Sync anhalten“, „Ordner öffnen“, „Entfernen“ sind **immer** sichtbar. |
-| Nur ein Spiele-Ordner | Mehrere Library-Ordner (verschiedene SSDs), neue Spiele landen dort, wo Platz ist. |
-| Mac/Linux | Startprofile (`manifests/*.toml`) plus Wine/CrossOver/Proton; Windows nutzt weiterhin `game_start.cmd`. |
+| Sync stuck at 99 %, "Install" never turns into "Play" | The launcher **verifies the archive itself** (CRC test) and extracts as soon as the file is complete on disk, regardless of what the sync engine reports. `crates/lanlauncher-core/src/install.rs` |
+| "Too many workers" at startup | Exactly one sync engine instance, controlled by the launcher; orphaned processes are cleaned up at start. |
+| Windows switches the LAN to a "Public" network profile | Diagnostics detects the profile and switches it to "Private" with one click; firewall rules apply to all profiles. |
+| Unclear row of icons at the top | Labelled tabs: Library · Downloads · LAN · Diagnostics, plus Settings on the right. |
+| Only one game folder | Several library folders (e.g. different SSDs); new games go where there is most space. |
+| Windows only | Launch profiles (`manifests/*.toml`) plus Wine/CrossOver/Proton on macOS and Linux; Windows keeps running `game_start.cmd`. |
 
-## Aufbau
+Design decision from our planning: every game has **one** primary button (Install / Downloading… /
+Play / Update), but the secondary actions **Repair**, **Pause sync**, **Open folder** and **Remove**
+stay visible at all times, whatever the launcher is currently doing. Repair stops the sync,
+verifies the archive and re-extracts it.
+
+## Layout
 
 ```
-crates/lanlauncher-core/   Rust-Bibliothek ohne GUI: Katalog, launcher.ini, Transport (Resilio/Ordner/Demo),
-                           Install-Zustandsautomat, UnRAR, Start, Diagnose – 60+ Tests
-src-tauri/                 Tauri-2-App (Commands, Events, Sidecar, Demo-Modus)
-src/                       Svelte-5-Frontend (Deutsch/Englisch, Theme-Engine, Browser-Mock für Entwicklung)
-manifests/                 Startprofile für Mac/Linux (Start: amongus, rocket, goldsrc, wc3, quake3, l4d2)
-themes/                    Beispiel-Themes
-tools/dev-lanpage/         Mini-LANPage für lokale Tests (launcher.ini, launcher.css, stats.php)
-docs/                      Architektur, Kompatibilität, Troubleshooting, Theming, Lizenzen
+crates/lanlauncher-core/   Rust library without GUI: catalog, launcher.ini, transport (Resilio/folder/demo),
+                           install state machine, UnRAR, launching, diagnostics – 60+ tests
+src-tauri/                 Tauri 2 app (commands, events, sidecar, demo mode)
+src/                       Svelte 5 frontend (German/English, theme engine, browser mock for development)
+manifests/                 Launch profiles for macOS/Linux (initially: amongus, rocket, goldsrc, wc3, quake3, l4d2)
+themes/                    Example themes
+tools/dev-lanpage/         Minimal LANPage stand-in for local testing (launcher.ini, launcher.css, stats.php)
+docs/                      Architecture, compatibility, troubleshooting, theming, licensing
 ```
 
 Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) ·
 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) · [docs/THEMING.md](docs/THEMING.md) ·
-[docs/LICENSING.md](docs/LICENSING.md)
+[docs/LICENSING.md](docs/LICENSING.md) · [CLAUDE.md](CLAUDE.md) (operational notes for contributors)
 
-## Entwickeln
+## Development
 
-Voraussetzungen: Rust (stable), Node 22, unter Linux `libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev`.
+Prerequisites: Rust (stable), Node 22, and on Linux
+`libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev`.
 
 ```bash
 npm install
-cargo test -p lanlauncher-core          # Kernlogik
-npm run check && npm test               # Frontend
-npm run dev                             # UI im Browser mit simuliertem Backend (http://localhost:1420)
-npm run tauri dev -- -- --demo          # echte App im Demo-Modus (simulierter Sync)
-npm run tauri build                     # Installer für die aktuelle Plattform
-node tools/dev-lanpage/server.mjs       # lokale LANPage-Attrappe auf Port 8080
+cargo test -p lanlauncher-core          # core logic
+npm run check && npm test               # frontend
+npm run dev                             # UI in the browser with a simulated backend (http://localhost:1420)
+npm run tauri dev -- -- --demo          # the real app in demo mode (simulated sync)
+npm run tauri build                     # installer for the current platform
+node tools/dev-lanpage/server.mjs       # local LANPage stand-in on port 8080
 ```
 
-Im Browser zeigt `http://localhost:1420/?wizard` den Ersteinrichtungs-Assistenten.
+In the browser, `http://localhost:1420/?wizard` shows the first-run wizard.
 
-## Offene Punkte
+## Open items
 
-- **Echter Resilio-Betrieb:** Der Client spricht die dokumentierte Sync-API (`/api`, mit API-Key)
-  und als Fallback die GUI-Endpunkte. Beides ist nur gegen einen laufenden Sync-Server prüfbar.
-  Die Install-Logik hängt bewusst nicht davon ab.
-- **Windows-Installer mit Resilio:** `release.yml` lädt die offizielle Binärdatei; Hashes in
-  `resilio.lock.json` sind noch nicht gepinnt. Silent-Install unter Windows ist ungetestet.
-- **Mac/Linux-Startprofile:** Sechs Spiele haben Profile; alle anderen erhalten ein aus
-  `game_start.cmd` abgeleitetes Profil (91 von 158 ETI-Skripten haben genau eine Exe) oder
-  die Exe wird beim ersten Start gewählt.
-- Roadmap: LANPage im Launcher, LAN-Share-Oberfläche, TS3/Discord-Integration.
+- **Real Resilio operation:** the client speaks the documented Sync API (`/api`, with an API key)
+  and falls back to the GUI endpoints. Both can only be verified against a running sync server.
+  The install logic deliberately does not depend on either.
+- **Windows installer with Resilio:** `release.yml` downloads the official binary; the hashes in
+  `resilio.lock.json` are not pinned yet. The silent installer run on first start
+  (`install_bundled_windows`) and launching scripts via `cmd.exe /S /C` are untested.
+- **Covers and videos** come from the `eti_launcher` share at the LAN (`update/assets.eti`,
+  `video/<id>.mp4`). Demo mode intentionally ships no game artwork.
+- **macOS/Linux launch profiles:** six games have curated profiles; every other game gets a profile
+  derived from `game_start.cmd` (91 of 158 ETI scripts start exactly one executable) or the user
+  picks the executable on first launch.
+- Roadmap: LANPage inside the launcher, a LAN-Share file-sharing view, TS3/Discord integration.
 
-## Lizenz
+## License
 
-MIT – siehe [LICENSE](LICENSE) und [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+MIT – see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

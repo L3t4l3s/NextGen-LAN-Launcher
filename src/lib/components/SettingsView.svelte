@@ -1,7 +1,7 @@
 <script lang="ts">
   import { app } from "$lib/stores/app.svelte";
   import { api, pickFolder } from "$lib/api";
-  import { languages, t } from "$lib/i18n";
+  import { languages, t, userText } from "$lib/i18n";
   import { formatBytes } from "$lib/format";
   import type { LibrarySpace, Settings } from "$lib/types";
   import { onMount } from "svelte";
@@ -45,7 +45,7 @@
       draft = structuredClone(saved);
       app.toast("success", t("settings.saved"));
     } catch (e) {
-      app.toast("error", String(e));
+      app.toast("error", userText(e));
     } finally {
       saving = false;
     }

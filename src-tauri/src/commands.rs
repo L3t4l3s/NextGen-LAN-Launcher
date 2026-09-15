@@ -59,6 +59,8 @@ pub struct GameView {
     pub genre: Option<String>,
     pub readme: Option<String>,
     pub cover: Option<String>,
+    /// Preview video (`eti_launcher/video/<id>.mp4`) if the share provides one.
+    pub video: Option<String>,
     pub status: Option<GameStatus>,
     pub manifest: Option<ManifestInfo>,
     pub disabled_by_event: bool,
@@ -175,6 +177,11 @@ pub async fn get_games(state: State<'_, Arc<AppState>>) -> Cmd<Vec<GameView>> {
                 .cloned(),
             cover: lanlauncher_core::catalog::find_cover(&covers, &g.id)
                 .map(|p| p.to_string_lossy().to_string()),
+            video: settings
+                .library
+                .default_root()
+                .and_then(|r| lanlauncher_core::catalog::find_video(&r.path, &g.id))
+                .map(|p| p.to_string_lossy().to_string()),
             status: statuses.get(&g.id).cloned(),
             manifest: manifest
                 .as_ref()
@@ -204,7 +211,7 @@ async fn manager(state: &AppState) -> Cmd<Arc<lanlauncher_core::install::Install
         .read()
         .await
         .clone()
-        .ok_or_else(|| "Der Launcher startet noch, bitte kurz warten.".to_string())
+        .ok_or_else(|| "err.not_ready".to_string())
 }
 
 #[tauri::command]
@@ -241,12 +248,12 @@ async fn build_plan(
     alternative: Option<usize>,
 ) -> Cmd<LaunchPlan> {
     let catalog = state.catalog().await;
-    let game = catalog.game(game_id).ok_or("Unbekanntes Spiel")?;
+    let game = catalog.game(game_id).ok_or("err.unknown_game")?;
     let settings = state.settings.read().await.clone();
     let paths = settings
         .library
         .game_paths(game_id)
-        .ok_or("Kein Library-Ordner konfiguriert")?;
+        .ok_or("err.no_library")?;
     let manifest = resolve_manifest(state, game);
     let receipt = Receipt::load(&paths.receipt);
     let ctx = LaunchContext {
@@ -276,7 +283,7 @@ pub async fn play_game(
     alternative: Option<usize>,
 ) -> Cmd<u32> {
     if state.demo {
-        return Err("Im Demo-Modus werden keine Spiele gestartet.".into());
+        return Err("err.demo_no_play".into());
     }
     let plan = build_plan(&state, &game_id, alternative).await?;
     let pid = launch::spawn(&plan).await.map_err(err)?;
@@ -295,7 +302,7 @@ pub async fn list_executables(
     let paths = settings
         .library
         .game_paths(&game_id)
-        .ok_or("Kein Library-Ordner konfiguriert")?;
+        .ok_or("err.no_library")?;
     Ok(launch::list_executables(&paths, 200))
 }
 
@@ -306,14 +313,14 @@ pub async fn set_exe_override(
     exe: String,
 ) -> Cmd<()> {
     if !lanlauncher_core::manifest::is_safe_relative(&exe) {
-        return Err("Ungültiger Pfad".into());
+        return Err("err.invalid_path".into());
     }
     let settings = state.settings.read().await;
     let paths = settings
         .library
         .game_paths(&game_id)
-        .ok_or("Kein Library-Ordner konfiguriert")?;
-    let mut receipt = Receipt::load(&paths.receipt).ok_or("Spiel ist nicht installiert")?;
+        .ok_or("err.no_library")?;
+    let mut receipt = Receipt::load(&paths.receipt).ok_or("err.not_installed")?;
     receipt.exe_override = Some(exe);
     receipt.save(&paths.receipt).map_err(err)
 }
@@ -334,12 +341,8 @@ pub async fn save_settings(state: State<'_, Arc<AppState>>, settings: Settings) 
     }
     for root in &new.library.roots {
         if !root.path.exists() {
-            std::fs::create_dir_all(&root.path).map_err(|e| {
-                format!(
-                    "Ordner {} kann nicht angelegt werden: {e}",
-                    root.path.display()
-                )
-            })?;
+            std::fs::create_dir_all(&root.path)
+                .map_err(|e| format!("err.create_folder|{}: {e}", root.path.display()))?;
         }
     }
     new.save(&state.settings_path()).map_err(err)?;
@@ -353,9 +356,8 @@ pub async fn refresh_catalog(state: State<'_, Arc<AppState>>) -> Cmd<usize> {
         return Ok(state.catalog().await.games.len());
     }
     let library = state.settings.read().await.library.clone();
-    let catalog = crate::load_catalog_from_library(&library, &state.dirs).ok_or(
-        "Kein Katalog gefunden. Der Ordner eti_launcher wird zuerst synchronisiert – bitte warten oder Diagnose prüfen.",
-    )?;
+    let catalog =
+        crate::load_catalog_from_library(&library, &state.dirs).ok_or("err.no_catalog")?;
     let n = catalog.games.len();
     if let Some(m) = state.manager.read().await.as_ref() {
         m.set_catalog(catalog).await;
@@ -403,7 +405,11 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
     }
 
     checks.push("orphans".into());
-    problems.extend(diagnostics::check_orphans(None));
+    let own_pid = match state.transport.read().await.as_ref() {
+        Some(t) => t.process_id(),
+        None => None,
+    };
+    problems.extend(diagnostics::check_orphans(own_pid));
 
     checks.push("lanpage".into());
     let event = state.event.read().await.clone();
@@ -497,7 +503,7 @@ pub async fn open_url(app: tauri::AppHandle, url: String) -> Cmd<()> {
         || url.starts_with("adc://")
         || url.starts_with("adcs://"))
     {
-        return Err("Nicht unterstützter Link".into());
+        return Err("err.unsupported_link".into());
     }
     app.opener().open_url(url, None::<&str>).map_err(err)
 }
@@ -507,10 +513,10 @@ pub async fn open_url(app: tauri::AppHandle, url: String) -> Cmd<()> {
 #[tauri::command]
 pub async fn get_share_key(state: State<'_, Arc<AppState>>, game_id: String) -> Cmd<String> {
     if state.effective_transport_mode().await != TransportMode::Folder {
-        return Err("Der Key wird nur im Ordner-Modus angezeigt.".into());
+        return Err("err.key_folder_mode_only".into());
     }
     let catalog = state.catalog().await;
-    let game = catalog.game(&game_id).ok_or("Unbekanntes Spiel")?;
+    let game = catalog.game(&game_id).ok_or("err.unknown_game")?;
     Ok(game.key.expose().to_string())
 }
 
@@ -558,11 +564,9 @@ pub async fn restart_transport_inner(state: &Arc<AppState>) -> Cmd<()> {
     let (transport, error) = crate::build_transport(state).await;
     *state.transport_error.write().await = error.clone();
     *state.transport.write().await = Some(transport.clone());
-    let library = Arc::new(std::sync::RwLock::new(
-        state.settings.read().await.library.clone(),
-    ));
     let catalog = state.catalog().await;
-    let manager = crate::build_manager(state, transport, catalog, library);
+    let lan_only = state.settings.read().await.lan_mode;
+    let manager = crate::build_manager(state, transport, catalog, state.library.clone(), lan_only);
     manager.adopt_existing().await;
     *state.manager.write().await = Some(manager);
     match error {

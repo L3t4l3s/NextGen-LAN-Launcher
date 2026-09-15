@@ -12,6 +12,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub struct AppState {
+    /// Library roots shared with the install manager's path resolver; kept in
+    /// sync with `settings.library` by a background loop.
+    pub library: Arc<std::sync::RwLock<lanlauncher_core::library::Library>>,
     pub dirs: AppDirs,
     pub demo: bool,
     pub settings: RwLock<Settings>,

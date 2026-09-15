@@ -56,10 +56,18 @@ case and is used by `--demo` / `LANLAUNCHER_DEMO=1`.
   organiser overlay `nll-manifest.toml` in the share → bundled → derived from the script),
   picks CrossOver / Proton / Wine and uses one prefix per game (`<share>/.nll-prefix`).
 
+## Media
+
+Covers are extracted from `eti_launcher/update/assets.eti` into the cache directory. Preview
+videos are looked up at `eti_launcher/video/<id>.mp4` (also `videos/`, `update/video/`, `.webm`)
+inside the default library root and played muted in the detail header. Library roots are added to
+the Tauri asset-protocol scope at runtime so the WebView can load them.
+
 ## Diagnostics and fixes
 
 `diagnostics.rs` produces `Problem { code, severity, params, steps, fix }`. The UI localises
-by code (`problem.<code>.title/.cause`, `problem.<step>`). `fixes.rs` executes `FixAction`s:
+by code (`problem.<code>.title/.cause`, `problem.<step>`). Command errors and fix results are
+codes as well (`err.*`, `msg.*`, optional `|detail`) resolved by `userText()` in the frontend. `fixes.rs` executes `FixAction`s:
 PowerShell `Set-NetConnectionProfile`, `netsh advfirewall` rules for all profiles, Defender
 exclusions, transport restart, repair, open folder/URL.
 

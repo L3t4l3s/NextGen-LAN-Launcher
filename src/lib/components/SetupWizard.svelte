@@ -1,7 +1,7 @@
 <script lang="ts">
   import { app } from "$lib/stores/app.svelte";
   import { api, pickFolder } from "$lib/api";
-  import { t } from "$lib/i18n";
+  import { t, userText } from "$lib/i18n";
   import type { Report, Settings } from "$lib/types";
   import ProblemCard from "./ProblemCard.svelte";
 
@@ -24,7 +24,7 @@
     try {
       await app.saveSettings(next);
     } catch (e) {
-      app.toast("error", String(e));
+      app.toast("error", userText(e));
       return;
     }
     step = 3;

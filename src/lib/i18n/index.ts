@@ -32,3 +32,14 @@ export const languages = [
   { id: "de", label: "Deutsch" },
   { id: "en", label: "English" },
 ];
+
+/**
+ * Backend results are stable codes (`err.*` / `msg.*`), optionally followed by
+ * `|detail`. Anything else (unexpected errors) is shown verbatim.
+ */
+export function userText(input: unknown): string {
+  const raw = input instanceof Error ? input.message : String(input ?? "");
+  const m = /^((?:err|msg)\.[a-z0-9_]+)(?:\|([\s\S]*))?$/.exec(raw);
+  if (!m) return raw;
+  return has(m[1]) ? t(m[1], { detail: m[2] ?? "" }) : raw;
+}

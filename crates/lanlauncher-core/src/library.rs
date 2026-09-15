@@ -34,14 +34,69 @@ impl LibraryRoot {
 
 /// Free/total bytes of the volume a path lives on. Returns `None` if the path
 /// does not exist yet or the platform does not report disk information.
+/// Prefer [`DiskTable`] when querying many paths in one go.
 pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
-    let canonical = path.canonicalize().ok()?;
-    let disks = sysinfo::Disks::new_with_refreshed_list();
-    disks
-        .iter()
-        .filter(|d| canonical.starts_with(d.mount_point()))
-        .max_by_key(|d| d.mount_point().as_os_str().len())
-        .map(|d| (d.available_space(), d.total_space()))
+    DiskTable::refresh().space_for(path)
+}
+
+/// `canonicalize()` on Windows yields verbatim paths (`\\?\C:\…`) that never
+/// `starts_with` a plain mount point (`C:\`). Strip the prefix again.
+fn strip_verbatim(path: PathBuf) -> PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        path
+    }
+}
+
+/// Snapshot of mounted volumes, refreshed once per polling round so that
+/// many games do not each re-enumerate every mount.
+#[derive(Debug, Default)]
+pub struct DiskTable {
+    mounts: Vec<(PathBuf, u64, u64)>,
+}
+
+impl DiskTable {
+    pub fn refresh() -> Self {
+        let disks = sysinfo::Disks::new_with_refreshed_list();
+        Self {
+            mounts: disks
+                .iter()
+                .map(|d| {
+                    (
+                        strip_verbatim(d.mount_point().to_path_buf()),
+                        d.available_space(),
+                        d.total_space(),
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    /// (free, total) bytes of the volume holding `path` or its nearest
+    /// existing parent.
+    pub fn space_for(&self, path: &Path) -> Option<(u64, u64)> {
+        let mut p = Some(path);
+        let canonical = loop {
+            let cur = p?;
+            if let Ok(c) = cur.canonicalize() {
+                break strip_verbatim(c);
+            }
+            p = cur.parent();
+        };
+        self.mounts
+            .iter()
+            .filter(|(m, _, _)| canonical.starts_with(m))
+            .max_by_key(|(m, _, _)| m.as_os_str().len())
+            .map(|(_, free, total)| (*free, *total))
+    }
+
+    pub fn free_for(&self, path: &Path) -> Option<u64> {
+        self.space_for(path).map(|(free, _)| free)
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,6 +170,30 @@ impl Library {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verbatim_prefixes_are_stripped() {
+        assert_eq!(
+            strip_verbatim(PathBuf::from(r"\\?\D:\LAN")),
+            PathBuf::from(r"D:\LAN")
+        );
+        assert_eq!(
+            strip_verbatim(PathBuf::from(r"\\?\UNC\nas\share")),
+            PathBuf::from(r"\\nas\share")
+        );
+        assert_eq!(strip_verbatim(PathBuf::from("/lan")), PathBuf::from("/lan"));
+    }
+
+    #[test]
+    fn disk_table_reports_space_for_existing_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let table = DiskTable::refresh();
+        let nested = tmp.path().join("not-yet-created");
+        assert_eq!(
+            table.free_for(tmp.path()).is_some(),
+            table.free_for(&nested).is_some()
+        );
+    }
 
     #[test]
     fn first_root_becomes_default_and_default_is_exclusive() {

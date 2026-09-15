@@ -72,6 +72,7 @@ export interface GameView {
   genre: string | null;
   readme: string | null;
   cover: string | null;
+  video: string | null;
   status: GameStatus | null;
   manifest: ManifestInfo | null;
   disabledByEvent: boolean;
@@ -195,6 +196,7 @@ export interface LaunchPlan {
   env: Record<string, string>;
   runner: string;
   needsElevation: boolean;
+  rawCommandLine?: string;
 }
 
 export interface LibrarySpace {

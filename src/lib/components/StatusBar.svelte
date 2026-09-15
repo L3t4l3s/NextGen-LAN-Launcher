@@ -1,6 +1,6 @@
 <script lang="ts">
   import { app } from "$lib/stores/app.svelte";
-  import { t } from "$lib/i18n";
+  import { t, userText } from "$lib/i18n";
 
   const level = $derived.by(() => {
     const h = app.health;
@@ -27,7 +27,7 @@
   {/if}
   {#if app.bootstrap?.transportError}
     <span class="sep">·</span>
-    <button class="link" onclick={() => (app.view = "diagnostics")}>{app.bootstrap.transportError}</button>
+    <button class="link" onclick={() => (app.view = "diagnostics")}>{userText(app.bootstrap.transportError)}</button>
   {/if}
   <span class="grow"></span>
   {#if problems > 0}

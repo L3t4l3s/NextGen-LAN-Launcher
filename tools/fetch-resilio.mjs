@@ -39,7 +39,8 @@ if (platform.startsWith("linux")) {
   execSync(`cp -R "${mount}/Resilio Sync.app" "${dest}/"`, { stdio: "inherit" });
   execSync(`hdiutil detach "${mount}"`);
 } else {
-  // Windows: keep the installer; the launcher runs it silently on first start
-  // when no system-wide installation is found (see docs/ARCHITECTURE.md).
+  // Windows: keep the installer. When no system-wide Resilio is found the
+  // launcher runs it silently (`/S /D=<data>/resilio`, see
+  // transport::resilio::install_bundled_windows). Untested on real hardware.
 }
 console.log(`done -> ${dest}`);

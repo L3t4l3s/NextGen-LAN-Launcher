@@ -630,6 +630,13 @@ impl Transport for ResilioTransport {
         TransportKind::Resilio
     }
 
+    fn process_id(&self) -> Option<u32> {
+        self.child
+            .lock()
+            .ok()
+            .and_then(|c| c.as_ref().and_then(|ch| ch.id()))
+    }
+
     async fn start(&self) -> Result<()> {
         if !self.config.binary.is_file() {
             return Err(Error::Transport(format!(
@@ -749,10 +756,12 @@ impl Transport for ResilioTransport {
 
     async fn share_status(&self, dir: &Path) -> Result<Option<ShareStatus>> {
         let folders = self.client.folders().await?;
-        Ok(folders
-            .get(dir)
-            .cloned()
-            .or_else(|| folders.values().find(|s| same_dir(&s.dir, dir)).cloned()))
+        Ok(folders.get(dir).cloned().or_else(|| {
+            folders
+                .values()
+                .find(|s| normalise_dir(&s.dir) == normalise_dir(dir))
+                .cloned()
+        }))
     }
 
     async fn list_shares(&self) -> Result<Vec<ShareStatus>> {
@@ -778,16 +787,6 @@ impl Transport for ResilioTransport {
         }
         Ok(())
     }
-}
-
-fn same_dir(a: &Path, b: &Path) -> bool {
-    let norm = |p: &Path| {
-        p.to_string_lossy()
-            .replace('\\', "/")
-            .trim_end_matches('/')
-            .to_ascii_lowercase()
-    };
-    norm(a) == norm(b)
 }
 
 /// Where to find the Resilio Sync binary: bundled resource, previous
@@ -843,6 +842,45 @@ pub fn locate_binary(resource_dir: Option<&Path>, data_dir: &Path) -> Option<Pat
         candidates.push(PathBuf::from("/usr/local/bin/rslsync"));
     }
     candidates.into_iter().find(|p| p.is_file())
+}
+
+/// Windows only: the release bundles Resilio's installer
+/// (`Resilio-Sync_x64.exe`). When no installed engine is found, run it
+/// silently into the launcher's data dir and return the resulting binary.
+/// Untested on real hardware; see docs/ARCHITECTURE.md.
+pub async fn install_bundled_windows(
+    resource_dir: Option<&Path>,
+    data_dir: &Path,
+) -> Result<Option<PathBuf>> {
+    if !cfg!(target_os = "windows") {
+        return Ok(None);
+    }
+    let Some(installer) = resource_dir
+        .map(|r| r.join("resilio").join("Resilio-Sync_x64.exe"))
+        .filter(|p| p.is_file())
+    else {
+        return Ok(None);
+    };
+    let target = data_dir.join("resilio");
+    std::fs::create_dir_all(&target).map_err(|e| Error::io(&target, e))?;
+    let mut cmd = tokio::process::Command::new(&installer);
+    cmd.arg("/S");
+    // NSIS `/D=` must be the last argument and must not be quoted, even when
+    // the path contains spaces; std would add quotes, so pass it raw.
+    #[cfg(windows)]
+    cmd.raw_arg(format!("/D={}", target.display()));
+    #[cfg(not(windows))]
+    cmd.arg(format!("/D={}", target.display()));
+    let status = cmd
+        .status()
+        .await
+        .map_err(|e| Error::Transport(format!("Resilio installer: {e}")))?;
+    if !status.success() {
+        return Err(Error::Transport(format!(
+            "Resilio installer exited with {status}"
+        )));
+    }
+    Ok(locate_binary(resource_dir, data_dir))
 }
 
 /// Official download locations (see `resilio.lock.json` for pinned hashes).

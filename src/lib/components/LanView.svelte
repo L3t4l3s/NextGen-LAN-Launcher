@@ -1,7 +1,7 @@
 <script lang="ts">
   import { app } from "$lib/stores/app.svelte";
   import { api } from "$lib/api";
-  import { t } from "$lib/i18n";
+  import { t, userText } from "$lib/i18n";
 
   const cfg = $derived(app.event?.config ?? null);
   const host = $derived(app.settings?.lanpageHost ?? "launcher.lan");
@@ -10,7 +10,7 @@
     try {
       await api.openUrl(url);
     } catch (e) {
-      app.toast("error", String(e));
+      app.toast("error", userText(e));
     }
   }
 
@@ -18,7 +18,7 @@
     try {
       app.event = await api.refreshEvent();
     } catch (e) {
-      app.toast("error", String(e));
+      app.toast("error", userText(e));
     }
   }
 </script>
@@ -73,7 +73,7 @@
         {#if app.health.version} · {t("lan.transport.version", { version: app.health.version })}{/if}
       </p>
     {/if}
-    {#if app.bootstrap?.transportError}<p class="warn">{app.bootstrap.transportError}</p>{/if}
+    {#if app.bootstrap?.transportError}<p class="warn">{userText(app.bootstrap.transportError)}</p>{/if}
   </div>
 
   <p class="hint soon">{t("lan.coming_soon")}</p>
