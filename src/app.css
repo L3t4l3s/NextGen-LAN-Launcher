@@ -12,6 +12,8 @@
   --color-danger: #ff5c5c;
   --color-border: #2a3140;
   --radius: 12px;
+  /* ETI ships covers as 140x100 images; tiles and the detail hero share it. */
+  --cover-ratio: 7 / 5;
   --font-family: "Segoe UI Variable", "Segoe UI", -apple-system, BlinkMacSystemFont, "Inter", Roboto, "Helvetica Neue", Arial, sans-serif;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   --topbar-h: 60px;

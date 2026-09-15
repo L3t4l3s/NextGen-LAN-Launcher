@@ -62,8 +62,7 @@
   }
   .cover {
     position: relative;
-    /* ETI ships covers as 140x100 landscape images. */
-    aspect-ratio: 7 / 5;
+    aspect-ratio: var(--cover-ratio);
     width: 100%;
     display: grid;
     place-items: center;

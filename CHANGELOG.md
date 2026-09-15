@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-- Bibliothekskacheln sind Querformat (7:5) wie ETIs 140×100-Cover; bisher wurden die Bilder im
-  Hochformat stark beschnitten.
+- Bibliothekskacheln und das Detailbild sind Querformat (7:5) wie ETIs 140×100-Cover; bisher wurden
+  die Bilder stark beschnitten. Läuft ein Vorschauvideo, ist das Detailbild 16:9.
 - Beendet sich die Sync-Engine sofort, nennt die Meldung die PID eines bereits laufenden Resilio
   aus derselben Datei (Resilio startet pro Programmdatei nur einmal) und was zu tun ist.
 - Wizard-Reload und Katalog-Watcher entpacken `assets.eti` nicht mehr doppelt.

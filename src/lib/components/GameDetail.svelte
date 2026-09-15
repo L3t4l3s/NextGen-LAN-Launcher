@@ -23,6 +23,14 @@
   let plan = $state<LaunchPlan | null>(null);
   let shareKey = $state<string | null>(null);
   let copied = $state(false);
+  // A video file may exist but not decode (missing codecs, damaged file);
+  // then the cover image and its aspect ratio take over.
+  let videoFailed = $state(false);
+  $effect(() => {
+    game.id;
+    videoFailed = false;
+  });
+  const showVideo = $derived(!!game.video && !videoFailed);
   let alternative = $state<number | null>(null);
 
   $effect(() => {
@@ -103,10 +111,10 @@
 </script>
 
 <div class="detail">
-  <div class="hero" style:background={game.cover ? undefined : placeholderGradient(game.id)}>
-    {#if game.video}
+  <div class="hero" class:video={showVideo} style:background={game.cover ? undefined : placeholderGradient(game.id)}>
+    {#if showVideo}
       <!-- svelte-ignore a11y_media_has_caption -->
-      <video src={coverSrc(game.video)} autoplay muted loop playsinline poster={coverSrc(game.cover) ?? undefined}></video>
+      <video src={coverSrc(game.video)} autoplay muted loop playsinline poster={coverSrc(game.cover) ?? undefined} onerror={() => (videoFailed = true)}></video>
     {:else if game.cover}<img src={coverSrc(game.cover)} alt="" />{:else}<span class="initials">{game.title.slice(0, 2)}</span>{/if}
     <button class="close ghost" onclick={onclose} title={t("action.close")}>✕</button>
   </div>
@@ -258,10 +266,14 @@
   }
   .hero {
     position: relative;
-    aspect-ratio: 16 / 7;
+    aspect-ratio: var(--cover-ratio);
     overflow: hidden;
     display: grid;
     place-items: center;
+  }
+  .hero.video {
+    /* Preview videos are 16:9. */
+    aspect-ratio: 16 / 9;
   }
   .initials {
     font-size: 3.5rem;
