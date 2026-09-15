@@ -77,6 +77,10 @@ Tags `v*` are built by `release.yml` instead.
   2.8.1.1390 (the build the ETI sync server runs) does not; both versions sync with each other. The
   silent installer run on first start (`install_bundled_windows`) and launching scripts via
   `cmd.exe /S /C` are untested.
+- **Windows network check:** the diagnostics now read `IPv4Connectivity`/`IPv6Connectivity` from
+  `Get-NetConnectionProfile`, skip idle adapters and downgrade a public adapter next to a
+  private/domain one to a warning. Written against a test system with a domain network plus an
+  idle second NIC; untested at a LAN party where the only adapter has no internet.
 - **Covers and videos** come from the `eti_launcher` share at the LAN (`update/assets.eti`,
   `video/<id>.mp4`). Demo mode intentionally ships no game artwork.
 - **macOS/Linux launch profiles:** six games have curated profiles; every other game gets a profile

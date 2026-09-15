@@ -226,6 +226,9 @@ export const de: Messages = {
   "problem.network.public_profile.step.fix": "Klicke „Jetzt beheben“ – der Launcher stellt das Profil auf „Privat“.",
   "problem.network.public_profile.step.manual":
     "Manuell: Einstellungen → Netzwerk und Internet → Ethernet/WLAN → Netzwerkprofiltyp „Privat“.",
+  "problem.network.public_profile_secondary.title": "Zweiter Adapter „{adapter}“ steht auf „Öffentlich“",
+  "problem.network.public_profile_secondary.cause":
+    "Dein LAN läuft vermutlich über „{trusted_adapter}“ (privat/Domäne), dann kannst du das ignorieren. Falls der Sync über „{adapter}“ laufen soll, stelle das Profil auf „Privat“.",
 
   "problem.sync.no_peers.title": "Kein anderer Teilnehmer hat dieses Spiel",
   "problem.sync.no_peers.cause": "Seit {minutes} Min. kein Fortschritt und keine Verbindung zu anderen PCs oder zum Sync-Server.",

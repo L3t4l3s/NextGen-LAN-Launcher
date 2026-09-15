@@ -223,6 +223,9 @@ export const en: Messages = {
     "On the public profile Windows blocks inbound connections and discovery of other PCs, so the sync finds nobody on the LAN.",
   "problem.network.public_profile.step.fix": "Click “Fix now” – the launcher switches the profile to “Private”.",
   "problem.network.public_profile.step.manual": "Manually: Settings → Network & Internet → Ethernet/Wi-Fi → Network profile type “Private”.",
+  "problem.network.public_profile_secondary.title": "Second adapter “{adapter}” is set to “Public”",
+  "problem.network.public_profile_secondary.cause":
+    "Your LAN most likely runs over “{trusted_adapter}” (private/domain); then you can ignore this. If the sync should use “{adapter}”, switch its profile to “Private”.",
 
   "problem.sync.no_peers.title": "No other participant has this game",
   "problem.sync.no_peers.cause": "No progress for {minutes} min and no connection to other PCs or the sync server.",

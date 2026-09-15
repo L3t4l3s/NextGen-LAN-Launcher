@@ -48,6 +48,49 @@ pub struct NetworkProfile {
     pub name: String,
     /// `Public`, `Private`, `DomainAuthenticated`.
     pub category: String,
+    /// Best of `IPv4Connectivity`/`IPv6Connectivity`: 0 Disconnected, 1 NoTraffic,
+    /// 2 Subnet, 3 LocalNetwork, 4 Internet. `None` when the query did not report it.
+    #[serde(default)]
+    pub connectivity: Option<u8>,
+}
+
+impl NetworkProfile {
+    pub fn is_public(&self) -> bool {
+        self.category.eq_ignore_ascii_case("Public")
+    }
+
+    /// `Private` or `DomainAuthenticated`: Windows allows discovery and inbound
+    /// connections. Anything else (`Public`, `Unknown`) is not trusted.
+    pub fn is_trusted(&self) -> bool {
+        self.category.eq_ignore_ascii_case("Private")
+            || self.category.eq_ignore_ascii_case("DomainAuthenticated")
+    }
+
+    /// Adapters without traffic (an idle second NIC, a docking station, a
+    /// virtual switch) cannot be the LAN link; their profile is irrelevant.
+    /// Unknown connectivity counts as active.
+    pub fn carries_traffic(&self) -> bool {
+        self.connectivity.is_none_or(|c| c >= 2)
+    }
+
+    fn is_connected(&self) -> bool {
+        self.connectivity.is_none_or(|c| c >= 1)
+    }
+}
+
+fn connectivity_level(v: &serde_json::Value) -> Option<u8> {
+    match v {
+        serde_json::Value::Number(n) => n.as_u64().map(|n| n.min(4) as u8),
+        serde_json::Value::String(s) => match s.as_str() {
+            "Disconnected" => Some(0),
+            "NoTraffic" => Some(1),
+            "Subnet" => Some(2),
+            "LocalNetwork" => Some(3),
+            "Internet" => Some(4),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// Parse `Get-NetConnectionProfile | ConvertTo-Json` output. Accepts a single
@@ -91,6 +134,10 @@ pub fn parse_net_profiles(json: &str) -> Vec<NetworkProfile> {
                     .unwrap_or("")
                     .to_string(),
                 category: cat,
+                connectivity: ["IPv4Connectivity", "IPv6Connectivity"]
+                    .iter()
+                    .filter_map(|k| it.get(k).and_then(connectivity_level))
+                    .max(),
             })
         })
         .collect()
@@ -99,26 +146,45 @@ pub fn parse_net_profiles(json: &str) -> Vec<NetworkProfile> {
 /// Problems for adapters on the "Public" profile. The public profile blocks
 /// inbound connections and multicast discovery, which is exactly why Resilio
 /// transfers failed for every Windows player at the LAN.
+///
+/// Only adapters that carry traffic count. When another active adapter is
+/// already private or domain-joined, the LAN most likely runs over that one
+/// and the public adapter is reported as a warning instead of an error.
 pub fn check_network_profiles(profiles: &[NetworkProfile]) -> Vec<Problem> {
-    profiles
+    let mut active: Vec<&NetworkProfile> =
+        profiles.iter().filter(|p| p.carries_traffic()).collect();
+    if active.is_empty() {
+        // A LAN party without internet or DHCP can leave the only NIC at
+        // "NoTraffic"; the check must not go silent in exactly that case.
+        active = profiles.iter().filter(|p| p.is_connected()).collect();
+    }
+    let trusted = active.iter().find(|p| p.is_trusted());
+    active
         .iter()
-        .filter(|p| p.category.eq_ignore_ascii_case("Public"))
+        .filter(|p| p.is_public())
         .map(|p| {
-            Problem::new("network.public_profile", Severity::Error)
+            let (code, severity) = match trusted {
+                Some(_) => ("network.public_profile_secondary", Severity::Warning),
+                None => ("network.public_profile", Severity::Error),
+            };
+            let mut problem = Problem::new(code, severity)
                 .param("adapter", &p.interface_alias)
                 .param("network", &p.name)
                 .step("network.public_profile.step.fix")
                 .step("network.public_profile.step.manual")
                 .with_fix(FixAction::SetNetworkProfilePrivate {
                     interface_index: p.interface_index,
-                })
+                });
+            if let Some(t) = trusted {
+                problem = problem.param("trusted_adapter", &t.interface_alias);
+            }
+            problem
         })
         .collect()
 }
 
 /// PowerShell to query profiles (run with `-NoProfile -NonInteractive`).
-pub const PS_GET_PROFILES: &str =
-    "Get-NetConnectionProfile | Select-Object InterfaceIndex,InterfaceAlias,Name,NetworkCategory | ConvertTo-Json -Compress";
+pub const PS_GET_PROFILES: &str = "Get-NetConnectionProfile | Select-Object InterfaceIndex,InterfaceAlias,Name,NetworkCategory,IPv4Connectivity,IPv6Connectivity | ConvertTo-Json -Compress";
 
 /// PowerShell to switch an adapter to the private profile (needs elevation).
 pub fn ps_set_private(interface_index: u32) -> String {
@@ -312,10 +378,17 @@ mod tests {
         let p = parse_net_profiles(json);
         assert_eq!(p.len(), 2);
         assert_eq!(p[0].category, "Public");
+        // Without connectivity data both adapters count as active; the private
+        // WLAN makes the public Ethernet a warning rather than an error.
         let problems = check_network_profiles(&p);
         assert_eq!(problems.len(), 1);
-        assert_eq!(problems[0].code, "network.public_profile");
+        assert_eq!(problems[0].code, "network.public_profile_secondary");
+        assert_eq!(problems[0].severity, Severity::Warning);
         assert_eq!(problems[0].params["adapter"], "Ethernet");
+        assert_eq!(
+            check_network_profiles(&p[..1])[0].code,
+            "network.public_profile"
+        );
         assert_eq!(
             problems[0].fix,
             Some(FixAction::SetNetworkProfilePrivate {
@@ -328,6 +401,48 @@ mod tests {
         );
         assert_eq!(one[0].category, "Private");
         assert!(check_network_profiles(&one).is_empty());
+    }
+
+    #[test]
+    fn idle_public_adapter_next_to_domain_network_is_ignored() {
+        // Test system: Ethernet 3 is the domain network in use, Ethernet 6 is
+        // plugged in but idle ("Kein Internet") and on the public profile.
+        let json = r#"[{"InterfaceIndex":3,"InterfaceAlias":"Ethernet 3","Name":"corp.local","NetworkCategory":2,"IPv4Connectivity":4,"IPv6Connectivity":1},
+                       {"InterfaceIndex":6,"InterfaceAlias":"Ethernet 6","Name":"Netzwerk","NetworkCategory":0,"IPv4Connectivity":1,"IPv6Connectivity":0}]"#;
+        let p = parse_net_profiles(json);
+        assert_eq!(p[0].connectivity, Some(4));
+        assert_eq!(p[1].connectivity, Some(1));
+        assert!(check_network_profiles(&p).is_empty());
+
+        // The same public adapter with LAN traffic is still worth a warning,
+        // but not an error, because the domain adapter is active too.
+        let json = json.replace(
+            r#""IPv4Connectivity":1,"IPv6Connectivity":0"#,
+            r#""IPv4Connectivity":"LocalNetwork","IPv6Connectivity":"NoTraffic""#,
+        );
+        let problems = check_network_profiles(&parse_net_profiles(&json));
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0].code, "network.public_profile_secondary");
+        assert_eq!(problems[0].severity, Severity::Warning);
+        assert_eq!(problems[0].params["trusted_adapter"], "Ethernet 3");
+
+        // A lone public adapter at the LAN party (no internet) stays an error,
+        // even when Windows only reports "NoTraffic" for it.
+        for level in ["3", "1"] {
+            let lan = format!(
+                r#"{{"InterfaceIndex":4,"InterfaceAlias":"Ethernet","Name":"Netzwerk 2","NetworkCategory":0,"IPv4Connectivity":{level},"IPv6Connectivity":0}}"#
+            );
+            let problems = check_network_profiles(&parse_net_profiles(&lan));
+            assert_eq!(problems.len(), 1, "level {level}");
+            assert_eq!(problems[0].code, "network.public_profile");
+            assert_eq!(problems[0].severity, Severity::Error);
+        }
+
+        // An "Unknown" category never counts as the trusted LAN link.
+        let odd = r#"[{"InterfaceIndex":4,"InterfaceAlias":"Ethernet","Name":"N","NetworkCategory":0,"IPv4Connectivity":3},
+                      {"InterfaceIndex":9,"InterfaceAlias":"vEthernet","Name":"V","NetworkCategory":7,"IPv4Connectivity":2}]"#;
+        let problems = check_network_profiles(&parse_net_profiles(odd));
+        assert_eq!(problems[0].code, "network.public_profile");
     }
 
     #[test]

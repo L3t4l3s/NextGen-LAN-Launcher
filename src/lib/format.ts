@@ -1,10 +1,23 @@
+import type { BootstrapInfo } from "$lib/types";
+
+/**
+ * Windows Explorer labels 2^30 bytes as "GB", Finder and most Linux desktops
+ * use 10^9. Follow the platform so the numbers match what users see next to
+ * the launcher; the bootstrap sets this once the platform is known.
+ */
+let byteBase: 1000 | 1024 = 1000;
+
+export function setByteUnits(platform: BootstrapInfo["platform"]): void {
+  byteBase = platform === "windows" ? 1024 : 1000;
+}
+
 export function formatBytes(bytes: number, digits = 1): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "–";
   const units = ["B", "KB", "MB", "GB", "TB"];
   let v = bytes;
   let i = 0;
-  while (v >= 1000 && i < units.length - 1) {
-    v /= 1000;
+  while (v >= byteBase && i < units.length - 1) {
+    v /= byteBase;
     i++;
   }
   const d = i === 0 ? 0 : digits;

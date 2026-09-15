@@ -30,6 +30,7 @@
     "linux-x64": {
       "url": "https://download-cdn.resilio.com/stable/linux/x64/resilio-sync_x64.tar.gz",
       "candidates": [
+        "https://download-cdn.resilio.com/stable/linux/x64/0/resilio-sync_x64.tar.gz",
         "https://download-cdn.resilio.com/stable/linux/x64/resilio-sync_x64.tar.gz",
         "https://download-cdn.resilio.com/stable/linux-x64/resilio-sync_x64.tar.gz"
       ],
@@ -42,10 +43,10 @@
     "linux-arm64": {
       "url": null,
       "candidates": [
+        "https://download-cdn.resilio.com/stable/linux/arm64/0/resilio-sync_arm64.tar.gz",
         "https://download-cdn.resilio.com/stable/linux/arm64/resilio-sync_arm64.tar.gz",
         "https://download-cdn.resilio.com/stable/linux/aarch64/resilio-sync_aarch64.tar.gz",
-        "https://download-cdn.resilio.com/stable/linux-arm64/resilio-sync_arm64.tar.gz",
-        "https://download-cdn.resilio.com/stable/linux/armhf/resilio-sync_armhf.tar.gz"
+        "https://download-cdn.resilio.com/stable/linux-arm64/resilio-sync_arm64.tar.gz"
       ],
       "version": null,
       "sha256": null,

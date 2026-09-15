@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBytes, formatPercent, formatRevision, placeholderGradient, stripHtml } from "./format";
+import { formatBytes, formatPercent, formatRevision, placeholderGradient, setByteUnits, stripHtml } from "./format";
 
 describe("format helpers", () => {
   it("formats bytes with decimal units", () => {
@@ -7,6 +7,18 @@ describe("format helpers", () => {
     expect(formatBytes(910_000_000)).toBe("910 MB");
     expect(formatBytes(16_000_000_000)).toBe("16 GB");
     expect(formatBytes(1_234_567)).toBe("1.2 MB");
+  });
+  it("uses Explorer's binary units on Windows", () => {
+    try {
+      setByteUnits("windows");
+      // 999.2 decimal GB is a disk Explorer lists as roughly 930 GB
+      expect(formatBytes(999_200_000_000)).toBe("930.6 GB");
+      expect(formatBytes(16_000_000_000)).toBe("14.9 GB");
+      setByteUnits("macos");
+      expect(formatBytes(16_000_000_000)).toBe("16 GB");
+    } finally {
+      setByteUnits("linux");
+    }
   });
   it("clamps percentages", () => {
     expect(formatPercent(0.5)).toBe("50 %");

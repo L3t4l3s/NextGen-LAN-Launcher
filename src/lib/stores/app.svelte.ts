@@ -1,6 +1,7 @@
 // Global reactive state (Svelte 5 runes).
 
 import { api, listen } from "$lib/api";
+import { setByteUnits } from "$lib/format";
 import { setLanguage } from "$lib/i18n";
 import { applyTheme, defaultTheme } from "$lib/theme";
 import type { BootstrapInfo, EventBundle, GameStatus, GameView, Settings, TransportHealth, Theme } from "$lib/types";
@@ -54,6 +55,7 @@ class AppStore {
       this.settings = b.settings;
       this.event = b.event;
       setLanguage(b.settings.language);
+      setByteUnits(b.platform);
       this.applyThemeFor(b.settings, b.event);
       this.showWizard = b.needsSetup;
       await this.reloadGames();
