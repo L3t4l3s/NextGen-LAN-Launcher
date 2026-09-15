@@ -883,22 +883,63 @@ pub async fn install_bundled_windows(
     Ok(locate_binary(resource_dir, data_dir))
 }
 
-/// Official download locations (see `resilio.lock.json` for pinned hashes).
-pub fn official_download_url() -> &'static str {
+/// The repository's `resilio.lock.json`, embedded so the app points users to
+/// the same pinned build the release bundles instead of whatever `stable`
+/// currently is (3.x requires a Resilio account).
+const LOCK_JSON: &str = include_str!("../../../../resilio.lock.json");
+
+/// Lock-file platform key for the running binary.
+fn lock_platform() -> &'static str {
     if cfg!(target_os = "windows") {
-        "https://download-cdn.resilio.com/stable/windows/Resilio-Sync_x64.exe"
+        "windows"
     } else if cfg!(target_os = "macos") {
-        "https://download-cdn.resilio.com/stable/osx/Resilio-Sync.dmg"
+        "osx"
     } else if cfg!(target_arch = "aarch64") {
-        "https://download-cdn.resilio.com/stable/linux-arm64/resilio-sync_arm64.tar.gz"
+        "linux-arm64"
     } else {
-        "https://download-cdn.resilio.com/stable/linux-x64/resilio-sync_x64.tar.gz"
+        "linux-x64"
     }
+}
+
+static LOCK: std::sync::LazyLock<serde_json::Value> =
+    std::sync::LazyLock::new(|| serde_json::from_str(LOCK_JSON).unwrap_or(serde_json::Value::Null));
+
+/// Pinned download URL from `resilio.lock.json` for the given platform key.
+pub fn pinned_download_url(platform: &str) -> Option<String> {
+    LOCK.get("artifacts")?
+        .get(platform)?
+        .get("url")?
+        .as_str()
+        .map(str::to_owned)
+}
+
+/// Official download location for this platform: the pinned build, falling
+/// back to Resilio's download page when the lock has no URL.
+pub fn official_download_url() -> String {
+    pinned_download_url(lock_platform())
+        .unwrap_or_else(|| "https://www.resilio.com/platforms/desktop/".to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn download_url_comes_from_the_lock_file() {
+        // `url: null` is a legitimate intermediate state (release.yml refuses to
+        // build then), so only pinned entries are checked here.
+        for p in ["windows", "osx", "linux-x64", "linux-arm64"] {
+            if let Some(url) = pinned_download_url(p) {
+                assert!(
+                    url.starts_with("https://download-cdn.resilio.com/"),
+                    "{url}"
+                );
+                assert!(!url.contains("/stable/"), "{p} must pin a build, got {url}");
+            }
+        }
+        assert!(official_download_url().starts_with("https://"));
+        assert!(pinned_download_url("amiga").is_none());
+    }
 
     #[test]
     fn config_json_is_lan_safe() {

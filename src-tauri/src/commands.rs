@@ -399,7 +399,7 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
             .step("transport.start_failed.step.install")
             .step("transport.start_failed.step.folder_mode")
             .with_fix(FixAction::OpenUrl {
-                url: lanlauncher_core::transport::resilio::official_download_url().into(),
+                url: lanlauncher_core::transport::resilio::official_download_url(),
             }),
         );
     }

@@ -36,8 +36,8 @@ jobs:
           - platform: osx
             os: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
       - name: Download and hash
@@ -60,11 +60,15 @@ jobs:
             sudo apt-get update -qq
             sudo apt-get install -y -qq qemu-user-static || echo "::warning::qemu-user-static not installed; falling back to strings"
           fi
-          ver=$(./out/rslsync --help 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)
+          ./out/rslsync --help > help.txt 2>&1 || {
+            rc=$?; echo "::warning::rslsync --help failed (exit $rc); output:"; cat help.txt || true
+          }
+          ver=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' help.txt | head -1 || true)
           if [ -z "$ver" ]; then
-            # Fall back to embedded strings. IP addresses such as 127.0.0.1 also look like
-            # dotted versions, so require the four-part form with a build number.
-            ver=$(strings out/rslsync | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]{3,5}$' | head -1 || true)
+            # Fall back to embedded strings. IPv4 addresses and netmasks (127.0.0.1,
+            # 255.255.255.255) also look like dotted versions but never carry a
+            # four-digit last component, which Resilio build numbers always do.
+            ver=$(strings out/rslsync | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]{4,5}$' | head -1 || true)
           fi
           echo "detected version: ${ver:-<none>}"
           echo "version=$ver" >> lock-version.txt
@@ -95,7 +99,7 @@ jobs:
             fs.writeFileSync(`entry-${e.platform}.json`, JSON.stringify(e, null, 2));
             console.log(JSON.stringify(e, null, 2));
           '
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: entry-${{ matrix.platform }}
           path: entry-*.json
@@ -107,8 +111,8 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v6
         with:
           pattern: entry-*
           merge-multiple: true
@@ -123,7 +127,9 @@ jobs:
             for (const f of fs.readdirSync("entries")) {
               const e = JSON.parse(fs.readFileSync(`entries/${f}`, "utf8"));
               const cur = lock.artifacts[e.platform] ?? {};
-              lock.artifacts[e.platform] = { ...cur, url: e.url, version: e.version, sha256: e.sha256, bytes: e.bytes, retrieved_at: e.retrieved_at };
+              // When the binary probe yields nothing (foreign architecture), the build segment of the URL is authoritative.
+              const version = e.version || e.url.match(/\/([0-9]+(?:\.[0-9]+){1,3})\//)?.[1] || null;
+              lock.artifacts[e.platform] = { ...cur, url: e.url, version, sha256: e.sha256, bytes: e.bytes, retrieved_at: e.retrieved_at };
             }
             // Windows reports a four-part ProductVersion; compare the release part only.
             const short = (v) => String(v).split(".").slice(0, 3).join(".");
@@ -132,7 +138,7 @@ jobs:
             fs.writeFileSync("resilio.lock.proposed.json", JSON.stringify(lock, null, 2) + "\n");
             console.log(fs.readFileSync("resilio.lock.proposed.json", "utf8"));
           '
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: resilio.lock.proposed
           path: resilio.lock.proposed.json

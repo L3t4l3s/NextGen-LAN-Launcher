@@ -71,12 +71,12 @@ Tags `v*` are built by `release.yml` instead.
   and falls back to the GUI endpoints. Both can only be verified against a running sync server.
   The install logic deliberately does not depend on either.
 - **Windows installer with Resilio:** CI artifacts contain no Resilio. `release.yml` bundles the
-  official binary pinned by version and SHA-256 in `resilio.lock.json`; the pins are produced by
-  the manual "Resilio lock" workflow and are still to be filled in before the first tag. Which
-  version to pin is open: Resilio 3.x requires a Resilio account for its free licence, while
-  2.8.1.1390 (the build the ETI sync server runs) does not; both versions sync with each other. The
-  silent installer run on first start (`install_bundled_windows`) and launching scripts via
-  `cmd.exe /S /C` are untested.
+  official binary pinned by version and SHA-256 in `resilio.lock.json`, currently build
+  2.8.1.1390 for all four platforms. Resilio 3.x requires a Resilio account for its free licence,
+  2.8.1 does not, the ETI sync server runs the same build, and the 3.x change logs list no fix
+  that matters for LAN transfers; both versions sync with each other. Re-pin with the "Resilio
+  lock" workflow (input `version`). The silent installer run on first start
+  (`install_bundled_windows`) and launching scripts via `cmd.exe /S /C` are untested.
 - **Windows network check:** the diagnostics now read `IPv4Connectivity`/`IPv6Connectivity` from
   `Get-NetConnectionProfile`, skip idle adapters and downgrade a public adapter next to a
   private/domain one to a warning. Written against a test system with a domain network plus an

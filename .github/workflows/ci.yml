@@ -32,7 +32,7 @@ jobs:
         # FULL: all three platforms; otherwise Linux only.
         os: ${{ fromJSON((github.event_name != 'push' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[full-ci]')) && '["ubuntu-22.04", "windows-latest", "macos-latest"]' || '["ubuntu-22.04"]') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: clippy, rustfmt
@@ -50,8 +50,8 @@ jobs:
     name: Frontend checks
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -77,8 +77,8 @@ jobs:
           - os: macos-latest
             args: "--target universal-apple-darwin"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -99,14 +99,14 @@ jobs:
         with:
           args: ${{ matrix.args }}
       - name: Upload bundles
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: bundles-${{ matrix.os }}
           if-no-files-found: warn
           path: |
             target/release/bundle/**/*.exe
-            target/release/bundle/**/*.msi
             target/release/bundle/**/*.dmg
             target/release/bundle/**/*.AppImage
             target/release/bundle/**/*.deb
+            target/release/bundle/**/*.rpm
             target/universal-apple-darwin/release/bundle/**/*.dmg

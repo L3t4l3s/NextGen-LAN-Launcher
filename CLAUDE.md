@@ -78,6 +78,11 @@ WebKitGTK-Entwicklungspakete (siehe unten).
   mit einem hier unsichtbaren Lint gebrochen). Beim Anheben lokal `cargo +<version> clippy` prüfen.
 - **sysinfo** ist auf 0.38 gepinnt, weil 0.39 einen neueren Rust-Compiler verlangt.
 - **rand 0.10:** Der Trait heißt `RngExt`, nicht `Rng`.
+- **Windows-Bundle-Größe:** `webviewInstallMode: offlineInstaller` bettet den WebView2-Installer
+  (~150 MB) ein, damit die Installation auf einer LAN ohne Internet klappt; `embedBootstrapper`
+  wäre 1,8 MB, lädt WebView2 aber bei Bedarf herunter. `bundle.targets` nennt für Windows nur
+  `nsis` (kein MSI), sonst liegt der Installer doppelt im Artefakt. `tauri.conf.json` verträgt keine
+  unbekannten Schlüssel (auch keine `_comment`).
 - **Tauri:** `tauri.conf.json` aktiviert das Asset-Protokoll (Cover-Bilder), daher braucht die
   `tauri`-Abhängigkeit das Feature `protocol-asset`. `bundle.resources` ist eine Map
   (`../manifests/` → `manifests/`); ein Glob auf leere Ordner bricht den Build ab.
