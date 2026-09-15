@@ -20,6 +20,7 @@ event and with clear instructions whenever something does not work.
 | Unclear row of icons at the top | Labelled tabs: Library · Downloads · LAN · Diagnostics, plus Settings on the right. |
 | Only one game folder | Several library folders (e.g. different SSDs); new games go where there is most space. |
 | Windows only | Launch profiles (`manifests/*.toml`) plus Wine/CrossOver/Proton on macOS and Linux; Windows keeps running `game_start.cmd`. |
+| Administrator rights for everything | The launcher runs as a normal user. UAC appears only for a game's one-time setup (which also registers the firewall rules its start script would add), for the few start scripts that write HKLM, for server scripts and for repairs. |
 
 Design decision from our planning: every game has **one** primary button (Install / Downloading… /
 Play / Update), but the secondary actions **Repair**, **Pause sync**, **Open folder** and **Remove**
@@ -97,6 +98,10 @@ Tags `v*` are built by `release.yml` instead.
 - **Runtime package installer:** Settings offers ETI's `eti_launcher/bin/preqsetup.exe` (about
   3.3 GB, .NET 4.8, VC++, DirectX 11, PhysX) behind a confirmation like the ETI client; whether
   the installer needs arguments is unknown and untested on hardware.
+- **On-demand elevation:** the manifest is `asInvoker`; setup scripts, firewall rules, HKLM
+  scripts and repairs run through PowerShell `Start-Process -Verb RunAs`. The UAC flow, the exit
+  code hand-over and scripts that need admin in places the detection does not see are untested
+  on hardware.
 - **Keygen and server start:** the detail page offers `keygen.exe` (started from `local/` like
   ETI's setup scripts do) and `server_start.cmd` (same four-argument contract as
   `game_start.cmd`) when the package ships them. Both run through `cmd.exe`/Windows and are

@@ -28,13 +28,18 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
         &ctx.settings.game_language,
         &ctx.settings.safe_player_name(),
     );
+    // Firewall rules are registered at setup time, so only scripts that
+    // write HKLM (16 of 158 official ones) need the UAC prompt at play time.
+    let needs_elevation = std::fs::read_to_string(&ctx.paths.start_script)
+        .map(|t| super::elevate::script_needs_admin(&t))
+        .unwrap_or(false);
     Ok(LaunchPlan {
         program: PathBuf::from(comspec()),
         args: vec!["/S".into(), "/C".into(), raw.clone()],
         cwd: ctx.paths.share_dir.clone(),
         env: BTreeMap::new(),
         runner: "game_start.cmd".into(),
-        needs_elevation: true,
+        needs_elevation,
         raw_command_line: Some(format!("/S /C {raw}")),
     })
 }
@@ -108,6 +113,8 @@ fn script_plan(
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "script".into());
+    // Setup scripts install redistributables and write HKLM; server scripts
+    // open ports themselves. Both keep the prompt.
     Some(LaunchPlan {
         program: PathBuf::from(comspec()),
         args: vec!["/S".into(), "/C".into(), raw.clone()],

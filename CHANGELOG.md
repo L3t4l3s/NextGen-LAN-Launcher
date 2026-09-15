@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Der Launcher startet ohne Adminrechte. Die Windows-Abfrage erscheint nur noch bei Bedarf: beim
+  einmaligen Setup eines Spiels (dabei legt der Launcher die Firewall-Regeln aus dem Startskript
+  gleich mit an), bei Startskripten, die in HKLM schreiben, bei Server-Skripten, bei
+  Diagnose-Reparaturen und bei Programmen, die selbst Adminrechte verlangen. Zum reinen Spielen
+  ist keine Abfrage mehr nötig.
 - Der Resilio-API-Key steht nicht mehr im Quellcode. Der Launcher liest ihn aus den Einstellungen,
   aus einer installierten ETI-Version oder aus `launcher.ini` der LANPage (`resilio_api_key`);
   ohne Key nutzt er Resilios Web-Oberfläche. Die LANPage wird dafür vor dem Sync-Start abgefragt.

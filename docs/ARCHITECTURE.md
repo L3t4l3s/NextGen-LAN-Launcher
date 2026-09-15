@@ -55,8 +55,13 @@ case and is used by `--demo` / `LANLAUNCHER_DEMO=1`.
 
 ## Launching
 
-* Windows: `cmd.exe /C "game_start.cmd" "<game_path>" <id> <lang> "<player>"`, elevated via
-  the application manifest (the scripts use `netsh advfirewall` and `reg add HKLM`).
+* Windows: `cmd.exe /C "game_start.cmd" "<game_path>" <id> <lang> "<player>"` as the invoking
+  user (manifest `asInvoker`). Rights are requested on demand (`launch::elevate`, PowerShell
+  `Start-Process -Verb RunAs` on a batch file in `<data>/run/`): the script's
+  `netsh advfirewall … add rule` lines are registered once per game (marker in `<data>/firewall/`),
+  at setup or the first start, and only scripts that write HKLM or import `.reg` files start
+  with a prompt (`script_needs_admin`). `game_setup.cmd`, server scripts, the diagnostics
+  repairs and programs whose own manifest demands administrator rights (error 740) prompt too.
   `game_setup.cmd "<game_path>" <id> <lang> "<player>"` runs once after extraction, through
   the same raw `cmd.exe /S /C` command line as `game_start.cmd`. Installations found on disk
   (made by the ETI launcher) are adopted by comparing the archive listing with `local/`

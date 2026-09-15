@@ -51,6 +51,7 @@ VC++ redistributables, DirectX 11, PhysX and more). The ETI client offers it in 
 | `version.ini` | Single line = package revision (equals `game_version`). |
 | `game_start.cmd` | Windows launch script, called as `"<game_path>" <id> <lang> "<player>"`. |
 | `game_setup.cmd` | Optional one-time setup, called with the same four arguments as `game_start.cmd` (`"<game_path>" <id> <lang> "<player>"`; a quarter of the official scripts read `%3`/`%4`). |
+| `game_start.cmd` and administrator rights | The ETI client runs elevated for every start. The launcher runs its start scripts as the user: the `netsh advfirewall firewall add rule` lines are executed once at setup (elevated) so they persist, the matching `delete rule` at exit fails harmlessly, and only scripts that write HKLM or import `.reg` files are started with a UAC prompt. |
 | `server_start.cmd`, `game_uninst.cmd` | Optional. When `server_start.cmd` exists the detail page offers "Start server" and runs it with the four `game_start.cmd` arguments. |
 | `keygen.exe` | Optional key generator (some setup scripts start it as `..\keygen.exe` from `local/`). When present in the game folder (or `local/`), the detail page offers a "Keygen" button. |
 | `.SyncIgnore` | Usually `local/*`. |

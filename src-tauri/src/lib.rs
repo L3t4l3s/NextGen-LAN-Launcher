@@ -58,55 +58,60 @@ impl SetupHook for AppSetupHook {
         if !cfg!(target_os = "windows") {
             return Ok(());
         }
-        let (lang, player) = match self.state.upgrade() {
-            Some(state) => {
-                let s = state.settings.read().await;
-                (s.game_language.clone(), s.safe_player_name())
-            }
-            None => ("de".to_string(), String::new()),
+        let Some(state) = self.state.upgrade() else {
+            return Ok(());
+        };
+        let (lang, player) = {
+            let s = state.settings.read().await;
+            (s.game_language.clone(), s.safe_player_name())
         };
         let game_id = paths
             .share_dir
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("");
-        let Some(plan) =
-            lanlauncher_core::launch::windows::setup_plan(paths, game_id, &lang, &player)
-        else {
-            return Ok(());
-        };
-        // The script runs through cmd.exe with its own quoting rules, so the
-        // command line is passed verbatim (see LaunchPlan::raw_command_line).
-        let mut cmd = tokio::process::Command::new(&plan.program);
-        lanlauncher_core::launch::apply_args(&mut cmd, &plan);
-        let output = cmd
-            .current_dir(&plan.cwd)
-            .output()
-            .await
-            .map_err(|e| lanlauncher_core::Error::Launch(format!("game_setup.cmd: {e}")))?;
-        if !output.status.success() {
-            let tail = |b: &[u8]| {
-                let s = String::from_utf8_lossy(b);
-                s.chars()
-                    .rev()
-                    .take(4096)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect::<String>()
-            };
-            log::warn!(
-                "game_setup.cmd for {game_id} exited with {}\n--- stdout ---\n{}\n--- stderr ---\n{}",
-                output.status,
-                tail(&output.stdout),
-                tail(&output.stderr)
-            );
-            return Err(lanlauncher_core::Error::Launch(format!(
-                "game_setup.cmd exited with {}",
-                output.status
-            )));
+        use lanlauncher_core::launch::{self, elevate};
+        // One elevated run per install: the firewall rules the start script
+        // would add every time (so it can run as a normal user later) plus
+        // the optional game_setup.cmd. Adopted or older installs get their
+        // rules at the first start instead (fixes::ensure_firewall_rules).
+        let rules = std::fs::read_to_string(&paths.start_script)
+            .map(|t| elevate::firewall_add_rules(&t, &paths.share_dir, game_id, &lang, &player))
+            .unwrap_or_default();
+        let setup = launch::windows::setup_plan(paths, game_id, &lang, &player);
+        let mut lines = rules.clone();
+        if let Some(plan) = &setup {
+            lines.push(elevate::batch_line(plan));
         }
-        Ok(())
+        if lines.is_empty() {
+            return Ok(());
+        }
+        let run = crate::fixes::run_admin_lines(
+            &state,
+            &format!("{game_id}-setup"),
+            lines,
+            &paths.share_dir,
+        )
+        .await;
+        match run {
+            Ok(()) => {
+                if !rules.is_empty() {
+                    let marker = elevate::firewall_marker(&state.dirs.data, game_id);
+                    if let Some(dir) = marker.parent() {
+                        let _ = std::fs::create_dir_all(dir);
+                    }
+                    let _ = std::fs::write(marker, "");
+                }
+                Ok(())
+            }
+            // Rules only and no rights: not a failure of the game's setup;
+            // the first start asks again.
+            Err(e) if setup.is_none() => {
+                log::warn!("firewall rules for {game_id} not registered at setup: {e}");
+                Ok(())
+            }
+            Err(e) => Err(lanlauncher_core::Error::Code(e)),
+        }
     }
 }
 

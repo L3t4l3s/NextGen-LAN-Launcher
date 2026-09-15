@@ -46,6 +46,11 @@ impl AppState {
         self.dirs.settings_file()
     }
 
+    /// Batch files for elevated runs (see `launch::elevate`).
+    pub fn run_dir(&self) -> PathBuf {
+        self.dirs.data.join("run")
+    }
+
     /// Cover directories in lookup order: cache first, bundled set second.
     pub fn cover_dirs(&self) -> Vec<PathBuf> {
         let mut dirs = vec![self.dirs.covers_dir()];

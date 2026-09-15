@@ -121,8 +121,13 @@ WebKitGTK-Entwicklungspakete (siehe unten).
   `assets_covers.rar` (Cover-Layout `assets/<id>.jpg`) wurden mit `rar a -ep1 -r -m5 -ma5` erzeugt. `*.eti` und `game.db` sind per `.gitignore` ausgeschlossen,
   damit nie echte Resilio-Keys oder Spielarchive committet werden.
 - **Windows-Skripte** erwarten `%programfiles%\eti\lan launcher\unrar.exe` und `fnr.exe` sowie
-  Adminrechte (`netsh`, `reg add HKLM`). Die App fordert per Manifest Elevation an
-  (`src-tauri/build.rs`, abschaltbar mit `NLL_NO_ELEVATION=1`).
+  teils Adminrechte (`netsh`, `reg add HKLM`). Der Launcher selbst läuft ohne Adminrechte
+  (Manifest `asInvoker`, `src-tauri/build.rs`; `NLL_REQUIRE_ADMIN=1` baut die ETI-Variante mit
+  Abfrage beim Start). Elevation nur bei Bedarf über `launch::elevate` (Batch-Datei in
+  `<data>/run/`, PowerShell `Start-Process -Verb RunAs` mit `-EncodedCommand`): `game_setup.cmd`
+  samt der Firewall-Regeln aus `game_start.cmd` einmal beim Setup, Startskripte nur, wenn sie
+  HKLM schreiben (`script_needs_admin`), Server-Skripte, Diagnose-Reparaturen, Programme mit
+  eigenem Admin-Manifest (Fehler 740). Einstellung `allowElevation=false` unterdrückt jede Abfrage.
 - **Clippy:** In `resilio.rs` müssen alle Items vor `mod tests` stehen (`items_after_test_module`).
 - **Fehlertexte:** Tauri-Commands und Fix-Aktionen geben keine deutschen Sätze zurück, sondern Codes
   (`err.<name>` bzw. `msg.<name>`, optional mit `|detail`). Das Frontend übersetzt sie mit

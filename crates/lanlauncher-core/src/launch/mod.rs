@@ -7,6 +7,7 @@
 //! * macOS/Linux: use the manifest (curated, organiser overlay or derived from
 //!   the script) and a runner (CrossOver, Wine, Proton or native).
 
+pub mod elevate;
 pub mod unix;
 pub mod windows;
 
@@ -17,7 +18,7 @@ use crate::paths::GamePaths;
 use crate::settings::Settings;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// A fully resolved command line, ready to spawn. Serialisable so the UI can
 /// show "what will run" before the user confirms.
@@ -213,6 +214,72 @@ pub fn expand_args(args: &[String], ctx: &LaunchContext<'_>) -> Vec<String> {
 }
 
 /// Spawn the plan as a detached child process. Returns the PID.
+/// Start a plan as the user, elevating only when the plan needs it and the
+/// launcher is not already elevated (Windows; `allow` is the user's setting).
+/// A program whose own manifest demands administrator rights (Windows error
+/// 740) is retried the same way. `run_dir` receives the batch files.
+pub async fn spawn_for_user(plan: &LaunchPlan, run_dir: &Path, allow: bool) -> Result<u32> {
+    let not_elevated = elevate::running_elevated() == Some(false);
+    if plan.needs_elevation && not_elevated {
+        if !allow {
+            log::warn!(
+                "{} needs administrator rights but elevation is disabled in the settings; running as user",
+                plan.runner
+            );
+        } else {
+            return spawn_elevated(plan, run_dir).await;
+        }
+    }
+    match spawn(plan).await {
+        Err(Error::Launch(msg)) if not_elevated && allow && msg.contains("os error 740") => {
+            log::info!(
+                "{} demands administrator rights itself; retrying elevated",
+                plan.runner
+            );
+            spawn_elevated(plan, run_dir).await
+        }
+        other => other,
+    }
+}
+
+/// Run a plan through a batch file as administrator (UAC prompt). The
+/// batch name is fixed per runner (overwritten each time). PowerShell waits
+/// for the batch, so its pid stays alive as long as the game runs; a prompt
+/// the user declines ends PowerShell within moments with a non-zero code,
+/// which is reported as `err.elevation_denied`.
+pub async fn spawn_elevated(plan: &LaunchPlan, run_dir: &Path) -> Result<u32> {
+    let stem = plan.runner.trim_end_matches(".cmd").replace(' ', "-");
+    let batch = elevate::write_batch(run_dir, &stem, &[elevate::batch_line(plan)])?;
+    log::info!("starting {} elevated via {}", plan.runner, batch.display());
+    let runas = elevate::runas_plan(&batch, &plan.cwd);
+    let mut cmd = tokio::process::Command::new(&runas.program);
+    cmd.current_dir(&runas.cwd).envs(&runas.env);
+    apply_args(&mut cmd, &runas);
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| Error::Launch(format!("cannot start PowerShell for elevation: {e}")))?;
+    let pid = child.id().unwrap_or(0);
+    match tokio::time::timeout(std::time::Duration::from_secs(3), child.wait()).await {
+        Ok(Ok(status)) if !status.success() => {
+            log::warn!(
+                "elevated start of {} ended with {status} right away (prompt declined?)",
+                plan.runner
+            );
+            Err(Error::Code("err.elevation_denied".into()))
+        }
+        Ok(_) => Ok(pid),
+        Err(_) => {
+            tokio::spawn(async move {
+                let _ = child.wait().await;
+            });
+            Ok(pid)
+        }
+    }
+}
+
 pub async fn spawn(plan: &LaunchPlan) -> Result<u32> {
     let mut cmd = tokio::process::Command::new(&plan.program);
     cmd.current_dir(&plan.cwd).envs(&plan.env);

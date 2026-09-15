@@ -304,7 +304,21 @@ pub async fn play_game(
         return Err("err.demo_no_play".into());
     }
     let plan = build_plan(&state, &game_id, alternative).await?;
-    let pid = launch::spawn(&plan).await.map_err(err)?;
+    let (allow, lang, player, paths) = {
+        let s = state.settings.read().await;
+        (
+            s.allow_elevation,
+            s.game_language.clone(),
+            s.safe_player_name(),
+            s.library.game_paths(&game_id),
+        )
+    };
+    if let Some(paths) = &paths {
+        crate::fixes::ensure_firewall_rules(&state, paths, &game_id, &lang, &player).await;
+    }
+    let pid = launch::spawn_for_user(&plan, &state.run_dir(), allow)
+        .await
+        .map_err(err)?;
     let mut running = state.running.write().await;
     running.retain(|(g, _)| g != &game_id);
     running.insert(0, (game_id, pid));
@@ -342,7 +356,9 @@ pub async fn run_extra(
         plan.program.display(),
         plan.raw_command_line.clone().unwrap_or_default()
     );
-    launch::spawn(&plan).await.map_err(err)
+    launch::spawn_for_user(&plan, &state.run_dir(), settings.allow_elevation)
+        .await
+        .map_err(err)
 }
 
 #[tauri::command]
@@ -632,7 +648,10 @@ pub async fn run_prereq_installer(state: State<'_, Arc<AppState>>) -> Cmd<u32> {
     let root = state.default_root_path().await.ok_or("err.no_library")?;
     let exe = launch::prereq_installer(&root).ok_or("err.prereq_missing")?;
     log::info!("starting runtime package installer {}", exe.display());
-    launch::spawn(&launch::prereq_plan(&exe)).await.map_err(err)
+    let allow = state.settings.read().await.allow_elevation;
+    launch::spawn_for_user(&launch::prereq_plan(&exe), &state.run_dir(), allow)
+        .await
+        .map_err(err)
 }
 
 #[tauri::command]

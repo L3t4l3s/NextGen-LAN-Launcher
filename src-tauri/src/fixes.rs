@@ -7,6 +7,150 @@ use lanlauncher_core::problem::FixAction;
 use std::path::Path;
 use std::sync::Arc;
 
+/// Run batch lines that need administrator rights and wait for them:
+/// directly through cmd.exe when the launcher is already elevated, else
+/// through PowerShell `Start-Process -Verb RunAs` (UAC prompt). Errors are
+/// `err.<code>` strings: `elevation_disabled` (setting), `elevation_denied`
+/// (prompt declined), `elevation_failed|<exit code>`.
+pub(crate) async fn run_admin_lines(
+    state: &AppState,
+    stem: &str,
+    lines: Vec<String>,
+    cwd: &Path,
+) -> Result<(), String> {
+    use lanlauncher_core::launch::{apply_args, elevate, LaunchPlan};
+    let elevated = elevate::running_elevated() != Some(false);
+    if !elevated && !state.settings.read().await.allow_elevation {
+        return Err("err.elevation_disabled".into());
+    }
+    let batch = elevate::write_batch(&state.run_dir(), stem, &lines)
+        .map_err(|e| format!("err.elevation_failed|{e}"))?;
+    let plan = if elevated {
+        LaunchPlan {
+            program: std::path::PathBuf::from(
+                std::env::var("ComSpec").unwrap_or_else(|_| r"C:\Windows\System32\cmd.exe".into()),
+            ),
+            args: vec![],
+            cwd: cwd.to_path_buf(),
+            env: Default::default(),
+            runner: stem.into(),
+            needs_elevation: false,
+            raw_command_line: Some(format!("/S /C \"\"{}\"\"", batch.display())),
+        }
+    } else {
+        log::info!("{stem}: asking for administrator rights (UAC)");
+        elevate::runas_plan(&batch, cwd)
+    };
+    let mut cmd = tokio::process::Command::new(&plan.program);
+    apply_args(&mut cmd, &plan);
+    let out = cmd
+        .current_dir(&plan.cwd)
+        .output()
+        .await
+        .map_err(|e| format!("err.elevation_failed|{e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let tail = |b: &[u8]| {
+        String::from_utf8_lossy(b)
+            .chars()
+            .rev()
+            .take(2000)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<String>()
+    };
+    log::warn!(
+        "{stem} exited with {}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+        out.status,
+        tail(&out.stdout),
+        tail(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr).to_ascii_lowercase();
+    if !elevated
+        && (stderr.contains("cancel") || stderr.contains("abgebrochen") || stderr.contains("1223"))
+    {
+        Err("err.elevation_denied".into())
+    } else {
+        Err(format!(
+            "err.elevation_failed|{}",
+            out.status.code().unwrap_or(-1)
+        ))
+    }
+}
+
+/// Firewall rules of a game's start script, registered once per game
+/// (marker in the data dir) so the script can run as a normal user. Errors
+/// are logged only: a missing rule must not stop the game from starting.
+pub(crate) async fn ensure_firewall_rules(
+    state: &AppState,
+    paths: &lanlauncher_core::paths::GamePaths,
+    game_id: &str,
+    lang: &str,
+    player: &str,
+) {
+    use lanlauncher_core::launch::elevate;
+    if !cfg!(target_os = "windows") {
+        return;
+    }
+    let marker = elevate::firewall_marker(&state.dirs.data, game_id);
+    if marker.exists() {
+        return;
+    }
+    let rules = std::fs::read_to_string(&paths.start_script)
+        .map(|t| elevate::firewall_add_rules(&t, &paths.share_dir, game_id, lang, player))
+        .unwrap_or_default();
+    if rules.is_empty() {
+        return;
+    }
+    match run_admin_lines(
+        state,
+        &format!("{game_id}-firewall"),
+        rules,
+        &paths.share_dir,
+    )
+    .await
+    {
+        Ok(()) => {
+            if let Some(dir) = marker.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::write(&marker, "");
+            log::info!("firewall rules for {game_id} registered");
+        }
+        Err(e) => log::warn!("firewall rules for {game_id} not registered: {e}"),
+    }
+}
+
+/// Whether administrative commands must go through `run_admin_lines`.
+fn needs_runas() -> bool {
+    lanlauncher_core::launch::elevate::running_elevated() == Some(false)
+}
+
+/// Batch line running a PowerShell snippet (encoded, so no quoting issues).
+fn powershell_line(script: &str) -> String {
+    format!(
+        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}",
+        lanlauncher_core::launch::elevate::powershell_encoded(script)
+    )
+}
+
+/// Batch line for a netsh call; values with spaces are quoted the way
+/// cmd.exe expects (`name="NextGen LAN Launcher Sync (in)"`).
+fn netsh_line(args: &[String]) -> String {
+    let mut line = String::from("netsh");
+    for a in args {
+        line.push(' ');
+        match a.split_once('=') {
+            Some((k, v)) if v.contains(' ') => line.push_str(&format!("{k}=\"{v}\"")),
+            _ if a.contains(' ') => line.push_str(&format!("\"{a}\"")),
+            _ => line.push_str(a),
+        }
+    }
+    line
+}
+
 #[cfg(target_os = "windows")]
 async fn powershell(script: &str) -> Result<String, String> {
     let out = tokio::process::Command::new("powershell")
@@ -68,7 +212,18 @@ pub async fn apply(
     use tauri_plugin_opener::OpenerExt;
     match fix {
         FixAction::SetNetworkProfilePrivate { interface_index } => {
-            powershell(&diagnostics::ps_set_private(interface_index)).await?;
+            let script = diagnostics::ps_set_private(interface_index);
+            if needs_runas() {
+                run_admin_lines(
+                    state,
+                    "network-profile",
+                    vec![powershell_line(&script)],
+                    &state.dirs.data,
+                )
+                .await?;
+            } else {
+                powershell(&script).await?;
+            }
             Ok("msg.profile_private".into())
         }
         FixAction::AddFirewallRules => {
@@ -89,8 +244,14 @@ pub async fn apply(
             let binary = located
                 .found
                 .ok_or_else(|| format!("err.resilio_not_found|{}", located.probed.len()))?;
-            for rule in diagnostics::firewall_rules(&binary, port) {
-                netsh(&rule).await?;
+            let rules = diagnostics::firewall_rules(&binary, port);
+            if needs_runas() {
+                let lines = rules.iter().map(|r| netsh_line(r)).collect();
+                run_admin_lines(state, "firewall-rules", lines, &state.dirs.data).await?;
+            } else {
+                for rule in &rules {
+                    netsh(rule).await?;
+                }
             }
             Ok("msg.firewall_added".into())
         }
@@ -121,7 +282,18 @@ pub async fn apply(
         }
         FixAction::AddDefenderExclusion { path } => {
             let escaped = path.replace('\'', "''");
-            powershell(&format!("Add-MpPreference -ExclusionPath '{escaped}'")).await?;
+            let script = format!("Add-MpPreference -ExclusionPath '{escaped}'");
+            if needs_runas() {
+                run_admin_lines(
+                    state,
+                    "defender-exclusion",
+                    vec![powershell_line(&script)],
+                    &state.dirs.data,
+                )
+                .await?;
+            } else {
+                powershell(&script).await?;
+            }
             Ok("msg.defender_exclusion_added".into())
         }
     }
