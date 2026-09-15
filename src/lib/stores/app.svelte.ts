@@ -69,6 +69,9 @@ class AppStore {
       await listen("transport-health", (payload) => {
         this.health = payload as TransportHealth;
       });
+      await listen("catalog-updated", () => {
+        void this.reloadGames();
+      });
       await listen("event-updated", (payload) => {
         this.event = payload as EventBundle;
         if (this.settings) this.applyThemeFor(this.settings, this.event);

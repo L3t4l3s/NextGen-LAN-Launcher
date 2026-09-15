@@ -93,6 +93,7 @@ export function createMock() {
     allowElevation: true,
     runnerPaths: { wine: null, crossoverApp: null, proton: null },
     syncPort: 0,
+    catalogKey: null,
   };
   // pre-seeded states for a lively screenshot
   sims.set("quake3", { phase: "ready", started: 0, duration: 1, stuck: false, paused: false, pausedAt: 0, problem: null });
@@ -155,6 +156,7 @@ export function createMock() {
     emit("install-status", [...sims.keys()].map(status).filter(Boolean));
   }, 1000);
 
+  const noServer = new URLSearchParams(location.search).has("noserver");
   const bootstrap: BootstrapInfo = {
     settings,
     demo: true,
@@ -187,6 +189,7 @@ export function createMock() {
     transportMode: "demo",
     transportError: null,
     needsSetup: new URLSearchParams(location.search).has("wizard"),
+    builtinCatalogKey: true,
     dirs: { config: "~/.config/nll", data: "~/.local/share/nll", cache: "~/.cache/nll", logs: "~/.local/share/nll/logs" },
   };
 
@@ -263,9 +266,13 @@ export function createMock() {
         return;
       case "get_settings":
         return settings;
-      case "save_settings":
-        settings = args.settings as Settings;
+      case "save_settings": {
+        const next = args.settings as Settings;
+        const key = next.catalogKey?.trim() ?? "";
+        if (key && !/^B[A-Z2-7]{32}$/.test(key)) throw new Error("err.invalid_catalog_key");
+        settings = { ...next, catalogKey: key || null };
         return settings;
+      }
       case "refresh_catalog":
         return demoGames.length;
       case "run_diagnostics":
@@ -277,7 +284,10 @@ export function createMock() {
         return "Erledigt (Demo)";
       }
       case "get_transport_health":
-        return { kind: "demo", running: true, api_reachable: true, version: "demo", peers: 3, lan_mode: true, detail: "simulated" };
+        // `?noserver` shows the "no sync server" state of a managed Resilio.
+        return noServer
+          ? { kind: "resilio", running: true, api_reachable: true, version: "2.8.1", peers: 1, catalog_peers: 0, server_found: false, lan_mode: true, detail: null }
+          : { kind: "demo", running: true, api_reachable: true, version: "demo", peers: 3, catalog_peers: 3, server_found: true, lan_mode: true, detail: "simulated" };
       case "refresh_event":
         return bootstrap.event;
       case "open_path":

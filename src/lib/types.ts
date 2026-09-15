@@ -102,6 +102,8 @@ export interface Settings {
   allowElevation: boolean;
   runnerPaths: { wine: string | null; crossoverApp: string | null; proton: string | null };
   syncPort: number;
+  /** Overrides the built-in key of the catalog share (eti_launcher). */
+  catalogKey: string | null;
 }
 
 export interface Link {
@@ -167,6 +169,10 @@ export interface TransportHealth {
   api_reachable: boolean;
   version: string | null;
   peers: number;
+  /** Peers on the catalog share (eti_launcher) only. */
+  catalog_peers: number;
+  /** true: a sync server serves the catalog; false: nobody does; null: unknown (folder mode, key missing, API down). */
+  server_found: boolean | null;
   lan_mode: boolean;
   detail: string | null;
 }
@@ -180,6 +186,8 @@ export interface BootstrapInfo {
   transportMode: TransportMode;
   transportError: string | null;
   needsSetup: boolean;
+  /** The built-in catalog share key is valid (not the placeholder). */
+  builtinCatalogKey: boolean;
   dirs: { config: string; data: string; cache: string; logs: string };
 }
 

@@ -49,6 +49,9 @@ pub struct Settings {
     pub runner_paths: RunnerPaths,
     /// Resilio listening port (0 = let the engine pick).
     pub sync_port: u16,
+    /// Overrides the built-in read-only key of the catalog share
+    /// (`eti_launcher`, see `catalog::BUILTIN_CATALOG_KEY`).
+    pub catalog_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,6 +79,7 @@ impl Default for Settings {
             allow_elevation: true,
             runner_paths: RunnerPaths::default(),
             sync_port: 0,
+            catalog_key: None,
         }
     }
 }
@@ -119,6 +123,17 @@ impl Settings {
         if self.lanpage_host.trim().is_empty() {
             self.lanpage_host = "launcher.lan".into();
         }
+        self.normalise_catalog_key();
+    }
+
+    /// Trim the catalog key override and turn an empty value into `None`.
+    /// Shared by `migrate` and the settings command so both paths agree.
+    pub fn normalise_catalog_key(&mut self) {
+        self.catalog_key = self
+            .catalog_key
+            .take()
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty());
     }
 
     /// Sanitised player name for scripts and the stats beacon: no quotes,
@@ -162,7 +177,7 @@ mod tests {
         let p = dir.path().join("settings.json");
         std::fs::write(
             &p,
-            r#"{"version":0,"language":"","gameLanguage":"xx","lanpageHost":" "}"#,
+            r#"{"version":0,"language":"","gameLanguage":"xx","lanpageHost":" ","catalogKey":"  "}"#,
         )
         .unwrap();
         let s = Settings::load(&p).unwrap();
@@ -170,6 +185,22 @@ mod tests {
         assert_eq!(s.language, "de");
         assert_eq!(s.game_language, "en");
         assert_eq!(s.lanpage_host, "launcher.lan");
+        assert_eq!(s.catalog_key, None);
+    }
+
+    #[test]
+    fn catalog_key_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("settings.json");
+        let s = Settings {
+            catalog_key: Some(" BABCDEFGHIJKLMNOPQRSTUVWXYZ234567 ".into()),
+            ..Settings::default()
+        };
+        s.save(&p).unwrap();
+        assert_eq!(
+            Settings::load(&p).unwrap().catalog_key.as_deref(),
+            Some("BABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
+        );
     }
 
     #[test]

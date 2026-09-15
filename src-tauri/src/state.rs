@@ -41,6 +41,17 @@ impl AppState {
         }
     }
 
+    /// Default library root as configured in settings (the source of truth;
+    /// `library` lags behind it by up to 2 s).
+    pub async fn default_root_path(&self) -> Option<PathBuf> {
+        self.settings
+            .read()
+            .await
+            .library
+            .default_root()
+            .map(|r| r.path.clone())
+    }
+
     pub async fn catalog(&self) -> Catalog {
         match self.manager.read().await.as_ref() {
             Some(m) => m.catalog().await,

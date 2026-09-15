@@ -24,6 +24,8 @@ use tokio::sync::RwLock;
 pub const STATUS_EVENT: &str = "install-status";
 pub const HEALTH_EVENT: &str = "transport-health";
 pub const EVENT_UPDATED: &str = "event-updated";
+/// Emitted with the new game count after `game.db` changed on disk.
+pub const CATALOG_EVENT: &str = "catalog-updated";
 
 fn is_demo() -> bool {
     std::env::args().any(|a| a == "--demo")
@@ -101,15 +103,83 @@ pub(crate) fn demo_catalog() -> Catalog {
 }
 
 /// Load the catalog from the default library root, if present.
-pub(crate) fn load_catalog_from_library(library: &Library, dirs: &AppDirs) -> Option<Catalog> {
+/// `extract_covers` re-unpacks `assets.eti` into the cover cache; skip it when
+/// only `game.db` changed.
+pub(crate) fn load_catalog_from_library(
+    library: &Library,
+    dirs: &AppDirs,
+    extract_covers: bool,
+) -> Option<Catalog> {
     let root = library.default_root()?;
     let db = root.path.join(lanlauncher_core::paths::CATALOG_RELATIVE);
     let catalog = Catalog::load(&db).ok()?;
     let assets = root.path.join(lanlauncher_core::paths::ASSETS_RELATIVE);
-    if assets.is_file() {
+    if extract_covers && assets.is_file() {
         let _ = lanlauncher_core::catalog::extract_covers(&assets, &dirs.covers_dir());
     }
     Some(catalog)
+}
+
+/// Re-read the catalog from the default library root and hand it to the
+/// install manager. `None` when no readable `game.db` exists (yet).
+pub(crate) async fn reload_catalog(state: &AppState, extract_covers: bool) -> Option<usize> {
+    let library = state.settings.read().await.library.clone();
+    let dirs = state.dirs.clone();
+    // SQLite open + tar extraction are blocking work; keep them off the
+    // async runtime threads.
+    let catalog = tauri::async_runtime::spawn_blocking(move || {
+        load_catalog_from_library(&library, &dirs, extract_covers)
+    })
+    .await
+    .ok()??;
+    let n = catalog.games.len();
+    if let Some(m) = state.manager.read().await.as_ref() {
+        m.set_catalog(catalog).await;
+        m.adopt_existing().await;
+    }
+    Some(n)
+}
+
+/// Managed mode only: make Resilio sync the catalog share
+/// `<default root>/eti_launcher`, which carries `game.db`, covers and videos
+/// and whose peers tell whether a sync server is present. Idempotent (the
+/// engine ignores re-adding a known folder) and non-fatal: failures are
+/// logged and the health then reports `server_found: None`.
+pub(crate) async fn register_catalog_share(state: &AppState) {
+    let Some(transport) = state.transport.read().await.clone() else {
+        return;
+    };
+    if transport.kind() != lanlauncher_core::transport::TransportKind::Resilio {
+        return;
+    }
+    // Key, LAN mode and root come from one settings snapshot so a concurrent
+    // save cannot pair a new key with an old directory.
+    let (key, lan_only, dir) = {
+        let s = state.settings.read().await;
+        (
+            lanlauncher_core::catalog::catalog_share_key(s.catalog_key.as_deref()),
+            s.lan_mode,
+            s.library
+                .default_root()
+                .map(|r| r.path.join(lanlauncher_core::paths::LAUNCHER_SHARE_ID)),
+        )
+    };
+    let Some(key) = key else {
+        log::warn!("catalog share key not configured; eti_launcher is not synced");
+        return;
+    };
+    let Some(dir) = dir else {
+        log::warn!("no library root configured; catalog share not registered");
+        return;
+    };
+    let opts = lanlauncher_core::transport::ShareOptions {
+        lan_only,
+        paused: false,
+    };
+    match transport.add_share(&key, &dir, &opts).await {
+        Ok(()) => log::info!("catalog share registered at {}", dir.display()),
+        Err(e) => log::warn!("cannot register catalog share at {}: {e}", dir.display()),
+    }
 }
 
 pub(crate) async fn build_transport(state: &AppState) -> (Arc<dyn Transport>, Option<String>) {
@@ -316,12 +386,13 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
     let (transport, error) = build_transport(&state).await;
     *state.transport_error.write().await = error;
     *state.transport.write().await = Some(transport.clone());
+    register_catalog_share(&state).await;
 
     let catalog = if state.demo {
         demo_catalog()
     } else {
         let lib = library.read().map(|l| l.clone()).unwrap_or_default();
-        load_catalog_from_library(&lib, &state.dirs).unwrap_or_default()
+        load_catalog_from_library(&lib, &state.dirs, true).unwrap_or_default()
     };
     let lan_only = state.settings.read().await.lan_mode;
     let manager = build_manager(
@@ -392,6 +463,51 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
                 let _ = app4.emit(HEALTH_EVENT, &health);
             }
             tokio::time::sleep(Duration::from_secs(15)).await;
+        }
+    });
+
+    // Catalog reload: `game.db` and `assets.eti` arrive through the catalog
+    // share minutes after start at a LAN; a size/mtime change of either
+    // triggers a reload (covers are re-extracted with it).
+    let st = state.clone();
+    let app5 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        type Stamp = Option<(u64, Option<std::time::SystemTime>)>;
+        let stamp = |p: std::path::PathBuf| -> Stamp {
+            let meta = std::fs::metadata(p).ok()?;
+            Some((meta.len(), meta.modified().ok()))
+        };
+        let signature = |root: Option<std::path::PathBuf>| -> (Stamp, Stamp) {
+            match root {
+                Some(r) => (
+                    stamp(r.join(lanlauncher_core::paths::CATALOG_RELATIVE)),
+                    stamp(r.join(lanlauncher_core::paths::ASSETS_RELATIVE)),
+                ),
+                None => (None, None),
+            }
+        };
+        if st.demo {
+            return;
+        }
+        let mut last = signature(st.default_root_path().await);
+        loop {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            let now = signature(st.default_root_path().await);
+            // A vanished game.db keeps the old catalog. A changed one is
+            // loaded once; if it is half-written and fails quick_check, the
+            // next size/mtime change retries. Covers are only re-extracted
+            // when assets.eti itself changed.
+            if now.0.is_some() && now != last {
+                let assets_changed = now.1 != last.1;
+                last = now;
+                match reload_catalog(&st, assets_changed).await {
+                    Some(n) => {
+                        log::info!("catalog reloaded: {n} games");
+                        let _ = app5.emit(CATALOG_EVENT, n);
+                    }
+                    None => log::warn!("catalog changed on disk but could not be loaded yet"),
+                }
+            }
         }
     });
 

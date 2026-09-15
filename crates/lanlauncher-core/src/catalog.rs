@@ -55,6 +55,25 @@ impl ShareKey {
     }
 }
 
+/// Read-only key of the ETI catalog share (`eti_launcher`), built into the
+/// launcher like the original ETI client does. PLACEHOLDER: replace with the
+/// real key. The underscores make it fail `READ_ONLY_KEY_RE` on purpose, so
+/// until then the launcher treats the catalog share as "not configured".
+pub const BUILTIN_CATALOG_KEY: &str = "B_PLACEHOLDER_REPLACE_WITH_ETI_LAUNCHER_KEY_";
+
+/// Effective catalog key: a valid settings override wins, otherwise the
+/// built-in key. `None` when neither parses. An invalid override is logged and
+/// ignored so a hand-edited settings file cannot silently disable the catalog.
+pub fn catalog_share_key(override_key: Option<&str>) -> Option<ShareKey> {
+    if let Some(k) = override_key.map(str::trim).filter(|k| !k.is_empty()) {
+        match ShareKey::parse(k) {
+            Some(key) => return Some(key),
+            None => log::warn!("ignoring invalid catalogKey override in settings"),
+        }
+    }
+    ShareKey::parse(BUILTIN_CATALOG_KEY)
+}
+
 impl std::fmt::Debug for ShareKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "ShareKey(B…{})", &self.0[self.0.len() - 4..])
@@ -486,6 +505,23 @@ mod tests {
             .skipped_rows
             .iter()
             .any(|r| r.contains("invalid game_id")));
+    }
+
+    #[test]
+    fn catalog_share_key_prefers_valid_override() {
+        let valid = "BABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+        assert_eq!(
+            catalog_share_key(Some(valid)).map(|k| k.expose().to_string()),
+            Some(valid.to_string())
+        );
+        assert_eq!(
+            catalog_share_key(Some(&format!("  {valid}  "))).map(|k| k.expose().to_string()),
+            Some(valid.to_string())
+        );
+        let builtin = ShareKey::parse(BUILTIN_CATALOG_KEY);
+        assert_eq!(catalog_share_key(None), builtin);
+        assert_eq!(catalog_share_key(Some("   ")), builtin);
+        assert_eq!(catalog_share_key(Some("garbage")), builtin);
     }
 
     #[test]

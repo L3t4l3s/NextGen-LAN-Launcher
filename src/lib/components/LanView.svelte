@@ -65,10 +65,13 @@
   <div class="card">
     {#if app.health}
       <div class="row">
-        <span class="dot {app.health.kind === 'demo' || (app.health.running && app.health.api_reachable && app.health.peers > 0) ? 'ok' : app.health.running ? 'warn' : 'error'}"></span>
+        <span class="dot {app.health.kind === 'demo' || (app.health.running && app.health.api_reachable && app.health.peers > 0 && app.health.server_found !== false) ? 'ok' : app.health.running ? 'warn' : 'error'}"></span>
         <strong>{t(`lan.transport.kind.${app.health.kind}`)}</strong>
       </div>
       <p class="muted">
+        {#if app.health.kind !== "demo"}
+          {app.health.server_found === true ? t("status.server.found") : app.health.server_found === false ? t("status.server.missing") : t("status.server.unknown")} ·
+        {/if}
         {t("lan.transport.peers", { count: app.health.peers })} · {app.health.lan_mode ? t("lan.transport.lan_mode") : t("lan.transport.internet")}
         {#if app.health.version} · {t("lan.transport.version", { version: app.health.version })}{/if}
       </p>

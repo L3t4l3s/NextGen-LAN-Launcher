@@ -81,6 +81,12 @@ Tags `v*` are built by `release.yml` instead.
   `Get-NetConnectionProfile`, skip idle adapters and downgrade a public adapter next to a
   private/domain one to a warning. Written against a test system with a domain network plus an
   idle second NIC; untested at a LAN party where the only adapter has no internet.
+- **Catalog share and server detection:** in managed mode the launcher adds the `eti_launcher`
+  share itself and reports "sync server found" when that share has a peer. The built-in key
+  (`BUILTIN_CATALOG_KEY` in `crates/lanlauncher-core/src/catalog.rs`) is a placeholder until the
+  real ETI key is pasted; registration and peer-based detection are untested against a real sync
+  server. Resilio cannot tell a server from another client that already holds the catalog, so a
+  second player with a complete `eti_launcher` also counts as "server found".
 - **Covers and videos** come from the `eti_launcher` share at the LAN (`update/assets.eti`,
   `video/<id>.mp4`). Demo mode intentionally ships no game artwork.
 - **macOS/Linux launch profiles:** six games have curated profiles; every other game gets a profile

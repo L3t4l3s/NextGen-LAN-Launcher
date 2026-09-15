@@ -148,6 +148,11 @@
               <label for="port">{t("settings.sync_port")}</label>
               <input id="port" type="number" min="0" max="65535" bind:value={draft.syncPort} />
             </div>
+            <div>
+              <label for="ckey">{t("settings.catalog_key")}</label>
+              <input id="ckey" bind:value={draft.catalogKey} maxlength="40" spellcheck="false" autocomplete="off" placeholder="B…" />
+              <p class="hint">{t("settings.catalog_key.hint")}</p>
+            </div>
             {#if app.bootstrap?.platform !== "windows"}
               <h3>{t("settings.runners")}</h3>
               <div><label for="wine">{t("settings.runners.wine")}</label><input id="wine" bind:value={draft.runnerPaths.wine} /></div>

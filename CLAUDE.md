@@ -94,6 +94,11 @@ WebKitGTK-Entwicklungspakete (siehe unten).
   kostenlose Lizenz ein Resilio-Konto, der ETI-Sync-Server läuft mit 2.8.1.1390. CI-Builds
   (`ci.yml`) enthalten kein Resilio; nur Release-Builds (Tag `v*`) tun das. Das Resilio-CDN ist aus
   der Claude-Sandbox nicht erreichbar, Hashes lassen sich nur auf GitHub-Runnern ermitteln.
+- **Katalog-Key:** `BUILTIN_CATALOG_KEY` in `crates/lanlauncher-core/src/catalog.rs` ist ein
+  Platzhalter, der absichtlich nicht dem Key-Muster entspricht. Solange er nicht durch den echten
+  Read-only-Key von `eti_launcher` ersetzt ist, registriert der Launcher den Katalog-Share nicht,
+  die Statusleiste zeigt „Server-Key fehlt“ und die Diagnose `catalog.key_missing`. Override über
+  `settings.catalogKey`.
 - **Test-Fixtures:** `sample_game.rar`, `truncated_game.rar` und `demo_amongus.rar` wurden mit
   `rar a -ep1 -r -m5 -ma5` erzeugt. `*.eti` und `game.db` sind per `.gitignore` ausgeschlossen,
   damit nie echte Resilio-Keys oder Spielarchive committet werden.

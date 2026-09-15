@@ -308,6 +308,14 @@ pub fn check_transport(health: &TransportHealth) -> Vec<Problem> {
                         .step("transport.no_peers.step.server")
                         .step("transport.no_peers.step.network"),
                 );
+            } else if health.server_found == Some(false) {
+                // Other players are connected, but nobody serves the catalog
+                // share, so the sync server itself is missing.
+                out.push(
+                    Problem::new("transport.no_server", Severity::Warning)
+                        .step("transport.no_server.step.server")
+                        .step("transport.no_server.step.wait"),
+                );
             }
         }
         crate::transport::TransportKind::Folder => {
@@ -443,6 +451,28 @@ mod tests {
                       {"InterfaceIndex":9,"InterfaceAlias":"vEthernet","Name":"V","NetworkCategory":7,"IPv4Connectivity":2}]"#;
         let problems = check_network_profiles(&parse_net_profiles(odd));
         assert_eq!(problems[0].code, "network.public_profile");
+    }
+
+    #[test]
+    fn check_transport_reports_missing_server() {
+        let health = |peers: u32, server_found: Option<bool>| TransportHealth {
+            kind: crate::transport::TransportKind::Resilio,
+            running: true,
+            api_reachable: true,
+            version: Some("2.8.1".into()),
+            peers,
+            catalog_peers: 0,
+            server_found,
+            lan_mode: true,
+            detail: None,
+        };
+        let codes = |h: &TransportHealth| -> Vec<String> {
+            check_transport(h).into_iter().map(|p| p.code).collect()
+        };
+        assert_eq!(codes(&health(2, Some(false))), vec!["transport.no_server"]);
+        assert_eq!(codes(&health(0, Some(false))), vec!["transport.no_peers"]);
+        assert!(codes(&health(2, None)).is_empty());
+        assert!(codes(&health(2, Some(true))).is_empty());
     }
 
     #[test]

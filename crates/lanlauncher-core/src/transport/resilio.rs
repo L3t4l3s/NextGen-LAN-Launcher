@@ -688,18 +688,22 @@ impl Transport for ResilioTransport {
             })
             .unwrap_or(false);
         let version = self.client.version().await.ok();
-        let peers = self
+        // One folder query feeds both counters; an API failure leaves the
+        // server state unknown rather than "not found".
+        let summary = self
             .client
             .folders()
             .await
-            .map(|f| f.values().map(|s| s.peers).sum())
-            .unwrap_or(0);
+            .ok()
+            .map(|f| super::peer_summary(f.values()));
         TransportHealth {
             kind: TransportKind::Resilio,
             running,
             api_reachable: version.is_some(),
             version,
-            peers,
+            peers: summary.map(|s| s.total).unwrap_or(0),
+            catalog_peers: summary.and_then(|s| s.catalog).unwrap_or(0),
+            server_found: summary.and_then(|s| s.catalog).map(|n| n > 0),
             lan_mode: *self.lan_only.lock().unwrap_or_else(|e| e.into_inner()),
             detail: None,
         }
@@ -969,6 +973,7 @@ mod tests {
             {"name":"/lan/idx","size":10,"status":"Indexing..."}
         ]});
         let f = parse_gui_folders(&v);
+        assert_eq!(super::super::peer_summary(f.values()).catalog, None);
         let q = &f[Path::new("/lan/quake3")];
         assert_eq!(q.state, ShareState::Complete);
         assert_eq!(q.peers, 2);
@@ -978,6 +983,16 @@ mod tests {
         assert_eq!(c.bytes_done, 4950);
         assert_eq!(f[Path::new("/lan/paused")].state, ShareState::Paused);
         assert_eq!(f[Path::new("/lan/idx")].state, ShareState::Indexing);
+    }
+
+    #[test]
+    fn gui_folders_report_catalog_peers() {
+        let v = json!({"folders":[
+            {"name":"/lan/quake3","size":"1","files":1,"status":"Synced","peers":[{},{}]},
+            {"name":"/lan/eti_launcher","size":"1","files":1,"status":"Synced","peers":[{}]}
+        ]});
+        let s = super::super::peer_summary(parse_gui_folders(&v).values());
+        assert_eq!((s.total, s.catalog), (3, Some(1)));
     }
 
     #[test]

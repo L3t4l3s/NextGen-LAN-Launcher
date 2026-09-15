@@ -35,11 +35,11 @@
     if (folderMode) api.shareKey(game.id).then((k) => (shareKey = k)).catch(() => (shareKey = null));
   });
 
-  async function run(label: string, fn: () => Promise<unknown>, toast?: string) {
+  async function run(label: string, fn: () => Promise<unknown>, toast?: string, kind: "success" | "info" = "success") {
     working = true;
     try {
       await fn();
-      if (toast) app.toast("success", toast);
+      if (toast) app.toast(kind, toast);
     } catch (e) {
       app.toast("error", t("toast.error", { detail: userText(e) }));
     } finally {
@@ -47,7 +47,13 @@
     }
   }
 
-  const install = () => run("install", () => api.install(game.id), t("toast.install_started", { title: game.title }));
+  const install = () => {
+    // Without a sync server the download is still queued (Resilio picks the
+    // share up once a peer appears), but the user is told there is no source yet.
+    const noSource = app.health?.kind === "resilio" && app.health.server_found === false;
+    const [key, kind] = noSource ? (["toast.install_no_server", "info"] as const) : (["toast.install_started", "success"] as const);
+    return run("install", () => api.install(game.id), t(key, { title: game.title }), kind);
+  };
   const repair = () => run("repair", () => api.repair(game.id), t("toast.repair_started", { title: game.title }));
   const pause = (p: boolean) => run("pause", () => api.pause(game.id, p));
   const openFolder = () => run("open", () => api.openPath(game.shareDir ?? ""));

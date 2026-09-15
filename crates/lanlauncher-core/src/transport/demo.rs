@@ -144,6 +144,8 @@ impl Transport for DemoTransport {
             api_reachable: true,
             version: Some("demo".into()),
             peers: 3,
+            catalog_peers: 3,
+            server_found: Some(true),
             lan_mode: *self.lan_only.lock().unwrap_or_else(|e| e.into_inner()),
             detail: Some("simulated transport".into()),
         }

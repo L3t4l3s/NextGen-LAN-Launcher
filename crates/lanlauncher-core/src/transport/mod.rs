@@ -77,8 +77,47 @@ pub struct TransportHealth {
     pub version: Option<String>,
     /// Total connected peers across shares (best effort).
     pub peers: u32,
+    /// Peers connected on the catalog share (`eti_launcher`) only.
+    pub catalog_peers: u32,
+    /// `Some(true)`: a sync server serves the catalog share; `Some(false)`: the
+    /// share is registered but nobody offers it; `None`: cannot tell (folder
+    /// mode, API failure, catalog share not registered).
+    pub server_found: Option<bool>,
     pub lan_mode: bool,
     pub detail: Option<String>,
+}
+
+/// Peer counts split into "everything" and "the catalog share".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PeerSummary {
+    pub total: u32,
+    /// `None` when no catalog share is registered at all.
+    pub catalog: Option<u32>,
+}
+
+/// Is `dir` the catalog share (`<root>/eti_launcher`)? Trailing separators are
+/// tolerated; Windows compares case-insensitively like [`normalise_dir`].
+pub fn is_catalog_share(dir: &Path) -> bool {
+    let Some(name) = dir.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    if cfg!(target_os = "windows") {
+        name.eq_ignore_ascii_case(crate::paths::LAUNCHER_SHARE_ID)
+    } else {
+        name == crate::paths::LAUNCHER_SHARE_ID
+    }
+}
+
+/// Sum peers over all shares and, separately, over the catalog share.
+pub fn peer_summary<'a>(shares: impl IntoIterator<Item = &'a ShareStatus>) -> PeerSummary {
+    let mut out = PeerSummary::default();
+    for s in shares {
+        out.total += s.peers;
+        if is_catalog_share(&s.dir) {
+            out.catalog = Some(out.catalog.unwrap_or(0) + s.peers);
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -130,5 +169,64 @@ pub fn normalise_dir(path: &Path) -> String {
         s.to_ascii_lowercase()
     } else {
         s.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn share(dir: &str, peers: u32) -> ShareStatus {
+        ShareStatus {
+            dir: PathBuf::from(dir),
+            state: ShareState::Downloading,
+            bytes_done: 0,
+            bytes_total: 0,
+            files_total: 0,
+            peers,
+            download_bps: 0,
+            upload_bps: 0,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn is_catalog_share_matches_last_component() {
+        assert!(is_catalog_share(Path::new("/lan/eti_launcher")));
+        assert!(is_catalog_share(Path::new("/lan/eti_launcher/")));
+        assert!(!is_catalog_share(Path::new("/lan/eti_launcher_old")));
+        assert!(!is_catalog_share(Path::new("/lan/quake3")));
+        assert!(!is_catalog_share(Path::new("/eti_launcher/update")));
+    }
+
+    #[test]
+    fn peer_summary_separates_catalog_peers() {
+        let shares = [share("/lan/quake3", 2), share("/lan/eti_launcher", 1)];
+        let s = peer_summary(shares.iter());
+        assert_eq!(
+            s,
+            PeerSummary {
+                total: 3,
+                catalog: Some(1)
+            }
+        );
+
+        let s = peer_summary([share("/lan/quake3", 2)].iter());
+        assert_eq!(
+            s,
+            PeerSummary {
+                total: 2,
+                catalog: None
+            }
+        );
+
+        let s = peer_summary([share("/lan/eti_launcher", 0)].iter());
+        assert_eq!(
+            s,
+            PeerSummary {
+                total: 0,
+                catalog: Some(0)
+            }
+        );
     }
 }

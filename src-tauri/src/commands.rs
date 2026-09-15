@@ -31,6 +31,10 @@ pub struct BootstrapInfo {
     pub transport_mode: TransportMode,
     pub transport_error: Option<String>,
     pub needs_setup: bool,
+    /// The built-in key for the catalog share (`eti_launcher`) is valid (not
+    /// the placeholder). Together with a non-empty `settings.catalogKey` the
+    /// frontend derives whether the launcher can detect the sync server.
+    pub builtin_catalog_key: bool,
     pub dirs: DirsInfo,
 }
 
@@ -121,6 +125,10 @@ pub async fn get_bootstrap(state: State<'_, Arc<AppState>>) -> Cmd<BootstrapInfo
     let event = state.event.read().await.clone();
     Ok(BootstrapInfo {
         needs_setup: !settings.setup_complete && !state.demo,
+        builtin_catalog_key: lanlauncher_core::catalog::ShareKey::parse(
+            lanlauncher_core::catalog::BUILTIN_CATALOG_KEY,
+        )
+        .is_some(),
         transport_mode: state.effective_transport_mode().await,
         transport_error: state.transport_error.read().await.clone(),
         demo: state.demo,
@@ -339,6 +347,12 @@ pub async fn save_settings(state: State<'_, Arc<AppState>>, settings: Settings) 
         new.transport = TransportMode::Demo;
         new.setup_complete = true;
     }
+    new.normalise_catalog_key();
+    if let Some(k) = &new.catalog_key {
+        if lanlauncher_core::catalog::ShareKey::parse(k).is_none() {
+            return Err("err.invalid_catalog_key".into());
+        }
+    }
     for root in &new.library.roots {
         if !root.path.exists() {
             std::fs::create_dir_all(&root.path)
@@ -346,7 +360,26 @@ pub async fn save_settings(state: State<'_, Arc<AppState>>, settings: Settings) 
         }
     }
     new.save(&state.settings_path()).map_err(err)?;
+    let old_root = current.library.default_root().map(|r| r.path.clone());
+    let new_root = new.library.default_root().map(|r| r.path.clone());
+    let catalog_changed = current.catalog_key != new.catalog_key || old_root != new_root;
     *current = new.clone();
+    drop(current);
+    if catalog_changed && !state.demo {
+        // The wizard saves a root without restarting the transport, so the
+        // catalog share is (re-)registered right here. The old registration
+        // is dropped first: a moved root must not sync the catalog twice, and
+        // Resilio ignores re-adding a known folder with a different key.
+        if let Some(old) = &old_root {
+            if let Some(t) = state.transport.read().await.clone() {
+                let old_dir = old.join(lanlauncher_core::paths::LAUNCHER_SHARE_ID);
+                if let Err(e) = t.remove_share(&old_dir).await {
+                    log::warn!("cannot remove old catalog share {}: {e}", old_dir.display());
+                }
+            }
+        }
+        crate::register_catalog_share(&state).await;
+    }
     Ok(new)
 }
 
@@ -355,15 +388,9 @@ pub async fn refresh_catalog(state: State<'_, Arc<AppState>>) -> Cmd<usize> {
     if state.demo {
         return Ok(state.catalog().await.games.len());
     }
-    let library = state.settings.read().await.library.clone();
-    let catalog =
-        crate::load_catalog_from_library(&library, &state.dirs).ok_or("err.no_catalog")?;
-    let n = catalog.games.len();
-    if let Some(m) = state.manager.read().await.as_ref() {
-        m.set_catalog(catalog).await;
-        m.adopt_existing().await;
-    }
-    Ok(n)
+    crate::reload_catalog(&state, true)
+        .await
+        .ok_or_else(|| "err.no_catalog".to_string())
 }
 
 #[tauri::command]
@@ -385,9 +412,27 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
     }
 
     checks.push("transport".into());
-    if let Some(t) = state.transport.read().await.clone() {
+    let transport = state.transport.read().await.clone();
+    if let Some(t) = &transport {
         let health = t.health().await;
         problems.extend(diagnostics::check_transport(&health));
+    }
+    // Only the managed Resilio registers the catalog share, so only there a
+    // missing key matters (a fallback to folder mode is reported above).
+    checks.push("catalog_key".into());
+    let managed = transport
+        .as_ref()
+        .is_some_and(|t| t.kind() == lanlauncher_core::transport::TransportKind::Resilio);
+    if managed
+        && lanlauncher_core::catalog::catalog_share_key(settings.catalog_key.as_deref()).is_none()
+    {
+        problems.push(
+            lanlauncher_core::problem::Problem::new(
+                "catalog.key_missing",
+                lanlauncher_core::problem::Severity::Warning,
+            )
+            .step("catalog.key_missing.step.settings"),
+        );
     }
     if let Some(e) = state.transport_error.read().await.clone() {
         problems.push(
@@ -564,6 +609,7 @@ pub async fn restart_transport_inner(state: &Arc<AppState>) -> Cmd<()> {
     let (transport, error) = crate::build_transport(state).await;
     *state.transport_error.write().await = error.clone();
     *state.transport.write().await = Some(transport.clone());
+    crate::register_catalog_share(state).await;
     let catalog = state.catalog().await;
     let lan_only = state.settings.read().await.lan_mode;
     let manager = crate::build_manager(state, transport, catalog, state.library.clone(), lan_only);

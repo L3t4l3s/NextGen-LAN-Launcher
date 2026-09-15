@@ -43,7 +43,12 @@
 `config.json` (API on 127.0.0.1 with a random password, storage in the app data dir,
 `sync_max_time_diff` 48 h, LAN discovery mode 3, tracker/relay off in LAN mode), cleans up
 orphaned instances (PID file + process list) and talks to the documented Sync API when an
-`api_key` is configured, otherwise to the GUI endpoints. `FolderTransport` only watches the
+`api_key` is configured, otherwise to the GUI endpoints. In managed mode the shell registers the
+catalog share `<default root>/eti_launcher` itself (`register_catalog_share` in `src-tauri/src/lib.rs`,
+key from `catalog::catalog_share_key`: settings override or `BUILTIN_CATALOG_KEY`). `TransportHealth`
+carries `catalog_peers` and `server_found` (`Some(true)` when that share has a peer, `None` when the
+transport cannot tell); the status bar shows it, and a changed `game.db` is reloaded automatically.
+ `FolderTransport` only watches the
 folders and hands out keys. `DemoTransport` simulates downloads including the "stuck at 99 %"
 case and is used by `--demo` / `LANLAUNCHER_DEMO=1`.
 
