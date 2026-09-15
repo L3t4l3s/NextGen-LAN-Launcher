@@ -1286,7 +1286,14 @@ mod tests {
         // ETI's API key plus our own login: the API stays password-protected.
         assert_eq!(json["webui"]["api_key"], ETI_API_KEY);
         assert_eq!(json["webui"]["login"], "launcher");
-        assert_eq!(json["pid_file"], format!("/tmp/st/{PID_FILE}"));
+        // Path separators differ per OS; compare the joined path, not a literal.
+        assert_eq!(
+            json["pid_file"],
+            PathBuf::from("/tmp/st")
+                .join(PID_FILE)
+                .to_string_lossy()
+                .as_ref()
+        );
         let mut plain = cfg.clone();
         plain.api_key = None;
         assert!(plain.to_json()["webui"].get("api_key").is_none());
