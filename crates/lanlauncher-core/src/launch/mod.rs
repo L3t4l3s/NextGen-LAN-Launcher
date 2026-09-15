@@ -97,6 +97,56 @@ pub fn extra_plan(extra: Extra, ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
     }
 }
 
+/// ETI's runtime package installer under a library root
+/// (`eti_launcher/bin/preqsetup.exe`), only when it is complete: Resilio
+/// downloads into `<name>.!sync` and renames at the end, a plain copy (folder
+/// mode) has no such marker, so the file must also have been untouched for a
+/// minute. `None` off Windows.
+pub fn prereq_installer(library_root: &std::path::Path) -> Option<PathBuf> {
+    if !cfg!(target_os = "windows") {
+        return None;
+    }
+    prereq_installer_at(library_root, std::time::SystemTime::now())
+}
+
+/// Testable core of [`prereq_installer`]; `now` is the reference for the
+/// one-minute settle time.
+pub fn prereq_installer_at(
+    library_root: &std::path::Path,
+    now: std::time::SystemTime,
+) -> Option<PathBuf> {
+    let exe = library_root.join(crate::paths::PREREQ_INSTALLER_RELATIVE);
+    let meta = std::fs::metadata(&exe).ok().filter(|m| m.is_file())?;
+    let mut partial = exe.clone().into_os_string();
+    partial.push(".!sync");
+    if PathBuf::from(partial).exists() {
+        return None;
+    }
+    let settled = meta
+        .modified()
+        .ok()
+        .and_then(|m| now.duration_since(m).ok())
+        .is_some_and(|age| age >= std::time::Duration::from_secs(60));
+    settled.then_some(exe)
+}
+
+/// Plan for the runtime package installer: the file as is, its folder as
+/// working directory; it brings its own UI.
+pub fn prereq_plan(installer: &std::path::Path) -> LaunchPlan {
+    LaunchPlan {
+        program: installer.to_path_buf(),
+        args: Vec::new(),
+        cwd: installer
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(".")),
+        env: BTreeMap::new(),
+        runner: "preqsetup.exe".into(),
+        needs_elevation: true,
+        raw_command_line: None,
+    }
+}
+
 /// Build the launch plan for the current platform.
 pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
     if cfg!(target_os = "windows") {
@@ -254,6 +304,30 @@ fn is_unix_executable(_m: &std::fs::Metadata) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prereq_installer_requires_a_complete_settled_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("eti_launcher").join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let exe = bin.join("preqsetup.exe");
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(120);
+        assert!(prereq_installer_at(dir.path(), later).is_none(), "absent");
+        std::fs::write(&exe, "MZ").unwrap();
+        assert!(
+            prereq_installer_at(dir.path(), std::time::SystemTime::now()).is_none(),
+            "just written: may still be copied"
+        );
+        assert_eq!(prereq_installer_at(dir.path(), later), Some(exe.clone()));
+        std::fs::write(bin.join("preqsetup.exe.!sync"), "").unwrap();
+        assert!(
+            prereq_installer_at(dir.path(), later).is_none(),
+            "Resilio still writing"
+        );
+        let plan = prereq_plan(&exe);
+        assert_eq!(plan.cwd, bin);
+        assert!(plan.args.is_empty());
+    }
 
     #[test]
     fn lists_executables_sorted_by_depth() {

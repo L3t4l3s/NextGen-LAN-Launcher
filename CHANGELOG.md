@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Einstellungen: Karte „Häufig benötigte Systembibliotheken“ mit „Paket installieren“ startet nach
+  Rückfrage ETIs `preqsetup.exe` aus dem Katalog-Share (.NET 4.8, VC++, DirectX 11, PhysX …), sobald
+  die Datei synchronisiert ist.
 - Resilio startete mit Exit-Code 1: Die erzeugte `config.json` enthielt Schlüssel, die Resilio
   2.8.1 nicht kennt. Sie entspricht jetzt der Konfiguration des ETI-Launchers (gleiche Schlüssel,
   eigene Werte) und nutzt wie dieser den API-Schlüssel statt eines Web-Logins. Bricht die Engine

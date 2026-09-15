@@ -16,6 +16,10 @@ use std::path::{Path, PathBuf};
 pub const LAUNCHER_SHARE_ID: &str = "eti_launcher";
 pub const CATALOG_RELATIVE: &str = "eti_launcher/update/game.db";
 pub const ASSETS_RELATIVE: &str = "eti_launcher/update/assets.eti";
+/// ETI's bundled installer for commonly needed runtimes (.NET 4.8, VC++
+/// redistributables, DirectX 11, PhysX and more; about 3.3 GB), offered in
+/// the ETI client's settings as "Paket installieren".
+pub const PREREQ_INSTALLER_RELATIVE: &str = "eti_launcher/bin/preqsetup.exe";
 pub const LOCAL_DIR: &str = "local";
 pub const VERSION_FILE: &str = "version.ini";
 pub const RECEIPT_FILE: &str = ".nll-install.json";

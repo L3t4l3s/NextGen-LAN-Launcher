@@ -531,6 +531,8 @@ pub fn run() {
             commands::uninstall_game,
             commands::play_game,
             commands::run_extra,
+            commands::get_prereq_installer,
+            commands::run_prereq_installer,
             commands::get_launch_plan,
             commands::list_executables,
             commands::set_exe_override,

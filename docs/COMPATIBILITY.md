@@ -34,6 +34,12 @@ code 1 when the config contains keys it does not know, so the launcher emits exa
 with its own values (storage in the app data dir, random ports, LAN-only switches) and ETI's API
 key, which enables the documented `/api` surface without a web login.
 
+## Runtime package installer
+
+`eti_launcher/bin/preqsetup.exe` (about 3.3 GB) installs the runtimes most games need (.NET 4.8,
+VC++ redistributables, DirectX 11, PhysX and more). The ETI client offers it in its settings as
+"Paket installieren" behind a confirmation; the launcher does the same and starts the file as is.
+
 ## Game share `<root>/<game_id>/`
 
 | File | Meaning |

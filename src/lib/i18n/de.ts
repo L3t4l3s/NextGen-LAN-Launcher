@@ -135,6 +135,12 @@ export const de: Messages = {
   "settings.transport.demo": "Demo",
   "settings.transport.restart_hint": "Änderung wird beim nächsten Start des Sync-Dienstes wirksam.",
   "settings.lan_mode": "Nur im LAN synchronisieren (kein Internet-Traffic)",
+  "settings.prereqs": "Häufig benötigte Systembibliotheken",
+  "settings.prereqs.hint": "ETIs Paket-Installer aus dem Katalog-Ordner richtet die Laufzeitumgebungen ein, die die meisten Spiele brauchen. Er bringt sein eigenes Fenster mit.",
+  "settings.prereqs.missing": "Der Paket-Installer (eti_launcher\\bin\\preqsetup.exe, ca. 3,3 GB) ist noch nicht vollständig synchronisiert.",
+  "settings.prereqs.install": "Paket installieren",
+  "settings.prereqs.confirm": "Der Launcher kann die von den meisten Spielen benötigten Systembibliotheken automatisch installieren. Soll die Installation jetzt gestartet werden?",
+  "settings.prereqs.started": "Paket-Installer gestartet. Folge dem Fenster des Installers.",
   "settings.lanpage": "LANPage",
   "settings.lanpage.hint": "Der Launcher liest launcher.ini von launcher.lan (Name der LAN, Farben, Statistik-Adresse), genau wie der bisherige Launcher.",
   "settings.send_stats": "Statistik an die LANPage senden (wer spielt was)",
@@ -191,6 +197,7 @@ export const de: Messages = {
   "toast.uninstalled": "Entfernt: {title}",
   "toast.error": "Fehler: {detail}",
   "err.extra_missing": "Das Werkzeug liegt nicht im Spielordner.",
+  "err.prereq_missing": "Der Paket-Installer liegt nicht vollständig im Katalog-Ordner.",
   "toast.fix_done": "Erledigt",
 
   // Backend result codes

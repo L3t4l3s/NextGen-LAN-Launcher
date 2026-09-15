@@ -605,6 +605,33 @@ pub async fn get_transport_health(state: State<'_, Arc<AppState>>) -> Cmd<Option
     }
 }
 
+/// Path of ETI's runtime package installer (`eti_launcher/bin/preqsetup.exe`)
+/// once the catalog share has delivered it completely; `None` elsewhere, in
+/// demo mode and off Windows.
+#[tauri::command]
+pub async fn get_prereq_installer(state: State<'_, Arc<AppState>>) -> Cmd<Option<String>> {
+    if state.demo {
+        return Ok(None);
+    }
+    let Some(root) = state.default_root_path().await else {
+        return Ok(None);
+    };
+    Ok(launch::prereq_installer(&root).map(|p| p.to_string_lossy().to_string()))
+}
+
+/// Start ETI's runtime package installer. It brings its own UI; the user
+/// confirms in the frontend first, as the ETI client does.
+#[tauri::command]
+pub async fn run_prereq_installer(state: State<'_, Arc<AppState>>) -> Cmd<u32> {
+    if state.demo {
+        return Err("err.demo_no_play".into());
+    }
+    let root = state.default_root_path().await.ok_or("err.no_library")?;
+    let exe = launch::prereq_installer(&root).ok_or("err.prereq_missing")?;
+    log::info!("starting runtime package installer {}", exe.display());
+    launch::spawn(&launch::prereq_plan(&exe)).await.map_err(err)
+}
+
 #[tauri::command]
 pub async fn open_path(app: tauri::AppHandle, path: String) -> Cmd<()> {
     use tauri_plugin_opener::OpenerExt;

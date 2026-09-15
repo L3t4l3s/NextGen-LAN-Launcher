@@ -1,20 +1,46 @@
 <script lang="ts">
   import { app } from "$lib/stores/app.svelte";
-  import { api, pickFolder, pickFile } from "$lib/api";
+  import { api, confirmDialog, pickFolder, pickFile } from "$lib/api";
   import { languages, t, userText } from "$lib/i18n";
   import { formatBytes } from "$lib/format";
   import type { LibrarySpace, Settings } from "$lib/types";
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
 
   let draft = $state<Settings | null>(null);
   let space = $state<LibrarySpace[]>([]);
   let saving = $state(false);
   let showAdvanced = $state(false);
+  // ETI's runtime package installer from the catalog share, when synced.
+  let prereqInstaller = $state<string | null>(null);
+  let installingPrereqs = $state(false);
+  const prereqComponents = [".NET 4.8", "VC++ Redistributable", "DirectX 11", "PhysX"];
+
+  // The 3.3 GB installer may finish syncing while this view is open, and the
+  // default root may change on save; re-query instead of showing a stale state.
+  const refreshPrereqs = async () => {
+    prereqInstaller = await api.prereqInstaller().catch(() => null);
+  };
+  const prereqTimer = setInterval(() => void refreshPrereqs(), 10_000);
+  onDestroy(() => clearInterval(prereqTimer));
 
   onMount(async () => {
     draft = structuredClone($state.snapshot(app.settings)) as Settings;
     space = await api.librarySpace().catch(() => []);
+    await refreshPrereqs();
   });
+
+  async function installPrereqs() {
+    if (!(await confirmDialog(t("settings.prereqs.confirm")))) return;
+    installingPrereqs = true;
+    try {
+      await api.runPrereqInstaller();
+      app.toast("success", t("settings.prereqs.started"));
+    } catch (e) {
+      app.toast("error", t("toast.error", { detail: userText(e) }));
+    } finally {
+      installingPrereqs = false;
+    }
+  }
 
   async function addRoot() {
     const path = await pickFolder();
@@ -44,6 +70,7 @@
       const saved = await app.saveSettings($state.snapshot(draft) as Settings);
       draft = structuredClone(saved);
       app.toast("success", t("settings.saved"));
+      await refreshPrereqs();
     } catch (e) {
       app.toast("error", userText(e));
     } finally {
@@ -123,6 +150,19 @@
         <label class="radio"><input type="checkbox" bind:checked={draft.lanMode} /> {t("settings.lan_mode")}</label>
       </section>
 
+      {#if app.bootstrap?.platform === "windows"}
+        <section class="card">
+          <h2>{t("settings.prereqs")}</h2>
+          <div class="chips">
+            {#each prereqComponents as c (c)}<span class="chip">{c}</span>{/each}
+          </div>
+          <p class="hint">{prereqInstaller ? t("settings.prereqs.hint") : t("settings.prereqs.missing")}</p>
+          <button class="primary" onclick={installPrereqs} disabled={!prereqInstaller || installingPrereqs || app.bootstrap?.demo}>
+            {t("settings.prereqs.install")}
+          </button>
+        </section>
+      {/if}
+
       <section class="card">
         <h2>{t("settings.lanpage")}</h2>
         <p class="hint">{t("settings.lanpage.hint")}</p>
@@ -182,6 +222,19 @@
 </div>
 
 <style>
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 0.6rem;
+  }
+  .chip {
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    background: var(--color-surface-alt);
+    border: 1px solid var(--color-border);
+    font-size: 0.8rem;
+  }
   input:not([type="radio"]):not([type="checkbox"]),
   select {
     width: 100%;

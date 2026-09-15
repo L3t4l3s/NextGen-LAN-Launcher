@@ -274,7 +274,10 @@ export function createMock() {
         sims.delete(id);
         return;
       case "run_extra":
+      case "run_prereq_installer":
         return 4242;
+      case "get_prereq_installer":
+        return "D:\\LAN\\eti_launcher\\bin\\preqsetup.exe";
       case "play_game":
         throw new Error("Im Demo-Modus werden keine Spiele gestartet.");
       case "get_launch_plan":

@@ -89,6 +89,9 @@ Tags `v*` are built by `release.yml` instead.
   with pid and path (a user's own Resilio Sync or the ETI launcher's engine may block ours if
   Resilio allows one instance per machine). Whether two copies of Resilio 2.8.1 can run side by
   side, and whether the process table exposes executable paths on Windows, is untested.
+- **Runtime package installer:** Settings offers ETI's `eti_launcher/bin/preqsetup.exe` (about
+  3.3 GB, .NET 4.8, VC++, DirectX 11, PhysX) behind a confirmation like the ETI client; whether
+  the installer needs arguments is unknown and untested on hardware.
 - **Keygen and server start:** the detail page offers `keygen.exe` (started from `local/` like
   ETI's setup scripts do) and `server_start.cmd` (same four-argument contract as
   `game_start.cmd`) when the package ships them. Both run through `cmd.exe`/Windows and are

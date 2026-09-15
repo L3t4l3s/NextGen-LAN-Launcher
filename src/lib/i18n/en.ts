@@ -134,6 +134,12 @@ export const en: Messages = {
   "settings.transport.demo": "Demo",
   "settings.transport.restart_hint": "Takes effect the next time the sync service starts.",
   "settings.lan_mode": "Sync on the LAN only (no internet traffic)",
+  "settings.prereqs": "Commonly needed system libraries",
+  "settings.prereqs.hint": "ETI's package installer from the catalog folder sets up the runtimes most games need. It shows its own window.",
+  "settings.prereqs.missing": "The package installer (eti_launcher\\bin\\preqsetup.exe, about 3.3 GB) has not been fully synced yet.",
+  "settings.prereqs.install": "Install package",
+  "settings.prereqs.confirm": "The launcher can install the system libraries most games need automatically. Start the installation now?",
+  "settings.prereqs.started": "Package installer started. Follow the installer window.",
   "settings.lanpage": "LANPage",
   "settings.lanpage.hint": "The launcher reads launcher.ini from launcher.lan (LAN name, colours, statistics address), exactly like the previous launcher.",
   "settings.send_stats": "Send statistics to the LANPage (who plays what)",
@@ -190,6 +196,7 @@ export const en: Messages = {
   "toast.uninstalled": "Removed: {title}",
   "toast.error": "Error: {detail}",
   "err.extra_missing": "The tool is not in the game folder.",
+  "err.prereq_missing": "The package installer is not completely present in the catalog folder.",
   "toast.fix_done": "Done",
 
   // Backend result codes
