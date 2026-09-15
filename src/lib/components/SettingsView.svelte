@@ -3,6 +3,7 @@
   import { api, confirmDialog, pickFolder, pickFile } from "$lib/api";
   import { languages, t, userText } from "$lib/i18n";
   import { formatBytes } from "$lib/format";
+  import { builtinThemes } from "$lib/theme";
   import type { LibrarySpace, Settings } from "$lib/types";
   import { onDestroy, onMount } from "svelte";
 
@@ -173,8 +174,9 @@
         <h2>{t("settings.theme")}</h2>
         <select bind:value={draft.theme}>
           <option value={null}>{t("settings.theme.auto")}</option>
-          <option value="default">{t("settings.theme.default")}</option>
-          <option value="beispiel-lan">{t("settings.theme.beispiel")}</option>
+          {#each Object.keys(builtinThemes) as id (id)}
+            <option value={id}>{t(`settings.theme.${id}`)}</option>
+          {/each}
         </select>
       </section>
 

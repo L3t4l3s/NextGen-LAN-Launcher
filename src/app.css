@@ -54,6 +54,10 @@ body {
   background: var(--bg-image, none) center / cover no-repeat;
   opacity: 0.9;
 }
+/* With an event stylesheet the body steps aside so the layer is visible. */
+:root[data-legacy] body {
+  background: transparent;
+}
 
 h1,
 h2,

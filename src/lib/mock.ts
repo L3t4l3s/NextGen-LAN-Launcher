@@ -198,6 +198,7 @@ export function createMock() {
         extra: {},
       },
       legacy_css: null,
+      logo: null,
       theme: null,
       fetched: ["launcher.ini"],
       errors: [],

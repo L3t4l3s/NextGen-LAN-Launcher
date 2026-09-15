@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "name": "NextGen Light",
+  "mode": "light",
+  "colors": {
+    "background": "#f3f5f9",
+    "surface": "#ffffff",
+    "surfaceAlt": "#e9edf4",
+    "text": "#161b26",
+    "textMuted": "#5c6779",
+    "primary": "#2f6fed",
+    "primaryText": "#ffffff",
+    "accent": "#d9771c",
+    "success": "#1f9d5a",
+    "warning": "#c99a06",
+    "danger": "#d94848",
+    "border": "#d3d9e4"
+  },
+  "radius": 12
+}

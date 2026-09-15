@@ -89,6 +89,9 @@ Tags `v*` are built by `release.yml` instead.
   with pid and path (a user's own Resilio Sync or the ETI launcher's engine may block ours if
   Resilio allows one instance per machine). Whether two copies of Resilio 2.8.1 can run side by
   side, and whether the process table exposes executable paths on Windows, is untested.
+- **LANPage logo and stylesheet:** `logo.png` and `launcher.css` from `launcher.lan` are applied
+  in automatic theme mode; verified against ETI's LANPage template only, not yet against a live
+  page.
 - **Runtime package installer:** Settings offers ETI's `eti_launcher/bin/preqsetup.exe` (about
   3.3 GB, .NET 4.8, VC++, DirectX 11, PhysX) behind a confirmation like the ETI client; whether
   the installer needs arguments is unknown and untested on hardware.

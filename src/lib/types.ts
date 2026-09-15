@@ -164,6 +164,7 @@ export interface EventBundle {
   config: LanConfig | null;
   legacy_css: string | null;
   theme: Theme | null;
+  logo: string | null;
   fetched: string[];
   errors: string[];
   server_time: string | null;

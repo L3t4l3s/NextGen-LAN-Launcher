@@ -634,6 +634,15 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
             let host = st.settings.read().await.lanpage_host.clone();
             if !st.demo {
                 let bundle = lanlauncher_core::lanpage::fetch_event(&host).await;
+                log::info!(
+                    "lanpage {host}: fetched [{}]{}",
+                    bundle.fetched.join(", "),
+                    if bundle.errors.is_empty() {
+                        String::new()
+                    } else {
+                        format!("; errors: {}", bundle.errors.join("; "))
+                    }
+                );
                 *st.event.write().await = bundle.clone();
                 let _ = app2.emit(EVENT_UPDATED, &bundle);
             }

@@ -27,8 +27,8 @@
 
 <header>
   <div class="brand" onclick={() => (app.view = "library")} role="button" tabindex="0" onkeydown={(e) => e.key === "Enter" && (app.view = "library")}>
-    {#if app.event?.theme?.logo}
-      <img src={app.event.theme.logo} alt="" />
+    {#if app.logo}
+      <img src={app.logo} alt="" />
     {:else}
       <span class="logo"></span>
     {/if}

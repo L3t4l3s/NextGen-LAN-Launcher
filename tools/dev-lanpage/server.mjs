@@ -1,6 +1,6 @@
 // Minimal stand-in for an ETI LANPage host, for local development:
 //   node tools/dev-lanpage/server.mjs [port]
-// Serves launcher.ini, launcher.css, theme.json and a stats.php-compatible
+// Serves launcher.ini, launcher.css, logo.png, theme.json and a stats.php-compatible
 // endpoint that prints what the launcher reports. Point the launcher's
 // "LANPage-Adresse" setting at 127.0.0.1:<port>.
 import http from "node:http";
@@ -12,6 +12,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.argv[2] ?? 8080);
 const ini = readFileSync(path.join(here, "launcher.ini"), "utf8");
 const css = readFileSync(path.join(here, "launcher.css"), "utf8");
+const logo = readFileSync(path.join(here, "logo.png"));
 const theme = readFileSync(path.join(here, "..", "..", "themes", "beispiel-lan.json"), "utf8");
 
 http
@@ -19,6 +20,7 @@ http
     const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
     if (url.pathname === "/launcher.ini") return res.writeHead(200, { "content-type": "text/plain" }).end(ini);
     if (url.pathname === "/launcher.css") return res.writeHead(200, { "content-type": "text/css" }).end(css);
+    if (url.pathname === "/logo.png") return res.writeHead(200, { "content-type": "image/png" }).end(logo);
     if (url.pathname === "/theme.json") return res.writeHead(200, { "content-type": "application/json" }).end(theme);
     if (url.pathname === "/stats.php") {
       const params = Object.fromEntries(url.searchParams.entries());

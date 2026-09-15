@@ -1,7 +1,4 @@
-/*# LAN Launcher Event Theme (legacy ETI format, applied to the background layer) */
+/*# LAN Launcher Event Theme (legacy ETI format; the launcher scopes `html` to its background layer) */
 html {
 	background: linear-gradient(to bottom, rgba(40,20,10,1) 0%, rgba(20,10,5,1) 100%);
-}
-#bg_layer {
-    background: none;
 }

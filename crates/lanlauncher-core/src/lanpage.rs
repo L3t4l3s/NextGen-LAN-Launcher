@@ -3,6 +3,7 @@
 //! * `GET http://<host>/launcher.ini` – event configuration (see
 //!   [`crate::launcher_ini`]). ETI hard-codes the host `launcher.lan`.
 //! * `GET http://<host>/launcher.css` – optional legacy stylesheet.
+//! * `GET http://<host>/logo.png` – the event logo (LANPage default `$logo`).
 //! * `GET http://<host>/theme.json` – our own optional theme (new).
 //! * `GET <stats_url>?hostname=...&macaddr1=...` – statistics beacon. The
 //!   PHP side decodes every parameter as ISO-8859-15, so we percent-encode
@@ -19,6 +20,9 @@ pub struct EventBundle {
     pub config: Option<LanConfig>,
     pub legacy_css: Option<String>,
     pub theme: Option<Theme>,
+    /// `logo.png` at the LANPage root, the image the ETI client shows next to
+    /// the event name (the LANPage's own `$logo` default).
+    pub logo: Option<String>,
     /// Which URLs answered, for the diagnostics page.
     pub fetched: Vec<String>,
     pub errors: Vec<String>,
@@ -50,6 +54,10 @@ pub async fn fetch_event(host: &str) -> EventBundle {
     let client = client();
     let mut bundle = EventBundle::default();
 
+    // Whether the host answered at all; when the ini request fails at the
+    // transport level the optional files are not probed (each has its own
+    // timeout and the host is simply not there).
+    let mut reachable = true;
     match client.get(format!("{base}/launcher.ini")).send().await {
         Ok(resp) if resp.status().is_success() => {
             if let Some(date) = resp
@@ -75,10 +83,29 @@ pub async fn fetch_event(host: &str) -> EventBundle {
         Ok(resp) => bundle
             .errors
             .push(format!("launcher.ini: HTTP {}", resp.status())),
-        Err(e) => bundle.errors.push(format!("launcher.ini: {e}")),
+        Err(e) => {
+            reachable = false;
+            bundle.errors.push(format!("launcher.ini: {e}"));
+        }
+    }
+    if !reachable {
+        return bundle;
     }
 
-    if let Ok(resp) = client.get(format!("{base}/launcher.css")).send().await {
+    // The optional files are independent; fetch them concurrently.
+    let theme_url = bundle
+        .config
+        .as_ref()
+        .and_then(|c| c.extra.get("theme_url").cloned())
+        .unwrap_or_else(|| format!("{base}/theme.json"));
+    let logo_url = format!("{base}/logo.png");
+    let (css, logo, theme) = tokio::join!(
+        client.get(format!("{base}/launcher.css")).send(),
+        client.get(&logo_url).send(),
+        client.get(&theme_url).send(),
+    );
+
+    if let Ok(resp) = css {
         if resp.status().is_success() {
             if let Ok(css) = resp.text().await {
                 if css.len() < 200_000 {
@@ -89,12 +116,22 @@ pub async fn fetch_event(host: &str) -> EventBundle {
         }
     }
 
-    let theme_url = bundle
-        .config
-        .as_ref()
-        .and_then(|c| c.extra.get("theme_url").cloned())
-        .unwrap_or_else(|| format!("{base}/theme.json"));
-    if let Ok(resp) = client.get(&theme_url).send().await {
+    // The ETI standard: logo.png next to launcher.ini. The URL is handed to
+    // the UI as is; the CSP allows images from the LANPage host.
+    if let Ok(resp) = logo {
+        let is_image = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|ct| ct.get(..6))
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("image/"));
+        if resp.status().is_success() && is_image {
+            bundle.fetched.push("logo.png".into());
+            bundle.logo = Some(logo_url);
+        }
+    }
+
+    if let Ok(resp) = theme {
         if resp.status().is_success() {
             if let Ok(text) = resp.text().await {
                 match Theme::parse(&text) {

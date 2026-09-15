@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "name": "Pinkes Einhorn",
+  "mode": "dark",
+  "colors": {
+    "background": "#2a0c2a",
+    "surface": "#3b143a",
+    "surfaceAlt": "#4d1d4a",
+    "text": "#fff0fb",
+    "textMuted": "#e2a9d8",
+    "primary": "#ff4fd8",
+    "primaryText": "#1e051c",
+    "accent": "#7ee8ff",
+    "success": "#6ee7a8",
+    "warning": "#ffd166",
+    "danger": "#ff6b8a",
+    "border": "#732e6d"
+  },
+  "radius": 16
+}

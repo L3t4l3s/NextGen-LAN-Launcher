@@ -3,7 +3,7 @@
 import { api, listen } from "$lib/api";
 import { setByteUnits } from "$lib/format";
 import { setLanguage } from "$lib/i18n";
-import { applyTheme, defaultTheme } from "$lib/theme";
+import { applyTheme, defaultTheme, builtinThemes } from "$lib/theme";
 import type { BootstrapInfo, EventBundle, GameStatus, GameView, Settings, TransportHealth, Theme } from "$lib/types";
 
 export type View = "library" | "downloads" | "diagnostics" | "settings";
@@ -27,6 +27,8 @@ class AppStore {
   toasts = $state<Toast[]>([]);
   showWizard = $state(false);
   loadError = $state<string | null>(null);
+  /** Logo for the top bar, decided together with the theme in applyThemeFor. */
+  logo = $state<string | null>(null);
   private toastSeq = 0;
 
   get selected(): GameView | null {
@@ -95,17 +97,15 @@ class AppStore {
 
   applyThemeFor(settings: Settings, event: EventBundle | null) {
     let theme: Theme = defaultTheme;
-    if (settings.theme === "beispiel-lan") {
-      theme = {
-        ...defaultTheme,
-        name: "Beispiel-LAN Orange",
-        colors: { ...defaultTheme.colors, background: "#120d0a", surface: "#1c1410", surfaceAlt: "#261b15", text: "#fff4ea", textMuted: "#b8a596", primary: "#ff7a1a", primaryText: "#1a0f05", accent: "#ffd166", border: "#3a2a20" },
-        radius: 8,
-      };
+    if (settings.theme && builtinThemes[settings.theme]) {
+      theme = builtinThemes[settings.theme];
     } else if (settings.theme === null && event?.theme) {
       theme = event.theme;
     }
-    applyTheme({ ...theme, legacyCss: settings.theme === null ? (event?.legacy_css ?? null) : null });
+    // Automatic mode also takes the event's launcher.css and logo.png.
+    const auto = settings.theme === null;
+    this.logo = theme.logo ?? (auto ? (event?.logo ?? null) : null);
+    applyTheme({ ...theme, legacyCss: auto ? (event?.legacy_css ?? null) : null });
   }
 
   async reloadGames() {

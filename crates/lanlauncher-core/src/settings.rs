@@ -37,8 +37,9 @@ pub struct Settings {
     pub send_stats: bool,
     /// Only talk to LAN peers, never to trackers/relays on the internet.
     pub lan_mode: bool,
-    /// Theme id from `themes/` or a URL/path to a theme.json; `None` = auto
-    /// (event theme if served, else default).
+    /// Id of a built-in theme (`src/lib/theme.ts`, mirrored in `themes/`);
+    /// `None` = automatic (the LANPage's launcher.css/logo or theme.json,
+    /// else the default).
     pub theme: Option<String>,
     /// First-run wizard finished.
     pub setup_complete: bool,

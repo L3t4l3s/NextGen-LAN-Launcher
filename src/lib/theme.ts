@@ -1,4 +1,7 @@
 import type { Theme } from "./types";
+import lightJson from "../../themes/light.json";
+import unicornJson from "../../themes/unicorn.json";
+import beispielJson from "../../themes/beispiel-lan.json";
 
 export const defaultTheme: Theme = {
   version: 1,
@@ -24,6 +27,19 @@ export const defaultTheme: Theme = {
   fontFamily: null,
   icons: {},
   legacyCss: null,
+};
+
+/** The JSON files under themes/ are the single source; missing optional fields fall back to the default theme. */
+function fromJson(json: Partial<Theme>): Theme {
+  return { ...defaultTheme, ...json, colors: { ...defaultTheme.colors, ...(json.colors ?? {}) } } as Theme;
+}
+
+/** Themes shipped with the launcher, selectable in Settings by id. */
+export const builtinThemes: Record<string, Theme> = {
+  default: defaultTheme,
+  light: fromJson(lightJson as Partial<Theme>),
+  unicorn: fromJson(unicornJson as Partial<Theme>),
+  "beispiel-lan": fromJson(beispielJson as Partial<Theme>),
 };
 
 const varMap: Record<keyof Theme["colors"], string> = {
@@ -60,6 +76,9 @@ export function applyTheme(theme: Theme) {
   } else {
     root.style.removeProperty("--bg-image");
   }
+  // ETI's launcher.css paints `html`; scoped to #bg_layer it only shows when
+  // the body lets it through (see app.css, [data-legacy]).
+  root.toggleAttribute("data-legacy", !!merged.legacyCss);
   let legacy = document.getElementById("legacy-launcher-css") as HTMLStyleElement | null;
   if (merged.legacyCss) {
     if (!legacy) {

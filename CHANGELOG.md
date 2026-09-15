@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- LANPage-Theme sichtbar: `launcher.css` färbte nur eine Ebene hinter dem deckenden Fenster;
+  jetzt scheint der Hintergrund der LAN durch. Das Logo der LANPage (`logo.png`, wie beim
+  ETI-Launcher) erscheint in der Kopfzeile. Das Log nennt, welche Dateien die LANPage lieferte.
+- Neue Farbschemata „NextGen Light“ und „Pinkes Einhorn“.
+- „Ordner-Modus“ heißt jetzt „Offline-Modus: Kein Sync-Server verfügbar“.
 - Einstellungen: Karte „Häufig benötigte Systembibliotheken“ mit „Paket installieren“ startet nach
   Rückfrage ETIs `preqsetup.exe` aus dem Katalog-Share (.NET 4.8, VC++, DirectX 11, PhysX …), sobald
   die Datei synchronisiert ist.

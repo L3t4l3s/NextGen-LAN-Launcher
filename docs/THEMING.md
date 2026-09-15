@@ -36,3 +36,10 @@ applied to the background layer only.
 
 `themes/*.json` ship with the app; the user can pick one in Settings → Farbschema. "Automatisch"
 uses the event theme when present.
+
+## Built-in themes
+
+`src/lib/theme.ts` (`builtinThemes`) ships NextGen Dark (`default`), NextGen Light (`light`),
+Pinkes Einhorn (`unicorn`) and Beispiel-LAN Orange (`beispiel-lan`); the JSON files under `themes/`
+mirror them for organisers who want a starting point. "Automatic" takes the LANPage's
+`launcher.css` and `logo.png` (or a served `theme.json`).
