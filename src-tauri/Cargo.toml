@@ -1,0 +1,29 @@
+[package]
+name = "nextgen-lan-launcher"
+description = "NextGen LAN Launcher – cross-platform successor to the ETI LAN Launcher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "nextgen_lan_launcher_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6", features = [] }
+
+[dependencies]
+lanlauncher-core = { path = "../crates/lanlauncher-core" }
+tauri = { version = "2.11", features = ["protocol-asset"] }
+tauri-plugin-opener = "2.5"
+tauri-plugin-dialog = "2.7"
+tauri-plugin-log = "2.9"
+tauri-plugin-clipboard-manager = "2.3"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+log = "0.4"
+async-trait = "0.1"
+rusqlite = { version = "0.40", features = ["bundled"] }

@@ -1,0 +1,63 @@
+name: Release
+
+# Builds installers for Windows, macOS and Linux when a tag `v*` is pushed.
+# The official Resilio Sync binary is downloaded from the URLs in
+# resilio.lock.json and placed in src-tauri/resources/resilio so it ships with
+# the installer (the repository itself never contains it).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Installer (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux-x64
+            args: ""
+          - os: windows-latest
+            platform: windows
+            args: ""
+          - os: macos-latest
+            platform: osx
+            args: "--target universal-apple-darwin"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - name: Linux dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev
+      - run: npm ci
+      - name: Fetch Resilio Sync binary
+        shell: bash
+        run: node tools/fetch-resilio.mjs ${{ matrix.platform }} src-tauri/resources/resilio
+      - name: Build and publish installers
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "NextGen LAN Launcher ${{ github.ref_name }}"
+          releaseBody: "Siehe CHANGELOG.md. Windows: Setup.exe doppelklicken. macOS: DMG öffnen. Linux: AppImage ausführbar machen."
+          releaseDraft: true
+          prerelease: true
+          args: ${{ matrix.args }}

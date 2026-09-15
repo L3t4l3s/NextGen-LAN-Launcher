@@ -1,0 +1,13 @@
+schema = 1
+id = "rocket"
+title = "Rocket League"
+revisions = ["20260410"]
+source = "macETI-LAN v0.6.1 (MIT)"
+
+[launch]
+exe = "SmartSteamLoader.exe"
+args = []
+required_files = ["SmartSteamLoader.exe", "SmartSteamEmu.ini", "Binaries/Win32/RocketLeague.exe"]
+
+[platform.macos]
+runner = "crossover"

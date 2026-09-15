@@ -1,0 +1,19 @@
+schema = 1
+id = "l4d2"
+title = "Left 4 Dead 2"
+revisions = ["20240115"]
+source = "macETI-LAN v0.6.1 docs (MIT)"
+
+[launch]
+exe = "left4dead2.exe"
+args = ["-novid"]
+required_files = ["left4dead2.exe", "bin/engine.dll"]
+
+[platform.macos]
+runner = "crossover"
+
+[setup]
+# Goldberg emulator overlay crashes under Wine/CrossOver; an empty marker file disables it.
+touch = ["bin/steam_settings/disable_overlay.txt"]
+notes.de = "Das Steam-Overlay des Emulators wird über eine leere Datei deaktiviert, sonst startet das Spiel unter Wine nicht."
+notes.en = "The emulator's Steam overlay is disabled through an empty marker file, otherwise the game does not start under Wine."

@@ -1,0 +1,21 @@
+# Build output
+/target
+/dist
+/node_modules
+/src-tauri/target
+/src-tauri/gen/schemas
+/src-tauri/binaries/
+!/src-tauri/binaries/README.md
+
+# Local tooling
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+/tools/dev-lanpage/data/*.db
+
+# Never commit ETI catalogs with real Resilio keys or game archives
+*.eti
+game.db
+!crates/lanlauncher-core/tests/fixtures/**/*.sql

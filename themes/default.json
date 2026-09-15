@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "name": "NextGen Dark",
+  "mode": "dark",
+  "colors": {
+    "background": "#0f1218",
+    "surface": "#171c25",
+    "surfaceAlt": "#1f2632",
+    "text": "#f2f4f8",
+    "textMuted": "#9aa4b5",
+    "primary": "#4f8cff",
+    "primaryText": "#ffffff",
+    "accent": "#ff9f43",
+    "success": "#2ecc71",
+    "warning": "#f1c40f",
+    "danger": "#ff5c5c",
+    "border": "#2a3140"
+  },
+  "radius": 12
+}

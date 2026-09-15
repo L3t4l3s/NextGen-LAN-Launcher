@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "name": "Beispiel-LAN Orange",
+  "mode": "dark",
+  "colors": {
+    "background": "#120d0a",
+    "surface": "#1c1410",
+    "surfaceAlt": "#261b15",
+    "text": "#fff4ea",
+    "textMuted": "#b8a596",
+    "primary": "#ff7a1a",
+    "primaryText": "#1a0f05",
+    "accent": "#ffd166",
+    "success": "#5ad17a",
+    "warning": "#ffd166",
+    "danger": "#ff5c5c",
+    "border": "#3a2a20"
+  },
+  "radius": 8,
+  "logo": "http://launcher.lan/logo.png"
+}

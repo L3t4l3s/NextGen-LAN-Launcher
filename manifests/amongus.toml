@@ -1,0 +1,17 @@
+schema = 1
+id = "amongus"
+title = "Among Us"
+revisions = ["20250308"]
+source = "macETI-LAN v0.6.1 (MIT) – verified on Apple M2 Pro with CrossOver 26"
+
+[launch]
+exe = "Among Us.exe"
+args = []
+required_files = ["Among Us.exe", "UnityPlayer.dll", "GameAssembly.dll"]
+
+[platform.macos]
+runner = "crossover"
+
+[setup]
+notes.de = "Startet über Steam-Emulation ohne Account. Lokales Spiel über 'Lokal' im Hauptmenü."
+notes.en = "Runs through Steam emulation without an account. Use 'Local' in the main menu for LAN games."

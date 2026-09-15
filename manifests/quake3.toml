@@ -1,0 +1,14 @@
+schema = 1
+id = "quake3"
+title = "Quake 3 Arena"
+revisions = ["20160922"]
+source = "ETI game_start.cmd (Unlicense); macETI-LAN docs recommend the native ioquake3 engine on macOS"
+
+[launch]
+exe = "quake3.exe"
+args = []
+required_files = ["quake3.exe", "baseq3/pak0.pk3"]
+
+[setup]
+notes.de = "Auf dem Mac läuft alternativ ioquake3 nativ: Engine installieren, Startdatei auf die ioquake3-App setzen; Spieldaten (baseq3) aus local/ verwenden."
+notes.en = "On macOS the native ioquake3 engine is an alternative: install it and pick it as executable; use the game data (baseq3) from local/."

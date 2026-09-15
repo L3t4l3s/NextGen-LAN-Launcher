@@ -1,0 +1,22 @@
+schema = 1
+id = "wc3"
+title = "Warcraft III: The Frozen Throne"
+revisions = ["20201021"]
+source = "macETI-LAN v0.6.1 docs (MIT) – window/OpenGL mode tested on Apple M2 Pro"
+
+[launch]
+exe = "Warcraft III.exe"
+# ETI's Windows script uses -nativefullscr; under CrossOver -window -opengl was the stable choice.
+args = ["-nativefullscr"]
+required_files = ["Warcraft III.exe"]
+
+[platform.macos]
+runner = "crossover"
+args = ["-window", "-opengl"]
+
+[platform.linux]
+args = ["-window", "-opengl"]
+
+[setup]
+notes.de = "Das Windows-Setup (game_setup.cmd) entpackt ein Profil nach Dokumente\\Warcraft III und setzt Registry-Werte. Auf Mac/Linux fehlt dieser Schritt; der LAN-Browser braucht ggf. den Bonjour-Dienst in der Bottle."
+notes.en = "The Windows setup (game_setup.cmd) extracts a profile to Documents\\Warcraft III and writes registry values. That step is missing on Mac/Linux; the LAN browser may need the Bonjour service inside the bottle."

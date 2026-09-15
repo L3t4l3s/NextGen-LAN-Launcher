@@ -1,0 +1,33 @@
+schema = 1
+id = "goldsrc"
+title = "Counter-Strike 1.6 / GoldSrc"
+revisions = ["20240623"]
+source = "macETI-LAN v0.6.1 (MIT) – CS 1.6 menu verified on Apple M2 Pro, CrossOver 26.3"
+
+[launch]
+exe = "hl-cs16/SmartSteamLoader.exe"
+args = ["-game", "cstrike"]
+workdir = "hl-cs16"
+required_files = [
+  "hl-cs16/SmartSteamLoader.exe",
+  "hl-cs16/hl.exe",
+  "hl-cs16/hw.dll",
+  "hl-cs16/cstrike/liblist.gam",
+  "hl-cs16/cstrike/dlls/mp.dll",
+  "hl-cs16/cstrike/cl_dlls/client.dll",
+]
+
+[[launch.alternatives]]
+name = "Half-Life"
+exe = "hl-cs16/SmartSteamLoader.exe"
+args = ["-game", "valve"]
+workdir = "hl-cs16"
+
+[platform.macos]
+runner = "crossover"
+
+[setup]
+# The root SmartSteamEmu.ini is copied next to the CS 1.6 loader, mirroring the Windows script.
+copy = [{ from = "SmartSteamEmu.ini", to = "hl-cs16/SmartSteamEmu.ini" }]
+notes.de = "Das Paket enthält CS 1.6, CS 1.5 und Half-Life. Standard ist CS 1.6; '-game cstrike' muss als zwei Argumente übergeben werden."
+notes.en = "The package contains CS 1.6, CS 1.5 and Half-Life. Default is CS 1.6; '-game cstrike' must stay two separate arguments."
