@@ -123,12 +123,12 @@ pub(crate) async fn build_transport(state: &AppState) -> (Arc<dyn Transport>, Op
 
 /// Demo mode ships a tiny real RAR so verify/extract run end to end.
 fn demo_archive_path(state: &AppState) -> PathBuf {
-    let p = state.dirs.data.join("demo").join("sample_game.rar");
+    let p = state.dirs.data.join("demo").join("demo_amongus.rar");
     if !p.exists() {
         let _ = std::fs::create_dir_all(p.parent().unwrap());
         let _ = std::fs::write(
             &p,
-            include_bytes!("../../crates/lanlauncher-core/tests/fixtures/sample_game.rar"),
+            include_bytes!("../../crates/lanlauncher-core/tests/fixtures/demo_amongus.rar"),
         );
     }
     p
@@ -322,6 +322,7 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
         loop {
             if let Some(m) = st.manager.read().await.clone() {
                 let statuses = m.tick().await;
+                log::debug!("tick: {} statuses", statuses.len());
                 let _ = app3.emit(STATUS_EVENT, &statuses);
             }
             tokio::time::sleep(Duration::from_secs(2)).await;

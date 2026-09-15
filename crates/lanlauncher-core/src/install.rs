@@ -104,6 +104,10 @@ pub struct Observation {
     pub partial_len: Option<u64>,
     pub version_ini: Option<String>,
     pub receipt: Option<Receipt>,
+    /// `local/` exists (extraction happened and was not deleted by hand).
+    pub local_present: bool,
+    /// All manifest `required_files` exist (advisory: a mismatch after a
+    /// successful extraction yields a warning, never a re-download).
     pub required_files_ok: bool,
     pub transport: Option<ShareStatus>,
     pub disk_free: Option<u64>,
@@ -124,7 +128,8 @@ impl Observation {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty() && s.len() <= 64);
         let receipt = Receipt::load(&paths.receipt);
-        let required_files_ok = paths.local_dir.is_dir()
+        let local_present = paths.local_dir.is_dir();
+        let required_files_ok = local_present
             && if required_files.is_empty() {
                 std::fs::read_dir(&paths.local_dir)
                     .map(|mut d| d.next().is_some())
@@ -141,6 +146,7 @@ impl Observation {
             partial_len,
             version_ini,
             receipt,
+            local_present,
             required_files_ok,
             transport: None,
             disk_free: crate::library::disk_space(&paths.share_dir)
@@ -275,6 +281,32 @@ impl Tracker {
         }
     }
 
+    /// Missing manifest files after a successful extraction are reported,
+    /// never "fixed" by re-downloading: the manifest may simply not match this
+    /// package revision.
+    fn check_required_files(&mut self, obs: &Observation) {
+        const CODE: &str = "install.required_files_missing";
+        if obs.required_files_ok {
+            if self
+                .problem
+                .as_ref()
+                .map(|p| p.code == CODE)
+                .unwrap_or(false)
+            {
+                self.problem = None;
+            }
+        } else if self.problem.is_none() {
+            self.problem = Some(
+                Problem::new(CODE, Severity::Warning)
+                    .step("install.required_files_missing.step.choose_exe")
+                    .step("install.required_files_missing.step.repair")
+                    .with_fix(FixAction::RepairGame {
+                        game_id: self.game_id.clone(),
+                    }),
+            );
+        }
+    }
+
     pub fn fail(&mut self, problem: Problem) {
         self.phase = Phase::Failed;
         self.problem = Some(problem);
@@ -301,7 +333,7 @@ impl Tracker {
         // 1. Installed state from the receipt wins for playability.
         if !self.phase.is_busy() || self.phase == Phase::Queued {
             if let Some(r) = &obs.receipt {
-                if obs.required_files_ok && !matches!(self.phase, Phase::Failed) {
+                if obs.local_present && !matches!(self.phase, Phase::Failed) {
                     let newer_in_catalog = r.revision != obs.catalog_revision;
                     let newer_on_disk = obs
                         .version_ini
@@ -313,6 +345,7 @@ impl Tracker {
                     } else {
                         Phase::Ready
                     };
+                    self.check_required_files(obs);
                     return Action::None;
                 }
             }
@@ -430,10 +463,13 @@ impl Tracker {
             Phase::Setup => Action::Setup,
             Phase::Paused | Phase::Failed | Phase::NotInstalled => Action::None,
             Phase::Ready | Phase::UpdateAvailable => {
-                // Receipt vanished or files deleted by hand → back to syncing.
-                if obs.receipt.is_none() || !obs.required_files_ok {
+                // Receipt vanished or `local/` deleted by hand → back to syncing.
+                if obs.receipt.is_none() || !obs.local_present {
                     self.phase = Phase::Syncing;
                     self.archive_stable_since = None;
+                    self.last_archive_len = None;
+                } else {
+                    self.check_required_files(obs);
                 }
                 Action::None
             }
@@ -904,6 +940,15 @@ impl InstallManager {
             }
             let action = tracker.step(&obs, &self.policy, now);
             let busy = self.work.lock().await.contains_key(&id);
+            if action != Action::None {
+                log::info!(
+                    "tick: {} phase={:?} action={:?} busy={}",
+                    id,
+                    tracker.phase,
+                    action,
+                    busy
+                );
+            }
             if !busy {
                 match action {
                     Action::Verify => self.spawn_verify(&id, &paths, obs.archive_len).await,
@@ -997,6 +1042,7 @@ impl InstallManager {
                 }
             };
             let result = extract::extract_atomically(&archive, &local, Some(c2), Some(&mut cb));
+            log::info!("extract: done {} ok={}", game_id, result.is_ok());
             if let Ok(mut r) = results.lock() {
                 r.push(WorkResult::Extracted {
                     game_id,
@@ -1053,6 +1099,7 @@ mod tests {
             partial_len: partial,
             version_ini: version.map(str::to_string),
             receipt: None,
+            local_present: false,
             required_files_ok: false,
             transport: transport_pct.map(|p| ShareStatus {
                 dir: "/x".into(),
@@ -1172,6 +1219,7 @@ mod tests {
             setup_done: true,
             exe_override: None,
         });
+        o.local_present = true;
         o.required_files_ok = true;
         assert_eq!(t.step(&o, &policy(), Instant::now()), Action::None);
         assert_eq!(t.phase, Phase::Ready);
@@ -1179,9 +1227,20 @@ mod tests {
         t.step(&o, &policy(), Instant::now());
         assert_eq!(t.phase, Phase::UpdateAvailable);
         assert!(t.phase.is_playable());
-        // files deleted by hand → back to syncing
+        // manifest files missing but local/ present → stays playable with a warning
         o.required_files_ok = false;
         o.catalog_revision = "20250308".into();
+        t.step(&o, &policy(), Instant::now());
+        assert_eq!(t.phase, Phase::Ready);
+        assert_eq!(
+            t.problem.as_ref().unwrap().code,
+            "install.required_files_missing"
+        );
+        o.required_files_ok = true;
+        t.step(&o, &policy(), Instant::now());
+        assert!(t.problem.is_none());
+        // local/ deleted by hand → back to syncing
+        o.local_present = false;
         t.step(&o, &policy(), Instant::now());
         assert_eq!(t.phase, Phase::Syncing);
     }

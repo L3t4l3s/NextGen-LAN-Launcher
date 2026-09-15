@@ -790,6 +790,74 @@ fn same_dir(a: &Path, b: &Path) -> bool {
     norm(a) == norm(b)
 }
 
+/// Where to find the Resilio Sync binary: bundled resource, previous
+/// download, or a system-wide installation.
+pub fn locate_binary(resource_dir: Option<&Path>, data_dir: &Path) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    let names: &[&str] = if cfg!(target_os = "windows") {
+        &["Resilio Sync.exe", "rslsync.exe"]
+    } else if cfg!(target_os = "macos") {
+        &[
+            "Resilio Sync.app/Contents/MacOS/Resilio Sync",
+            "Resilio Sync",
+            "rslsync",
+        ]
+    } else {
+        &["rslsync"]
+    };
+    for base in [
+        resource_dir.map(|r| r.join("resilio")),
+        Some(data_dir.join("resilio")),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for n in names {
+            candidates.push(base.join(n));
+        }
+    }
+    if cfg!(target_os = "windows") {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            candidates.push(
+                Path::new(&local)
+                    .join("Resilio Sync")
+                    .join("Resilio Sync.exe"),
+            );
+        }
+        for var in ["ProgramFiles", "ProgramFiles(x86)"] {
+            if let Ok(pf) = std::env::var(var) {
+                candidates.push(Path::new(&pf).join("Resilio Sync").join("Resilio Sync.exe"));
+            }
+        }
+    } else if cfg!(target_os = "macos") {
+        candidates.push(PathBuf::from(
+            "/Applications/Resilio Sync.app/Contents/MacOS/Resilio Sync",
+        ));
+        if let Some(h) = std::env::var_os("HOME") {
+            candidates.push(
+                PathBuf::from(h).join("Applications/Resilio Sync.app/Contents/MacOS/Resilio Sync"),
+            );
+        }
+    } else {
+        candidates.push(PathBuf::from("/usr/bin/rslsync"));
+        candidates.push(PathBuf::from("/usr/local/bin/rslsync"));
+    }
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+/// Official download locations (see `resilio.lock.json` for pinned hashes).
+pub fn official_download_url() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "https://download-cdn.resilio.com/stable/windows/Resilio-Sync_x64.exe"
+    } else if cfg!(target_os = "macos") {
+        "https://download-cdn.resilio.com/stable/osx/Resilio-Sync.dmg"
+    } else if cfg!(target_arch = "aarch64") {
+        "https://download-cdn.resilio.com/stable/linux-arm64/resilio-sync_arm64.tar.gz"
+    } else {
+        "https://download-cdn.resilio.com/stable/linux-x64/resilio-sync_x64.tar.gz"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -932,73 +1000,5 @@ mod tests {
     fn command_args_reference_config() {
         let args = ResilioTransport::command_args(Path::new("/tmp/config.json"));
         assert!(args.iter().any(|a| a.contains("config.json")));
-    }
-}
-
-/// Where to find the Resilio Sync binary: bundled resource, previous
-/// download, or a system-wide installation.
-pub fn locate_binary(resource_dir: Option<&Path>, data_dir: &Path) -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    let names: &[&str] = if cfg!(target_os = "windows") {
-        &["Resilio Sync.exe", "rslsync.exe"]
-    } else if cfg!(target_os = "macos") {
-        &[
-            "Resilio Sync.app/Contents/MacOS/Resilio Sync",
-            "Resilio Sync",
-            "rslsync",
-        ]
-    } else {
-        &["rslsync"]
-    };
-    for base in [
-        resource_dir.map(|r| r.join("resilio")),
-        Some(data_dir.join("resilio")),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        for n in names {
-            candidates.push(base.join(n));
-        }
-    }
-    if cfg!(target_os = "windows") {
-        if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            candidates.push(
-                Path::new(&local)
-                    .join("Resilio Sync")
-                    .join("Resilio Sync.exe"),
-            );
-        }
-        for var in ["ProgramFiles", "ProgramFiles(x86)"] {
-            if let Ok(pf) = std::env::var(var) {
-                candidates.push(Path::new(&pf).join("Resilio Sync").join("Resilio Sync.exe"));
-            }
-        }
-    } else if cfg!(target_os = "macos") {
-        candidates.push(PathBuf::from(
-            "/Applications/Resilio Sync.app/Contents/MacOS/Resilio Sync",
-        ));
-        if let Some(h) = std::env::var_os("HOME") {
-            candidates.push(
-                PathBuf::from(h).join("Applications/Resilio Sync.app/Contents/MacOS/Resilio Sync"),
-            );
-        }
-    } else {
-        candidates.push(PathBuf::from("/usr/bin/rslsync"));
-        candidates.push(PathBuf::from("/usr/local/bin/rslsync"));
-    }
-    candidates.into_iter().find(|p| p.is_file())
-}
-
-/// Official download locations (see `resilio.lock.json` for pinned hashes).
-pub fn official_download_url() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "https://download-cdn.resilio.com/stable/windows/Resilio-Sync_x64.exe"
-    } else if cfg!(target_os = "macos") {
-        "https://download-cdn.resilio.com/stable/osx/Resilio-Sync.dmg"
-    } else if cfg!(target_arch = "aarch64") {
-        "https://download-cdn.resilio.com/stable/linux-arm64/resilio-sync_arm64.tar.gz"
-    } else {
-        "https://download-cdn.resilio.com/stable/linux-x64/resilio-sync_x64.tar.gz"
     }
 }

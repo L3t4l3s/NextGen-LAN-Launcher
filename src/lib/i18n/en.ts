@@ -229,6 +229,10 @@ export const en: Messages = {
   "problem.install.unsafe_archive.cause": "Entries: {entries}. The package was not extracted for safety – please report to the organisers.",
   "problem.install.receipt_error.title": "Could not save installation state",
   "problem.install.receipt_error.cause": "{detail}",
+  "problem.install.required_files_missing.title": "Launch profile does not quite match the package",
+  "problem.install.required_files_missing.cause": "The game is extracted, but files listed in the launch profile are missing. Usually the profile targets another package revision.",
+  "problem.install.required_files_missing.step.choose_exe": "Pick the right executable via “Choose executable”.",
+  "problem.install.required_files_missing.step.repair": "If files are really missing: “Repair” re-extracts the archive.",
   "problem.install.setup_failed.title": "Setup script reported an error",
   "problem.install.setup_failed.cause": "The game is extracted and startable anyway. Details: {detail}",
 

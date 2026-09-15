@@ -232,6 +232,10 @@ export const de: Messages = {
   "problem.install.unsafe_archive.cause": "Einträge: {entries}. Das Paket wurde zur Sicherheit nicht entpackt – bitte der Orga melden.",
   "problem.install.receipt_error.title": "Installationsstand konnte nicht gespeichert werden",
   "problem.install.receipt_error.cause": "{detail}",
+  "problem.install.required_files_missing.title": "Startprofil passt nicht ganz zum Paket",
+  "problem.install.required_files_missing.cause": "Das Spiel ist entpackt, aber Dateien aus dem Startprofil fehlen. Meist ist das Profil für einen anderen Paketstand.",
+  "problem.install.required_files_missing.step.choose_exe": "Über „Startdatei wählen“ die richtige Exe festlegen.",
+  "problem.install.required_files_missing.step.repair": "Falls Dateien wirklich fehlen: „Reparieren“ entpackt das Archiv neu.",
   "problem.install.setup_failed.title": "Einrichtungsskript meldete einen Fehler",
   "problem.install.setup_failed.cause": "Das Spiel ist trotzdem entpackt und startbar. Details: {detail}",
 
