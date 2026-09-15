@@ -8,6 +8,9 @@ import type { BootstrapInfo, EventBundle, GameStatus, GameView, Settings, Transp
 
 export type View = "library" | "downloads" | "diagnostics" | "settings";
 
+/** Rate samples kept per game: one per status event (2 s), about two minutes. */
+const SPEED_SAMPLES = 60;
+
 export interface Toast {
   id: number;
   kind: "info" | "success" | "error";
@@ -27,6 +30,8 @@ class AppStore {
   toasts = $state<Toast[]>([]);
   showWizard = $state(false);
   loadError = $state<string | null>(null);
+  /** Download rate per game, one sample per status event, newest last. */
+  speedHistory = $state<Record<string, number[]>>({});
   /** Logo for the top bar, decided together with the theme in applyThemeFor. */
   logo = $state<string | null>(null);
   private toastSeq = 0;
@@ -75,6 +80,7 @@ class AppStore {
         const next: Record<string, GameStatus> = {};
         for (const s of list) next[s.gameId] = s;
         this.statuses = next;
+        this.recordSpeeds(list);
       });
       await listen("transport-health", (payload) => {
         this.health = payload as TransportHealth;
@@ -106,6 +112,23 @@ class AppStore {
     const auto = settings.theme === null;
     this.logo = theme.logo ?? (auto ? (event?.logo ?? null) : null);
     applyTheme({ ...theme, legacyCss: auto ? (event?.legacy_css ?? null) : null });
+  }
+
+  /** Keep the last SPEED_SAMPLES rates of every downloading game for the
+   *  chart; a game that stops downloading drops out. */
+  private recordSpeeds(list: GameStatus[]) {
+    const next = { ...this.speedHistory };
+    let changed = false;
+    for (const s of list) {
+      if (s.phase === "syncing" || s.phase === "paused") {
+        next[s.gameId] = [...(next[s.gameId] ?? []), s.downloadBps].slice(-SPEED_SAMPLES);
+        changed = true;
+      } else if (next[s.gameId]) {
+        delete next[s.gameId];
+        changed = true;
+      }
+    }
+    if (changed) this.speedHistory = next;
   }
 
   async reloadGames() {

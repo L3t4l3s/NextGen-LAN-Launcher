@@ -204,11 +204,42 @@ pub fn firewall_missing_problem(program: &std::path::Path) -> Problem {
         .with_fix(FixAction::AddFirewallRules)
 }
 
+/// `netsh` commands that drop every existing rule for the sync engine.
+///
+/// Windows keeps a block rule when a user once declined its firewall prompt
+/// for a program, and a block rule wins over every allow rule, so the allow
+/// rules from [`firewall_rules`] alone would not restore the transfers. These
+/// commands must run before them.
+///
+/// `netsh` exits with 1 when no rule matches, which is the normal case on a
+/// clean machine. Callers therefore ignore the exit status of these commands
+/// and only require the ones from [`firewall_rules`] to succeed.
+pub fn firewall_stale_rules(program: &Path) -> Vec<Vec<String>> {
+    let prog = program.to_string_lossy().to_string();
+    ["in", "out"]
+        .iter()
+        .map(|dir| {
+            vec![
+                "advfirewall".to_string(),
+                "firewall".to_string(),
+                "delete".to_string(),
+                "rule".to_string(),
+                "name=all".to_string(),
+                format!("dir={dir}"),
+                format!("program={prog}"),
+            ]
+        })
+        .collect()
+}
+
 /// `netsh` commands that allow the sync engine on every profile, so a later
 /// flip back to "Public" does not silently break transfers again.
+///
+/// Run [`firewall_stale_rules`] first; an old block rule would otherwise
+/// override all of these.
 pub fn firewall_rules(program: &Path, listening_port: u16) -> Vec<Vec<String>> {
     let prog = program.to_string_lossy().to_string();
-    let mut rules = vec![
+    let mut rules: Vec<Vec<String>> = Vec::from([
         vec![
             "advfirewall",
             "firewall",
@@ -239,7 +270,7 @@ pub fn firewall_rules(program: &Path, listening_port: u16) -> Vec<Vec<String>> {
         .into_iter()
         .map(String::from)
         .collect(),
-    ];
+    ]);
     if listening_port > 0 {
         for proto in ["TCP", "UDP"] {
             rules.push(
@@ -475,6 +506,7 @@ mod tests {
             catalog_peers: 0,
             server_found,
             lan_mode: true,
+            peer_details: false,
             detail: None,
         };
         let codes = |h: &TransportHealth| -> Vec<String> {
@@ -497,6 +529,7 @@ mod tests {
             catalog_peers: 0,
             server_found: Some(false),
             lan_mode: true,
+            peer_details: false,
             detail: Some("E:\\LAN\\eti_launcher: 0 peers, Indexing".into()),
         };
         let problems = check_transport(&health);
@@ -521,8 +554,25 @@ mod tests {
     fn firewall_rules_cover_all_profiles() {
         let rules = firewall_rules(Path::new(r"C:\App\rslsync.exe"), 55555);
         assert_eq!(rules.len(), 4);
+        assert!(rules.iter().all(|r| r.contains(&"add".to_string())));
         assert!(rules.iter().all(|r| r.contains(&"profile=any".to_string())));
         assert!(rules[2].iter().any(|a| a == "localport=55555"));
+    }
+
+    #[test]
+    fn stale_rules_are_dropped_for_both_directions() {
+        // A block rule from a declined Windows prompt outranks every allow
+        // rule, so both directions are cleared before the rules above are set.
+        let stale = firewall_stale_rules(Path::new(r"C:\App\rslsync.exe"));
+        assert_eq!(stale.len(), 2);
+        assert!(stale
+            .iter()
+            .all(|r| r.contains(&"delete".to_string()) && r.contains(&"name=all".to_string())));
+        assert!(stale[0].contains(&"dir=in".to_string()));
+        assert!(stale[1].contains(&"dir=out".to_string()));
+        assert!(stale
+            .iter()
+            .all(|r| r.contains(&r"program=C:\App\rslsync.exe".to_string())));
     }
 
     #[test]

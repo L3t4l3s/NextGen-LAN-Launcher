@@ -230,6 +230,10 @@ pub struct Tracker {
     archive_stable_since: Option<Instant>,
     last_bytes: u64,
     last_progress_at: Instant,
+    /// Last rate sample `(taken at, bytes)`; the transport's own rate is
+    /// preferred, this covers engines that report none.
+    rate_sample: Option<(Instant, u64)>,
+    rate_bps: f64,
     verify_failed_at: Option<Instant>,
     verify_failed_len: Option<u64>,
     pub problem: Option<Problem>,
@@ -251,6 +255,8 @@ impl Tracker {
             archive_stable_since: None,
             last_bytes: 0,
             last_progress_at: Instant::now(),
+            rate_sample: None,
+            rate_bps: 0.0,
             verify_failed_at: None,
             verify_failed_len: None,
             problem: None,
@@ -283,6 +289,35 @@ impl Tracker {
         // Force the stability timer to restart on the next observation.
         self.last_archive_len = None;
         self.last_progress_at = Instant::now();
+        self.rate_sample = None;
+        self.rate_bps = 0.0;
+    }
+
+    /// Measure the download rate from the growth of the archive on disk:
+    /// Resilio's documented API reports no per-folder rate, and the file is
+    /// the one number that is true on every transport. Smoothed over a few
+    /// samples so a single slow tick does not make the display jump.
+    fn sample_rate(&mut self, bytes_now: u64, now: Instant) {
+        if !matches!(self.phase, Phase::Syncing | Phase::Queued) {
+            self.rate_sample = None;
+            self.rate_bps = 0.0;
+            return;
+        }
+        let Some((at, bytes)) = self.rate_sample else {
+            self.rate_sample = Some((now, bytes_now));
+            return;
+        };
+        let seconds = now.duration_since(at).as_secs_f64();
+        if seconds < 1.0 {
+            return;
+        }
+        let measured = bytes_now.saturating_sub(bytes) as f64 / seconds;
+        self.rate_bps = if self.rate_bps == 0.0 {
+            measured
+        } else {
+            0.6 * self.rate_bps + 0.4 * measured
+        };
+        self.rate_sample = Some((now, bytes_now));
     }
 
     pub fn set_paused(&mut self, paused: bool) {
@@ -379,6 +414,7 @@ impl Tracker {
             self.last_bytes = bytes_now;
             self.last_progress_at = now;
         }
+        self.sample_rate(bytes_now, now);
         // Archive stability.
         if obs.archive_len != self.last_archive_len {
             self.last_archive_len = obs.archive_len;
@@ -538,7 +574,14 @@ impl Tracker {
             bytes_done: done.min(total),
             bytes_total: total,
             peers: obs.transport.as_ref().map(|t| t.peers).unwrap_or(0),
-            download_bps: obs.transport.as_ref().map(|t| t.download_bps).unwrap_or(0),
+            // The engine's own figure when it has one, else what the archive
+            // on disk actually grew by.
+            download_bps: obs
+                .transport
+                .as_ref()
+                .map(|t| t.download_bps)
+                .filter(|b| *b > 0)
+                .unwrap_or_else(|| self.rate_bps.max(0.0).round() as u64),
             installed_revision: obs.receipt.as_ref().map(|r| r.revision.clone()),
             catalog_revision: obs.catalog_revision.clone(),
             stalled: self.phase == Phase::Syncing
@@ -548,6 +591,21 @@ impl Tracker {
             updated_at: Utc::now(),
         }
     }
+}
+
+/// Files that must exist after extraction for the install to count as
+/// complete. On Windows the package's own `game_start.cmd` decides what it
+/// needs, and the manifest there is usually derived from that very script, so
+/// a guessed executable must never produce a warning; only `local/` has to
+/// exist. Every other platform launches through the manifest, where a missing
+/// file is worth reporting.
+pub fn required_files_for(manifest: Option<&Manifest>, platform: &str) -> Vec<String> {
+    if platform == "windows" {
+        return Vec::new();
+    }
+    manifest
+        .map(|m| m.launch_for(platform).required_files)
+        .unwrap_or_default()
 }
 
 /// Hooks the manager calls for platform-specific post-extraction work.
@@ -798,16 +856,69 @@ impl InstallManager {
 
     /// Remove the share from the transport and delete all local data.
     pub async fn uninstall(&self, game_id: &str) -> Result<()> {
-        self.cancel_work(game_id).await;
+        self.remove_data(game_id, false).await.map(|_| ())
+    }
+
+    /// Stop a running download and delete what it has fetched so far.
+    ///
+    /// Unlike [`Self::uninstall`] an installation that is already on disk
+    /// survives: when a receipt and `local/` exist, only the archive and its
+    /// `.part` file are removed, so a cancelled *update* leaves the playable
+    /// version and its savegames untouched. Without an installation the game
+    /// is removed completely, the same as an uninstall.
+    ///
+    /// Returns `true` when an installation was kept.
+    pub async fn cancel_download(&self, game_id: &str) -> Result<bool> {
+        self.remove_data(game_id, true).await
+    }
+
+    /// Shared body of [`Self::uninstall`] and [`Self::cancel_download`].
+    ///
+    /// The tracker lock is held from the first step to the last. `tick` takes
+    /// the same lock before it starts any job, so nothing can re-spawn a
+    /// verify or extract run for this game while the files disappear under
+    /// it; without that, a job started in between would recreate the
+    /// directory or drive the tracker into `Failed`.
+    ///
+    /// Removing the share is what stops the download, so it is never re-added
+    /// here: for a kept installation the archive is gone anyway (an update
+    /// replaces it in place, so there is nothing left to seed), and re-adding
+    /// the share would immediately start the very download that was just
+    /// cancelled. The next launcher start registers it again via
+    /// [`Self::adopt_existing`].
+    async fn remove_data(&self, game_id: &str, keep_install: bool) -> Result<bool> {
         let game = self.game(game_id).await?;
         let paths = self.paths_for(&game)?;
-        let _ = self.transport.remove_share(&paths.share_dir).await;
-        if paths.share_dir.is_dir() {
-            std::fs::remove_dir_all(&paths.share_dir)
-                .map_err(|e| Error::io(&paths.share_dir, e))?;
+        let mut trackers = self.trackers.lock().await;
+        let keep = keep_install && paths.receipt.exists() && paths.local_dir.is_dir();
+        if keep {
+            // A fresh tracker drops the download state; the receipt then
+            // decides whether the game reads as ready or as "update
+            // available" again.
+            trackers.insert(game_id.to_string(), Tracker::new(game_id));
+        } else {
+            trackers.remove(game_id);
         }
-        self.trackers.lock().await.remove(game_id);
-        Ok(())
+        self.cancel_work(game_id).await;
+        let _ = self.transport.remove_share(&paths.share_dir).await;
+        // The engine releases its handles on the folder only after it has
+        // processed the removal; deleting right away fails with "access
+        // denied" on Windows.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let archive = paths.archive.clone();
+        let dir = paths.share_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            if keep {
+                let _ = std::fs::remove_file(partial_path(&archive));
+                let _ = std::fs::remove_file(&archive);
+                Ok(())
+            } else {
+                crate::extract::remove_dir_all_retrying(&dir)
+            }
+        })
+        .await
+        .map_err(|e| Error::Launch(e.to_string()))??;
+        Ok(keep)
     }
 
     async fn cancel_work(&self, game_id: &str) {
@@ -1091,10 +1202,7 @@ impl InstallManager {
                 continue;
             };
             let manifest = (self.resolve_manifest)(&game, &paths);
-            let required: Vec<String> = manifest
-                .as_ref()
-                .map(|m| m.launch_for(Manifest::current_platform()).required_files)
-                .unwrap_or_default();
+            let required = required_files_for(manifest.as_ref(), Manifest::current_platform());
             let mut obs = Observation::from_disk(&paths, &game, &required, &disks);
             obs.transport = share_statuses
                 .get(&crate::transport::normalise_dir(&paths.share_dir))
@@ -1415,6 +1523,63 @@ mod tests {
     }
 
     #[test]
+    fn windows_ignores_manifest_required_files() {
+        let mut m = Manifest::default();
+        m.launch.exe = "game.exe".into();
+        m.launch.required_files = vec!["game.exe".into()];
+        // Windows starts the package's own script, and the manifest there is
+        // usually derived from that script: a guessed exe must not warn.
+        assert!(required_files_for(Some(&m), "windows").is_empty());
+        assert_eq!(
+            required_files_for(Some(&m), "linux"),
+            vec!["game.exe".to_string()]
+        );
+        assert!(required_files_for(None, "linux").is_empty());
+    }
+
+    #[test]
+    fn measures_the_download_rate_from_the_archive_on_disk() {
+        // The documented Resilio API reports no rate, so the growth of the
+        // file on disk is measured; two samples are needed before a rate
+        // exists, and the engine's own figure wins when it has one.
+        let policy = policy();
+        let mut t = Tracker::new("g");
+        t.request_install();
+        let t0 = Instant::now();
+        let mut o = obs(None, Some(0), None, None);
+        t.step(&o, &policy, t0);
+        assert_eq!(t.phase, Phase::Syncing);
+        o.partial_len = Some(200);
+        let t1 = t0 + Duration::from_secs(2);
+        t.step(&o, &policy, t1);
+        assert_eq!(
+            t.status(&o, &policy, t1, false).download_bps,
+            100,
+            "200 bytes in 2 s"
+        );
+        o.partial_len = Some(600);
+        let t2 = t0 + Duration::from_secs(4);
+        t.step(&o, &policy, t2);
+        assert_eq!(
+            t.status(&o, &policy, t2, false).download_bps,
+            140,
+            "smoothed: 0.6 of the old rate plus 0.4 of the measured 200"
+        );
+        o.transport = Some(ShareStatus {
+            dir: "/x".into(),
+            state: ShareState::Downloading,
+            bytes_done: 600,
+            bytes_total: 1000,
+            files_total: 1,
+            peers: 2,
+            download_bps: 9000,
+            upload_bps: 0,
+            error: None,
+        });
+        assert_eq!(t.status(&o, &policy, t2, false).download_bps, 9000);
+    }
+
+    #[test]
     fn stall_without_peers_is_reported_and_clears_on_progress() {
         let mut t = Tracker::new("g");
         t.request_install();
@@ -1612,6 +1777,45 @@ mod tests {
         assert!(receipt.setup_done);
         assert_eq!(receipt.revision, "20250308");
         assert_eq!(receipt.files, 3);
+    }
+
+    #[tokio::test]
+    async fn cancelling_an_update_keeps_the_installed_game() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = eti_install(tmp.path(), "amongus");
+        std::fs::write(paths.local_dir.join("savegame.dat"), "keep me").unwrap();
+        let setups = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let manager = adopt_manager(tmp.path(), "amongus", setups.clone());
+        manager.adopt_existing().await;
+        tick_until_ready(&manager).await;
+        // A newer archive is being fetched over the installed version.
+        std::fs::write(partial_path(&paths.archive), b"half a download").unwrap();
+
+        assert!(manager.cancel_download("amongus").await.unwrap());
+        assert!(!paths.archive.exists());
+        assert!(!partial_path(&paths.archive).exists());
+        assert!(paths.receipt.is_file());
+        assert_eq!(
+            std::fs::read_to_string(paths.local_dir.join("savegame.dat")).unwrap(),
+            "keep me"
+        );
+        assert_eq!(
+            manager.tick().await.first().map(|s| s.phase),
+            Some(Phase::Ready)
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_first_download_removes_the_game() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = GamePaths::new(tmp.path(), "amongus");
+        std::fs::create_dir_all(&paths.share_dir).unwrap();
+        std::fs::write(partial_path(&paths.archive), b"half a download").unwrap();
+        let setups = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let manager = adopt_manager(tmp.path(), "amongus", setups.clone());
+
+        assert!(!manager.cancel_download("amongus").await.unwrap());
+        assert!(!paths.share_dir.exists());
     }
 
     #[tokio::test]

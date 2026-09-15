@@ -171,6 +171,14 @@ export interface EventBundle {
   server_time: string | null;
 }
 
+export interface SharePeer {
+  name: string;
+  connection: string | null;
+  synced: boolean;
+  downloadBps: number;
+  uploadBps: number;
+}
+
 export interface TransportHealth {
   kind: "resilio" | "folder" | "demo";
   running: boolean;
@@ -182,6 +190,8 @@ export interface TransportHealth {
   /** true: a sync server serves the catalog; false: nobody does; null: unknown (folder mode, key missing, API down). */
   server_found: boolean | null;
   lan_mode: boolean;
+  /** The transport can name the peers of a share (Resilio with an API key). */
+  peer_details: boolean;
   detail: string | null;
 }
 

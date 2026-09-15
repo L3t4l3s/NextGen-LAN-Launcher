@@ -43,6 +43,51 @@ pub enum Verification {
 /// Progress callback: (bytes_done, bytes_total, current_file).
 pub type Progress<'a> = &'a mut dyn FnMut(u64, u64, &str);
 
+/// Delete a directory tree that another process may still hold open.
+/// Resilio keeps handles on a share for a moment after it was removed, and
+/// game files are often read-only, which Windows answers with "access
+/// denied" (os error 5). Read-only flags are cleared and the delete is
+/// retried a few times with growing pauses before the error is reported.
+pub fn remove_dir_all_retrying(dir: &Path) -> Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    let mut last = None;
+    for attempt in 0..4u32 {
+        match std::fs::remove_dir_all(dir) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                log::debug!(
+                    "cannot remove {} (attempt {}): {e}",
+                    dir.display(),
+                    attempt + 1
+                );
+                last = Some(e);
+            }
+        }
+        clear_readonly(dir);
+        std::thread::sleep(std::time::Duration::from_millis(
+            200 * u64::from(attempt + 1),
+        ));
+    }
+    match std::fs::remove_dir_all(dir) {
+        Ok(()) => Ok(()),
+        Err(e) => Err(Error::io(dir, last.unwrap_or(e))),
+    }
+}
+
+/// Clear the read-only flag on every file below `dir`, ignoring errors.
+fn clear_readonly(dir: &Path) {
+    for entry in walkdir::WalkDir::new(dir).into_iter().flatten() {
+        if let Ok(meta) = entry.metadata() {
+            let mut perms = meta.permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            perms.set_readonly(false);
+            let _ = std::fs::set_permissions(entry.path(), perms);
+        }
+    }
+}
+
 pub(crate) fn map_err(e: unrar::error::UnrarError) -> Error {
     Error::Archive(format!("{e}"))
 }
@@ -302,6 +347,22 @@ pub fn staging_dir(final_dir: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn removes_a_tree_with_read_only_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let tree = dir.path().join("cncgen");
+        std::fs::create_dir_all(tree.join("local")).unwrap();
+        let file = tree.join("local").join("game.exe");
+        std::fs::write(&file, "x").unwrap();
+        let mut perms = std::fs::metadata(&file).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&file, perms).unwrap();
+        remove_dir_all_retrying(&tree).unwrap();
+        assert!(!tree.exists());
+        // A directory that is already gone is not an error.
+        remove_dir_all_retrying(&tree).unwrap();
+    }
 
     fn fixture(name: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))

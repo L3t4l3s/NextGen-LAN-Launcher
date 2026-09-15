@@ -37,6 +37,13 @@ settings, from an installed ETI client (`<Program Files>\eti\LAN Launcher\sync\c
 from a `resilio_api_key` block in `launcher.ini` (a NextGen extension; the ETI client ignores
 unknown blocks). Without a key the web-UI endpoints with login and password are used.
 
+## Download rate and sources
+
+The documented Sync API (`get_folders`) reports neither progress nor transfer rates, so the
+launcher measures the rate from the growth of `<id>.eti`/`<id>.eti.!sync` on disk, which is true
+for every transport. Per-share peers come from `get_folder_peers` (API key required); their
+`download`/`upload` fields are read as cumulative counters and turned into rates from two samples.
+
 ## Runtime package installer
 
 `eti_launcher/bin/preqsetup.exe` (about 3.3 GB) installs the runtimes most games need (.NET 4.8,

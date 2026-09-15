@@ -272,6 +272,9 @@ export function createMock() {
         }
         return;
       }
+      case "cancel_download":
+        sims.delete(id);
+        return false;
       case "uninstall_game":
         sims.delete(id);
         return;
@@ -310,12 +313,17 @@ export function createMock() {
       case "get_transport_health":
         // `?noserver` shows the "no sync server" state of a managed Resilio.
         return noServer
-          ? { kind: "resilio", running: true, api_reachable: true, version: "2.8.1", peers: 1, catalog_peers: 0, server_found: false, lan_mode: true, detail: null }
-          : { kind: "demo", running: true, api_reachable: true, version: "demo", peers: 3, catalog_peers: 3, server_found: true, lan_mode: true, detail: "simulated" };
+          ? { kind: "resilio", running: true, api_reachable: true, version: "2.8.1", peers: 1, catalog_peers: 0, server_found: false, lan_mode: true, peer_details: true, detail: null }
+          : { kind: "demo", running: true, api_reachable: true, version: "demo", peers: 3, catalog_peers: 3, server_found: true, lan_mode: true, peer_details: false, detail: "simulated" };
       case "open_path":
       case "open_url":
         console.info("open", args);
         return;
+      case "get_share_peers":
+        return [
+          { name: "sync-server", connection: "direct", synced: true, downloadBps: 8_400_000, uploadBps: 0 },
+          { name: "PC-MAX", connection: "direct", synced: false, downloadBps: 1_250_000, uploadBps: 240_000 },
+        ];
       case "get_share_key":
         return "BDEMO2AAAAAAAAAAAAAAAAAAAAAAAAAA2";
       case "get_library_space":

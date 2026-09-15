@@ -94,6 +94,7 @@ impl Transport for FolderTransport {
             catalog_peers: 0,
             server_found: None,
             lan_mode: false,
+            peer_details: false,
             detail: Some("folder mode: sync client is managed by the user".into()),
         }
     }

@@ -84,6 +84,9 @@ pub struct TransportHealth {
     /// mode, API failure, catalog share not registered).
     pub server_found: Option<bool>,
     pub lan_mode: bool,
+    /// The transport can name the peers of a share (Resilio with an API key).
+    #[serde(default)]
+    pub peer_details: bool,
     pub detail: Option<String>,
 }
 
@@ -120,6 +123,22 @@ pub fn peer_summary<'a>(shares: impl IntoIterator<Item = &'a ShareStatus>) -> Pe
     out
 }
 
+/// One peer of a share, for the "where does this come from" panel.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharePeer {
+    /// Device name the peer announces.
+    pub name: String,
+    /// `direct`, `relay`, … when the engine reports it.
+    pub connection: Option<String>,
+    /// The peer has the whole share.
+    pub synced: bool,
+    /// Current rates, measured from the engine's counters between two polls;
+    /// 0 until a second sample exists.
+    pub download_bps: u64,
+    pub upload_bps: u64,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ShareOptions {
     /// Restrict traffic to the LAN (no tracker/relay/DHT).
@@ -144,6 +163,11 @@ pub trait Transport: Send + Sync {
     async fn remove_share(&self, dir: &Path) -> Result<()>;
     async fn set_paused(&self, dir: &Path, paused: bool) -> Result<()>;
     async fn share_status(&self, dir: &Path) -> Result<Option<ShareStatus>>;
+    /// Peers of one share with their current rates. Empty when the transport
+    /// cannot tell; only queried while the user looks at the detail panel.
+    async fn share_peers(&self, _dir: &Path) -> Result<Vec<SharePeer>> {
+        Ok(Vec::new())
+    }
     async fn list_shares(&self) -> Result<Vec<ShareStatus>>;
     /// Switch between LAN-only and internet mode.
     async fn set_lan_mode(&self, lan_only: bool) -> Result<()>;

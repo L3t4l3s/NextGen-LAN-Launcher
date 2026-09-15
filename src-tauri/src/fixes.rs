@@ -4,8 +4,6 @@
 use crate::state::AppState;
 use lanlauncher_core::diagnostics;
 use lanlauncher_core::problem::FixAction;
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -45,7 +43,7 @@ pub(crate) async fn run_admin_lines(
     };
     let mut cmd = tokio::process::Command::new(&plan.program);
     apply_args(&mut cmd, &plan);
-    let out = hidden(&mut cmd)
+    let out = lanlauncher_core::launch::elevate::hide_window(&mut cmd)
         .current_dir(&plan.cwd)
         .output()
         .await
@@ -169,22 +167,10 @@ fn netsh_line(args: &[String]) -> String {
     line
 }
 
-/// CREATE_NO_WINDOW: helper processes must not flash a console window from
-/// this GUI process.
-#[cfg(target_os = "windows")]
-fn hidden(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
-    cmd.creation_flags(0x0800_0000)
-}
-
-#[cfg(not(target_os = "windows"))]
-fn hidden(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
-    cmd
-}
-
 #[cfg(target_os = "windows")]
 async fn powershell(script: &str) -> Result<String, String> {
     let mut cmd = tokio::process::Command::new("powershell");
-    let out = hidden(&mut cmd)
+    let out = lanlauncher_core::launch::elevate::hide_window(&mut cmd)
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -219,7 +205,7 @@ pub async fn network_profiles() -> Vec<diagnostics::NetworkProfile> {
 #[cfg(target_os = "windows")]
 async fn netsh(args: &[String]) -> Result<(), String> {
     let mut cmd = tokio::process::Command::new("netsh");
-    let out = hidden(&mut cmd)
+    let out = lanlauncher_core::launch::elevate::hide_window(&mut cmd)
         .args(args)
         .output()
         .await
@@ -276,11 +262,23 @@ pub async fn apply(
             let binary = located
                 .found
                 .ok_or_else(|| format!("err.resilio_not_found|{}", located.probed.len()))?;
+            // The stale rules are cleared first; `netsh` treats "no rule
+            // matched" as a failure, so only the allow rules are checked.
+            let stale = diagnostics::firewall_stale_rules(&binary);
             let rules = diagnostics::firewall_rules(&binary, port);
             if needs_runas() {
-                let lines = rules.iter().map(|r| netsh_line(r)).collect();
+                let lines = stale
+                    .iter()
+                    .chain(rules.iter())
+                    .map(|r| netsh_line(r))
+                    .collect();
                 run_admin_lines(state, "firewall-rules", lines, &state.dirs.data).await?;
             } else {
+                for rule in &stale {
+                    if let Err(e) = netsh(rule).await {
+                        log::debug!("netsh delete rule: {e}");
+                    }
+                }
                 for rule in &rules {
                     netsh(rule).await?;
                 }

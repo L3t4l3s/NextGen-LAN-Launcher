@@ -17,6 +17,31 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+/// `CREATE_NO_WINDOW`: helper processes must not flash a console window from
+/// the GUI process. Games and their scripts are started *without* it, they
+/// need their console.
+pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Hide the console of a helper process (no-op off Windows).
+pub fn hide_window(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
+/// Hide the console of a synchronous helper process (no-op off Windows).
+pub fn hide_window_std(cmd: &mut std::process::Command) -> &mut std::process::Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 /// Whether this process has administrator rights. `None` off Windows, where
 /// nothing here applies. Cached: it costs one `net session` call.
 pub fn running_elevated() -> Option<bool> {
@@ -26,13 +51,8 @@ pub fn running_elevated() -> Option<bool> {
     static CACHE: OnceLock<bool> = OnceLock::new();
     Some(*CACHE.get_or_init(|| {
         let mut cmd = std::process::Command::new("net");
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            // CREATE_NO_WINDOW: no console flash from a GUI process.
-            cmd.creation_flags(0x0800_0000);
-        }
-        cmd.arg("session")
+        hide_window_std(&mut cmd)
+            .arg("session")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -203,13 +223,15 @@ pub fn batch_line(plan: &LaunchPlan) -> String {
 }
 
 /// PowerShell that runs a batch file as administrator, waits and passes its
-/// exit code on. Single quotes are PowerShell's literal strings; a quote in
-/// the path is doubled. cmd.exe gets `/S /C ""<batch>""` (Start-Process
-/// passes the argument string verbatim, `/S` strips the outer quotes).
+/// exit code on. The batch file is the `FilePath` itself: handing `cmd.exe` a
+/// quoted command line through `-ArgumentList` adds a quoting layer that
+/// PowerShell rewrites, which can make the elevated run fail before the user
+/// has even confirmed the prompt. Single quotes are PowerShell's literal
+/// strings, so a quote inside a path is doubled.
 pub fn runas_script(batch: &Path, cwd: &Path) -> String {
     let q = |p: &Path| p.to_string_lossy().replace('\'', "''");
     format!(
-        "$ErrorActionPreference = 'Stop'; $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/S /C \"\"{}\"\"' -WorkingDirectory '{}' -Verb RunAs -Wait -PassThru; exit $p.ExitCode",
+        "$ErrorActionPreference = 'Stop'; $p = Start-Process -FilePath '{}' -WorkingDirectory '{}' -Verb RunAs -Wait -PassThru; exit $p.ExitCode",
         q(batch),
         q(cwd)
     )
@@ -364,7 +386,9 @@ mod tests {
             Path::new(r"C:\Users\O'Neil\run\x.cmd"),
             Path::new(r"D:\LAN"),
         );
-        assert!(script.contains(r#"-ArgumentList '/S /C ""C:\Users\O''Neil\run\x.cmd""'"#));
+        // The batch runs directly: no cmd.exe, no nested quoting.
+        assert!(script.contains(r"-FilePath 'C:\Users\O''Neil\run\x.cmd'"));
+        assert!(!script.contains("cmd.exe"));
         assert!(script.contains("-Verb RunAs -Wait -PassThru"));
         // "ab" in UTF-16LE is 61 00 62 00.
         assert_eq!(powershell_encoded("ab"), "YQBiAA==");

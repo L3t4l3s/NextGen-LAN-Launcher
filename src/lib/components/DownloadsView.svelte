@@ -1,9 +1,11 @@
 <script lang="ts">
   import { app } from "$lib/stores/app.svelte";
-  import { api } from "$lib/api";
+  import { api, confirmDialog } from "$lib/api";
   import { t, userText } from "$lib/i18n";
   import { formatBytes, formatPercent, formatSpeed } from "$lib/format";
+  import type { SharePeer } from "$lib/types";
   import ProblemCard from "./ProblemCard.svelte";
+  import Sparkline from "./Sparkline.svelte";
 
   const items = $derived(
     app.games
@@ -11,12 +13,58 @@
       .filter((x) => x.status && !["not_installed", "ready", "update_available"].includes(x.status.phase)),
   );
 
+  // One open panel at a time; its sources are polled only while it is open
+  // and never twice at once (a slow engine would otherwise pile up calls).
+  let expanded = $state<string | null>(null);
+  let peers = $state<SharePeer[]>([]);
+  let peersLoaded = $state(false);
+
+  // A game that finishes leaves the list; its panel must not keep polling.
+  $effect(() => {
+    if (expanded && !items.some((i) => i.game.id === expanded)) expanded = null;
+  });
+
+  $effect(() => {
+    const id = expanded;
+    // Also on a switch between two games: the previous game's sources must
+    // not stay on screen until the first poll for the new one answers.
+    peers = [];
+    peersLoaded = false;
+    if (!id) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      const list = await api.sharePeers(id).catch(() => [] as SharePeer[]);
+      if (!active) return;
+      peers = list;
+      peersLoaded = true;
+      timer = setTimeout(() => void poll(), 2000);
+    };
+    void poll();
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  });
+
   async function act(fn: () => Promise<unknown>) {
     try {
       await fn();
     } catch (e) {
       app.toast("error", userText(e));
     }
+  }
+
+  // Cancelling drops the share and the partial archive. An installed version
+  // underneath (a cancelled update) keeps its files and savegames, which the
+  // backend reports back so the message matches what happened.
+  async function cancel(game: { id: string; title: string }) {
+    if (!(await confirmDialog(t("downloads.cancel.confirm", { title: game.title })))) return;
+    await act(async () => {
+      const kept = await api.cancelDownload(game.id);
+      app.toast("info", t(kept ? "downloads.cancel.kept" : "downloads.cancel.done", { title: game.title }));
+      await app.reloadGames();
+    });
   }
 </script>
 
@@ -55,8 +103,34 @@
               {:else}
                 <button class="ghost" onclick={() => act(() => api.pause(game.id, true))}>{t("action.pause")}</button>
               {/if}
+              <button class="ghost danger" onclick={() => cancel(game)}>{t("downloads.cancel")}</button>
               <button class="ghost" onclick={() => { app.selectedId = game.id; app.view = "library"; }}>{t("action.open")}</button>
+              <button class="ghost" aria-expanded={expanded === game.id} onclick={() => (expanded = expanded === game.id ? null : game.id)}>
+                {expanded === game.id ? "▾" : "▸"} {t("downloads.details")}
+              </button>
             </div>
+            {#if expanded === game.id}
+              <div class="details">
+                <Sparkline values={app.speedHistory[game.id] ?? []} format={formatSpeed} label={t("downloads.speed_history")} />
+                <div class="sources">
+                  <strong class="small">{t("downloads.sources.title")}</strong>
+                  {#if peers.length}
+                    <ul>
+                      {#each peers as peer, index (index)}
+                        <li>
+                          <span class="grow">{peer.name}</span>
+                          {#if peer.connection}<span class="muted small">{peer.connection}</span>{/if}
+                          <span class="muted small">{peer.synced ? t("downloads.sources.synced") : t("downloads.sources.partial")}</span>
+                          <span class="rate">{peer.downloadBps ? `↓ ${formatSpeed(peer.downloadBps)}` : ""}</span>
+                        </li>
+                      {/each}
+                    </ul>
+                  {:else if peersLoaded}
+                    <p class="muted small">{app.health?.peer_details ? t("downloads.sources.empty") : t("downloads.sources.unavailable")}</p>
+                  {/if}
+                </div>
+              </div>
+            {/if}
             {#if status.problem}
               <ProblemCard problem={status.problem} compact />
             {/if}
@@ -88,6 +162,34 @@
 </div>
 
 <style>
+  .details {
+    display: grid;
+    gap: 0.9rem;
+    grid-template-columns: minmax(220px, 1fr) minmax(220px, 1.2fr);
+    padding: 0.7rem 0 0.2rem;
+  }
+  @media (max-width: 720px) {
+    .details {
+      grid-template-columns: 1fr;
+    }
+  }
+  .sources ul {
+    list-style: none;
+    margin: 0.3rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .sources li {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+  }
+  .sources .rate {
+    font-variant-numeric: tabular-nums;
+  }
   .item {
     display: flex;
     flex-direction: column;

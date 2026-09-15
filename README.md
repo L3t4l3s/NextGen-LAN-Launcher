@@ -98,13 +98,25 @@ Tags `v*` are built by `release.yml` instead.
 - **Runtime package installer:** Settings offers ETI's `eti_launcher/bin/preqsetup.exe` (about
   3.3 GB, .NET 4.8, VC++, DirectX 11, PhysX) behind a confirmation like the ETI client; whether
   the installer needs arguments is unknown and untested on hardware.
+- **Download sources:** the expanded download panel lists the peers of a share with their rates,
+  derived from the counters of `get_folder_peers`. Whether that field is a counter or already a
+  rate is not documented publicly; the first peer entry an engine reports is written to the log
+  so the assumption can be checked at the LAN.
 - **Firewall rule check:** diagnostics ask `Get-NetFirewallRule` for the launcher's own rule and
   offer the fix only for the bundled or downloaded engine; the PowerShell output format and the
-  behaviour with a stopped firewall service are untested on hardware.
+  behaviour with a stopped firewall service are untested on hardware. The fix now deletes every
+  existing rule for the engine before it adds its own, because a block rule from a declined
+  Windows prompt outranks any allow rule; that a declined prompt is what leaves the engine
+  without access, and that the deletion clears it, is a hypothesis to verify at the LAN.
 - **On-demand elevation:** the manifest is `asInvoker`; setup scripts, firewall rules, HKLM
   scripts and repairs run through PowerShell `Start-Process -Verb RunAs`. The UAC flow, the exit
   code hand-over and scripts that need admin in places the detection does not see are untested
-  on hardware.
+  on hardware. The elevated batch file is started directly (`Start-Process -FilePath <batch>`)
+  instead of through `cmd.exe /c`, so the argument list needs no nested quoting; every helper
+  process runs with a hidden window, so no console flashes up. Both are untested on hardware.
+- **Stopping the engine:** on exit the launcher asks its Resilio instance to shut down, waits
+  three seconds and kills the process afterwards; deleting a game retries the directory removal
+  while the engine still holds handles on it. Untested on Windows hardware.
 - **Keygen and server start:** the detail page offers `keygen.exe` (started from `local/` like
   ETI's setup scripts do) and `server_start.cmd` (same four-argument contract as
   `game_start.cmd`) when the package ships them. Both run through `cmd.exe`/Windows and are

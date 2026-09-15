@@ -253,7 +253,9 @@ pub async fn spawn_elevated(plan: &LaunchPlan, run_dir: &Path) -> Result<u32> {
     log::info!("starting {} elevated via {}", plan.runner, batch.display());
     let runas = elevate::runas_plan(&batch, &plan.cwd);
     let mut cmd = tokio::process::Command::new(&runas.program);
-    cmd.current_dir(&runas.cwd).envs(&runas.env);
+    elevate::hide_window(&mut cmd)
+        .current_dir(&runas.cwd)
+        .envs(&runas.env);
     apply_args(&mut cmd, &runas);
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())

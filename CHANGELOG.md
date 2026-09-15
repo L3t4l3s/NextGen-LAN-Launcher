@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- Downloads zeigen jetzt eine echte Laderate: Die dokumentierte Resilio-API liefert keine, deshalb
+  misst der Launcher das Wachstum der Datei auf der Platte (geglättet). Pro Eintrag lässt sich
+  „Details“ aufklappen: Verlauf der Laderate der letzten zwei Minuten als Diagramm und die Quellen
+  mit Name, Verbindungsart und Rate.
+- Downloads lassen sich abbrechen, ohne den Umweg über „Entfernen“ in der Bibliothek. Läuft nur
+  ein Update, bleibt die installierte Version samt Spielständen erhalten; nur das heruntergeladene
+  Archiv verschwindet.
+- Bibliothek: Sortierung nach Katalog, Titel, Spielerzahl, Größe oder Erscheinungsjahr.
+- Beim Beenden des Launchers wird die eigene Sync-Engine heruntergefahren (erst freundlich, nach
+  drei Sekunden hart), statt weiterzulaufen.
+- „Entfernen“ scheiterte auf Windows mit „Zugriff verweigert“, solange die Engine den Ordner noch
+  offen hatte. Der Launcher wartet jetzt kurz nach dem Entfernen der Freigabe und versucht das
+  Löschen mehrfach; schreibgeschützte Dateien werden dabei freigegeben.
+- Diagnose und ihre Reparaturen öffnen kein PowerShell-Fenster mehr; alle Hilfsprozesse laufen
+  unsichtbar.
+- Die Firewall-Reparatur löscht zuerst alle vorhandenen Regeln für die Sync-Engine. Eine einmal
+  abgelehnte Windows-Abfrage hinterlässt eine Blockregel, die jede Freigabe aussticht — das war
+  vermutlich der Grund, warum „Jetzt beheben“ nach der Admin-Abfrage wirkungslos blieb
+  (ungetestet, auf der LAN prüfen).
+- Unter Windows meldet der Launcher kein „Startprofil passt nicht zum Paket“ mehr. Dort startet
+  ausschließlich `game_start.cmd`; das Profil wird aus eben diesem Skript abgeleitet und taugt
+  nicht als Prüfkriterium. Auf macOS und Linux bleibt die Prüfung, denn dort startet das Profil.
 - Diagnose zeigt den Zustand des Katalog-Ordners laut Sync-Engine (Peers, Status, Fehlercode) und
   die Adresse der Resilio-Oberfläche; Änderungen landen im Log. Fehlende Windows-Firewall-Regeln
   für die mitgelieferte Engine werden erkannt und per „Jetzt beheben“ angelegt. Eine LANPage, die

@@ -11,6 +11,7 @@ import type {
   LibrarySpace,
   Report,
   Settings,
+  SharePeer,
   TransportHealth,
 } from "./types";
 import { createMock } from "./mock";
@@ -47,6 +48,7 @@ export const api = {
   install: (gameId: string) => invoke<void>("install_game", { gameId }),
   repair: (gameId: string) => invoke<void>("repair_game", { gameId }),
   pause: (gameId: string, paused: boolean) => invoke<void>("pause_game", { gameId, paused }),
+  cancelDownload: (gameId: string) => invoke<boolean>("cancel_download", { gameId }),
   uninstall: (gameId: string) => invoke<void>("uninstall_game", { gameId }),
   play: (gameId: string, alternative?: number) => invoke<number>("play_game", { gameId, alternative: alternative ?? null }),
   runExtra: (gameId: string, extra: Extra) => invoke<number>("run_extra", { gameId, extra }),
@@ -64,6 +66,7 @@ export const api = {
   openPath: (path: string) => invoke<void>("open_path", { path }),
   openUrl: (url: string) => invoke<void>("open_url", { url }),
   shareKey: (gameId: string) => invoke<string>("get_share_key", { gameId }),
+  sharePeers: (gameId: string) => invoke<SharePeer[]>("get_share_peers", { gameId }),
   librarySpace: () => invoke<LibrarySpace[]>("get_library_space"),
   restartTransport: () => invoke<void>("restart_transport"),
 };

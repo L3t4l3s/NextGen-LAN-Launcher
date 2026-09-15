@@ -570,6 +570,7 @@ pub fn run() {
             commands::install_game,
             commands::repair_game,
             commands::pause_game,
+            commands::cancel_download,
             commands::uninstall_game,
             commands::play_game,
             commands::run_extra,
@@ -587,11 +588,35 @@ pub fn run() {
             commands::open_path,
             commands::open_url,
             commands::get_share_key,
+            commands::get_share_peers,
             commands::get_library_space,
             commands::restart_transport,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running NextGen LAN Launcher");
+        .build(tauri::generate_context!())
+        .expect("error while running NextGen LAN Launcher")
+        .run(|handle, event| {
+            // The sync engine is our own child process. Leaving it behind
+            // would block the next start (Resilio allows one instance per
+            // program file) and keep syncing unnoticed.
+            if matches!(event, tauri::RunEvent::Exit) {
+                let Some(state) = handle.try_state::<Arc<AppState>>() else {
+                    return;
+                };
+                let state = state.inner().clone();
+                tauri::async_runtime::block_on(async move {
+                    let transport = state.transport.read().await.clone();
+                    if let Some(t) = transport {
+                        log::info!("shutting the sync engine down");
+                        if tokio::time::timeout(Duration::from_secs(10), t.stop())
+                            .await
+                            .is_err()
+                        {
+                            log::warn!("sync engine did not stop within 10 s");
+                        }
+                    }
+                });
+            }
+        });
 }
 
 /// Fetch launcher.ini, launcher.css, logo.png (and theme.json) from the

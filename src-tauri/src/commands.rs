@@ -251,6 +251,17 @@ pub async fn pause_game(state: State<'_, Arc<AppState>>, game_id: String, paused
         .map_err(err)
 }
 
+/// Stop a download and delete its data. Returns `true` when an installed
+/// version (and its savegames) was kept because only an update was cancelled.
+#[tauri::command]
+pub async fn cancel_download(state: State<'_, Arc<AppState>>, game_id: String) -> Cmd<bool> {
+    manager(&state)
+        .await?
+        .cancel_download(&game_id)
+        .await
+        .map_err(err)
+}
+
 #[tauri::command]
 pub async fn uninstall_game(state: State<'_, Arc<AppState>>, game_id: String) -> Cmd<()> {
     manager(&state)
@@ -720,6 +731,30 @@ pub async fn get_share_key(state: State<'_, Arc<AppState>>, game_id: String) -> 
     let catalog = state.catalog().await;
     let game = catalog.game(&game_id).ok_or("err.unknown_game")?;
     Ok(game.key.expose().to_string())
+}
+
+/// Peers of a game's share with their current rates, for the expanded
+/// download panel. Empty when the engine cannot tell (folder mode, no API
+/// key); queried only while the panel is open.
+#[tauri::command]
+pub async fn get_share_peers(
+    state: State<'_, Arc<AppState>>,
+    game_id: String,
+) -> Cmd<Vec<lanlauncher_core::transport::SharePeer>> {
+    let paths = state
+        .settings
+        .read()
+        .await
+        .library
+        .game_paths(&game_id)
+        .ok_or("err.no_library")?;
+    let transport = state
+        .transport
+        .read()
+        .await
+        .clone()
+        .ok_or("err.not_ready")?;
+    transport.share_peers(&paths.share_dir).await.map_err(err)
 }
 
 #[derive(Serialize)]

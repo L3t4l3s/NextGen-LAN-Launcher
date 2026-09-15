@@ -8,11 +8,25 @@
   let query = $state("");
   let filter = $state<"all" | "installed" | "active">("all");
   let genre = $state("");
+  let sort = $state<"catalog" | "title" | "players" | "size" | "year">("catalog");
+
+  /** "8" / "16-32" / "bis 64" → the largest number in the text, 0 when none. */
+  function playerCount(value: string | null): number {
+    const numbers = (value ?? "").match(/\d+/g);
+    return numbers ? Math.max(...numbers.map(Number)) : 0;
+  }
+
+  /** "2004" / "2004 (Remake)" / "" → the first four-digit year, 0 when none. */
+  function releaseYear(value: string | null): number {
+    const year = (value ?? "").match(/\d{4}/);
+    return year ? Number(year[0]) : 0;
+  }
 
   const genres = $derived([...new Set(app.games.map((g) => g.genre).filter((g): g is string => !!g))].sort());
 
   const visible = $derived.by(() => {
     const q = query.trim().toLowerCase();
+    // filter() already returns a fresh array, so sorting it in place is safe.
     return app.games
       .filter((g) => !q || g.title.toLowerCase().includes(q) || g.id.includes(q) || (g.publisher ?? "").toLowerCase().includes(q))
       .filter((g) => !genre || g.genre === genre)
@@ -20,6 +34,22 @@
         if (filter === "all") return true;
         const s = app.statusOf(g.id);
         return filter === "installed" ? isPlayable(s) : isBusy(s) || s?.phase === "failed" || s?.phase === "paused";
+      })
+      .sort((a, b) => {
+        switch (sort) {
+          case "title":
+            return a.title.localeCompare(b.title, app.settings?.language ?? "de");
+          // Descending for the numbers: the biggest, the most players and the
+          // newest are what people look for.
+          case "players":
+            return playerCount(b.maxPlayers) - playerCount(a.maxPlayers);
+          case "size":
+            return b.sizeBytes - a.sizeBytes;
+          case "year":
+            return releaseYear(b.releaseYear) - releaseYear(a.releaseYear);
+          default:
+            return a.order - b.order;
+        }
       });
   });
 </script>
@@ -37,6 +67,11 @@
         <option value="">{t("library.filter.genre.all")}</option>
         {#each genres as g (g)}
           <option value={g}>{g}</option>
+        {/each}
+      </select>
+      <select bind:value={sort} aria-label={t("library.sort")}>
+        {#each ["catalog", "title", "players", "size", "year"] as option (option)}
+          <option value={option}>{t(`library.sort.${option}`)}</option>
         {/each}
       </select>
       <span class="muted count">{t("library.count", { count: visible.length })}</span>

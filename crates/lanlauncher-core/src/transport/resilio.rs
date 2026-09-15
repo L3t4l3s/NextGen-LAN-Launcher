@@ -25,7 +25,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::process::{Child, Command};
 
 pub const DEFAULT_LAN_PORT: u16 = 8889;
@@ -387,6 +387,12 @@ impl ResilioClient {
         }
     }
 
+    /// Raw `get_folder_peers` entries for a share secret (documented API).
+    pub async fn folder_peers(&self, secret: &str) -> Result<Vec<Value>> {
+        let v = self.api("get_folder_peers", &[("secret", secret)]).await?;
+        Ok(v.as_array().cloned().unwrap_or_default())
+    }
+
     /// All folders known to the engine, keyed by directory.
     pub async fn folders(&self) -> Result<HashMap<PathBuf, ShareStatus>> {
         if self.has_api_key() {
@@ -405,7 +411,12 @@ impl ResilioClient {
                     .await
                 {
                     Ok(p) => p.as_array().map(|a| a.len() as u32).unwrap_or(0),
-                    Err(_) => 0,
+                    // Without a peer count a download looks sourceless in the
+                    // UI, so the reason belongs in the log.
+                    Err(e) => {
+                        log::debug!("no peer count for {}: {e}", dir.display());
+                        0
+                    }
                 };
                 let status = parse_api_folder(&f, peers);
                 out.insert(dir, status);
@@ -458,6 +469,67 @@ pub fn parse_api_folder(f: &Value, peers: u32) -> ShareStatus {
         upload_bps: 0,
         error: (error != 0).then(|| format!("resilio error {error}")),
     }
+}
+
+/// A peer entry of `get_folder_peers` together with the engine's raw
+/// counters (`download`/`upload`), which are cumulative bytes; the rates in
+/// `peer` stay 0 here and are filled in from two samples.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeerSample {
+    pub id: String,
+    pub peer: SharePeer,
+    pub down: u64,
+    pub up: u64,
+}
+
+/// Parse one `get_folder_peers` entry:
+/// `{id, connection, name, synced, download, upload}`.
+pub fn parse_api_peer(v: &Value) -> Option<PeerSample> {
+    let name = v
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let id = v
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| name.clone());
+    if id.is_empty() {
+        return None;
+    }
+    let down = v.get("download").and_then(as_u64_lenient).unwrap_or(0);
+    let up = v.get("upload").and_then(as_u64_lenient).unwrap_or(0);
+    Some(PeerSample {
+        id,
+        peer: SharePeer {
+            name,
+            connection: v
+                .get("connection")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+            // `synced` is a timestamp of the last full sync in the API.
+            synced: v.get("synced").and_then(as_u64_lenient).unwrap_or(0) > 0,
+            download_bps: 0,
+            upload_bps: 0,
+        },
+        down,
+        up,
+    })
+}
+
+/// Rate from two samples of a cumulative counter. 0 while no usable previous
+/// sample exists, and on a counter reset (engine restart, peer reconnect).
+pub fn counter_rate(previous: Option<(u64, Instant)>, value: u64, now: Instant) -> u64 {
+    let Some((before, at)) = previous else {
+        return 0;
+    };
+    let seconds = now.duration_since(at).as_secs_f64();
+    if seconds < 0.5 || value < before {
+        return 0;
+    }
+    ((value - before) as f64 / seconds).round() as u64
 }
 
 /// `getsyncfolders` response: `{folders:[{name, path, size, files, status,
@@ -556,6 +628,11 @@ pub struct ResilioTransport {
     lan_only: Mutex<bool>,
     /// Last health detail written to the log (logged only on change).
     last_detail: Mutex<Option<String>>,
+    /// Last peer counters per `<share dir>\0<peer id>`, for the rates.
+    peer_samples: Mutex<HashMap<String, (u64, u64, Instant)>>,
+    /// One raw peer entry is logged per run so the field names of this engine
+    /// build can be checked against what the parser expects.
+    peer_shape_logged: std::sync::atomic::AtomicBool,
 }
 
 impl std::fmt::Debug for ResilioTransport {
@@ -587,6 +664,8 @@ impl ResilioTransport {
             child: Mutex::new(None),
             keys: Mutex::new(HashMap::new()),
             last_detail: Mutex::new(None),
+            peer_samples: Mutex::new(HashMap::new()),
+            peer_shape_logged: std::sync::atomic::AtomicBool::new(false),
             lan_only: Mutex::new(lan_only),
         }
     }
@@ -719,6 +798,29 @@ impl ResilioTransport {
         }
     }
 
+    /// Share secret for a directory: from the cache filled by `add_share`,
+    /// else from the engine's own folder list (a share the ETI launcher or a
+    /// previous run added).
+    async fn secret_for(&self, dir: &Path) -> Option<String> {
+        let want = super::normalise_dir(dir);
+        let cached = self.keys.lock().ok().and_then(|k| {
+            k.iter()
+                .find(|(d, _)| super::normalise_dir(d) == want)
+                .map(|(_, key)| key.expose().to_string())
+        });
+        if cached.is_some() {
+            return cached;
+        }
+        let v = self.client.api("get_folders", &[]).await.ok()?;
+        v.as_array()?.iter().find_map(|f| {
+            let d = f.get("dir").and_then(Value::as_str)?;
+            (super::normalise_dir(Path::new(d)) == want)
+                .then(|| f.get("secret").and_then(Value::as_str))
+                .flatten()
+                .map(str::to_string)
+        })
+    }
+
     /// Where to look when the engine does not come up.
     fn startup_hint(&self) -> String {
         format!(
@@ -839,14 +941,18 @@ impl Transport for ResilioTransport {
     }
 
     async fn stop(&self) -> Result<()> {
-        let _ = tokio::time::timeout(Duration::from_secs(5), self.client.shutdown()).await;
+        // Short timeouts: this also runs while the launcher is closing, where
+        // an engine that ignores the request is killed rather than waited for.
+        let _ = tokio::time::timeout(Duration::from_secs(3), self.client.shutdown()).await;
         let child = self.child.lock().ok().and_then(|mut c| c.take());
         if let Some(mut child) = child {
-            match tokio::time::timeout(Duration::from_secs(10), child.wait()).await {
-                Ok(_) => {}
-                Err(_) => {
-                    let _ = child.kill().await;
-                }
+            if tokio::time::timeout(Duration::from_secs(3), child.wait())
+                .await
+                .is_err()
+            {
+                log::info!("sync engine did not exit on request; killing it");
+                let _ = child.kill().await;
+                let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
             }
         }
         Ok(())
@@ -921,6 +1027,7 @@ impl Transport for ResilioTransport {
             peers: summary.map(|s| s.total).unwrap_or(0),
             catalog_peers: summary.and_then(|s| s.catalog).unwrap_or(0),
             server_found: summary.and_then(|s| s.catalog).map(|n| n > 0),
+            peer_details: self.client.has_api_key(),
             lan_mode: *self.lan_only.lock().unwrap_or_else(|e| e.into_inner()),
             detail: Some(detail),
         }
@@ -983,6 +1090,50 @@ impl Transport for ResilioTransport {
                 .find(|s| normalise_dir(&s.dir) == normalise_dir(dir))
                 .cloned()
         }))
+    }
+
+    async fn share_peers(&self, dir: &Path) -> Result<Vec<SharePeer>> {
+        // Only the documented API lists peers per share; the web-UI folder
+        // list carries no usable per-peer figures.
+        if !self.client.has_api_key() {
+            return Ok(Vec::new());
+        }
+        let Some(secret) = self.secret_for(dir).await else {
+            return Ok(Vec::new());
+        };
+        let raw = self.client.folder_peers(&secret).await?;
+        if let Some(first) = raw.first() {
+            if !self
+                .peer_shape_logged
+                .swap(true, std::sync::atomic::Ordering::Relaxed)
+            {
+                log::info!("peer entry as reported by the engine: {first}");
+            }
+        }
+        let now = Instant::now();
+        let key = super::normalise_dir(dir);
+        let mut out = Vec::new();
+        for sample in raw.iter().filter_map(parse_api_peer) {
+            let id = format!("{key}\0{}", sample.id);
+            let previous = self
+                .peer_samples
+                .lock()
+                .ok()
+                .and_then(|m| m.get(&id).copied());
+            let mut peer = sample.peer;
+            peer.download_bps = counter_rate(previous.map(|(d, _, at)| (d, at)), sample.down, now);
+            peer.upload_bps = counter_rate(previous.map(|(_, u, at)| (u, at)), sample.up, now);
+            if let Ok(mut m) = self.peer_samples.lock() {
+                m.insert(id, (sample.down, sample.up, now));
+            }
+            out.push(peer);
+        }
+        out.sort_by(|a, b| {
+            b.download_bps
+                .cmp(&a.download_bps)
+                .then(a.name.cmp(&b.name))
+        });
+        Ok(out)
     }
 
     async fn list_shares(&self) -> Result<Vec<ShareStatus>> {
@@ -1122,7 +1273,7 @@ fn registry_install_dirs() -> Vec<PathBuf> {
     ];
     KEYS.iter()
         .filter_map(|key| {
-            std::process::Command::new("reg")
+            crate::launch::elevate::hide_window_std(&mut std::process::Command::new("reg"))
                 .args(["query", key, "/v", "InstallLocation"])
                 .output()
                 .ok()
@@ -1363,6 +1514,33 @@ mod tests {
         let (key, file) = eti_client_api_key(&[dir.path().to_path_buf()]).unwrap();
         assert_eq!(key, "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567");
         assert_eq!(file, sync.join("config.json"));
+    }
+
+    #[test]
+    fn peer_entries_and_counter_rates() {
+        let v: Value = serde_json::from_str(
+            r#"{"id":"PEER1","connection":"direct","name":"sync-server","synced":1757980000,"download":1000,"upload":0}"#,
+        )
+        .unwrap();
+        let s = parse_api_peer(&v).expect("peer");
+        assert_eq!(s.id, "PEER1");
+        assert_eq!(s.peer.name, "sync-server");
+        assert_eq!(s.peer.connection.as_deref(), Some("direct"));
+        assert!(s.peer.synced);
+        assert_eq!((s.down, s.up), (1000, 0));
+        // Rates come from two samples; the first one yields nothing.
+        let t0 = Instant::now();
+        assert_eq!(counter_rate(None, 1000, t0), 0);
+        let t1 = t0 + Duration::from_secs(2);
+        assert_eq!(counter_rate(Some((1000, t0)), 5000, t1), 2000);
+        // Counter reset and samples that are too close yield 0, never a
+        // negative or absurd rate.
+        assert_eq!(counter_rate(Some((9000, t0)), 10, t1), 0);
+        assert_eq!(
+            counter_rate(Some((0, t0)), 10_000, t0 + Duration::from_millis(100)),
+            0
+        );
+        assert!(parse_api_peer(&serde_json::json!({})).is_none());
     }
 
     #[test]
