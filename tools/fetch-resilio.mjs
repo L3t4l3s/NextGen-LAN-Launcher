@@ -1,5 +1,6 @@
 // Downloads the official Resilio Sync binary for a platform into a folder and
-// verifies it against resilio.lock.json.
+// verifies it against resilio.lock.json. Used by release.yml and the full CI
+// matrix so every installer ships the pinned build.
 //
 //   node tools/fetch-resilio.mjs <windows|osx|linux-x64|linux-arm64> <dest-dir> [--allow-unpinned] [--version=<x.y.z.build>]
 //
@@ -12,7 +13,7 @@
 // only for the resilio-lock workflow that (re)computes the hashes; there a
 // mismatch is reported as a warning so a new Resilio build can be re-pinned.
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import path from "node:path";
 
@@ -95,7 +96,7 @@ if (artifact.sha256 && artifact.sha256 !== sha) {
       (version ? `a different build (${version}) was requested` : "Resilio published a new build"),
   );
 }
-const file = path.join(dest, path.basename(new URL(artifact.url).pathname));
+let file = path.join(dest, path.basename(new URL(artifact.url).pathname));
 writeFileSync(file, buf);
 
 if (platform.startsWith("linux")) {
@@ -111,9 +112,24 @@ if (platform.startsWith("linux")) {
   execSync(`cp -R "${mount}/Resilio Sync.app" "${dest}/"`, { stdio: "inherit" });
   execSync(`hdiutil detach "${mount}"`);
 } else {
-  // Windows: keep the installer. When no system-wide Resilio is found the
-  // launcher runs it silently (`/S /D=<data>/resilio`, see
-  // transport::resilio::install_bundled_windows). Untested on real hardware.
+  // Windows: the download is the program itself, not an installer (Resilio
+  // documents `/noinstall` for running it in place). Give it the name the
+  // launcher probes first so the bundled copy wins over system installs.
+  // `install` in resilio.lock.json is the name the launcher probes first
+  // (transport::resilio::bundled_install_name reads the same field).
+  if (path.extname(file).toLowerCase() !== ".exe") {
+    console.error(`windows artifact must be the .exe program, got ${path.basename(file)} (an .msi cannot run in place)`);
+    process.exit(1);
+  }
+  if (!artifact.install) {
+    console.error("resilio.lock.json: artifacts.windows.install is missing");
+    process.exit(1);
+  }
+  const target = path.join(dest, artifact.install);
+  if (target !== file) {
+    renameSync(file, target);
+    file = target;
+  }
 }
 // Machine-readable summary for the lock workflow.
 console.log(`::lock:: ${JSON.stringify({ platform, url: artifact.url, sha256: sha, bytes: buf.length, file })}`);

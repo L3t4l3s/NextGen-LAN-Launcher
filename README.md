@@ -71,13 +71,16 @@ Tags `v*` are built by `release.yml` instead.
 - **Real Resilio operation:** the client speaks the documented Sync API (`/api`, with an API key)
   and falls back to the GUI endpoints. Both can only be verified against a running sync server.
   The install logic deliberately does not depend on either.
-- **Windows installer with Resilio:** CI artifacts contain no Resilio. `release.yml` bundles the
-  official binary pinned by version and SHA-256 in `resilio.lock.json`, currently build
-  2.8.1.1390 for all four platforms. Resilio 3.x requires a Resilio account for its free licence,
-  2.8.1 does not, the ETI sync server runs the same build, and the 3.x change logs list no fix
-  that matters for LAN transfers; both versions sync with each other. Re-pin with the "Resilio
-  lock" workflow (input `version`). The silent installer run on first start
-  (`install_bundled_windows`) and launching scripts via `cmd.exe /S /C` are untested.
+- **Bundled Resilio:** release builds and the full CI matrix ship the official binary pinned by
+  version and SHA-256 in `resilio.lock.json`, currently build 2.8.1.1390 for all four platforms.
+  Resilio 3.x requires a Resilio account for its free licence, 2.8.1 does not, the ETI sync
+  server runs the same build, and the 3.x change logs list no fix that matters for LAN
+  transfers; both versions sync with each other. Re-pin with the "Resilio lock" workflow (input
+  `version`). The bundled copy is preferred over system installs and started in place; on
+  Windows with `/noinstall /config …` (Resilio's download is the program itself). Untested on
+  Windows hardware: that 2.8.1.1390 honours `/noinstall` and runs in place from the install
+  folder instead of copying itself to `%APPDATA%`, that a bundled copy runs next to a user's own
+  Resilio Sync, and launching scripts via `cmd.exe /S /C`.
 - **Engine start diagnostics:** when the sync engine exits before its API answers, the error names
   other processes running the same executable (Resilio starts once per binary; a user's own
   Resilio Sync or the ETI launcher's engine blocks ours). Relies on Resilio's single-instance

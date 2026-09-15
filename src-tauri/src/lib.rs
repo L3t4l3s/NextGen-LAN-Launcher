@@ -323,19 +323,7 @@ pub(crate) async fn build_transport(state: &AppState) -> (Arc<dyn Transport>, Op
                         .join(" | ")
                 ),
             }
-            let mut binary = located.found.clone();
-            if binary.is_none() {
-                match resilio::install_bundled_windows(
-                    state.resource_dir.as_deref(),
-                    &state.dirs.data,
-                )
-                .await
-                {
-                    Ok(found) => binary = found,
-                    Err(e) => log::warn!("bundled Resilio installer failed: {e}"),
-                }
-            }
-            match binary {
+            match located.found.clone() {
                 Some(binary) => {
                     let mut cfg = ResilioConfig::new(binary, state.dirs.transport_dir());
                     cfg.lan_only = lan_only;

@@ -19,3 +19,5 @@ Thumbs.db
 *.eti
 game.db
 !crates/lanlauncher-core/tests/fixtures/**/*.sql
+/src-tauri/resources/resilio/*
+!/src-tauri/resources/resilio/README.md

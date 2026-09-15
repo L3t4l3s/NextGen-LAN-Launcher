@@ -39,8 +39,9 @@
 
 ## Transport
 
-`Transport` is a trait. `ResilioTransport` spawns the official binary with a generated
-`config.json` (API on 127.0.0.1 with a random password, storage in the app data dir,
+`Transport` is a trait. `ResilioTransport` spawns the official binary (the copy bundled with the
+app ranks before any system install, see `locate_binary_detailed`; on Windows it runs in place
+with `/noinstall`) with a generated `config.json` (API on 127.0.0.1 with a random password, storage in the app data dir,
 `sync_max_time_diff` 48 h, LAN discovery mode 3, tracker/relay off in LAN mode), cleans up
 orphaned instances (PID file + process list) and talks to the documented Sync API when an
 `api_key` is configured, otherwise to the GUI endpoints. In managed mode the shell registers the

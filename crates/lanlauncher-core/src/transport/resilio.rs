@@ -580,9 +580,15 @@ impl ResilioTransport {
         killed
     }
 
+    /// Windows: the downloaded `Resilio-Sync_x64.exe` is the program itself,
+    /// not an installer. `/noinstall` keeps it from copying itself into
+    /// `%APPDATA%` and showing the install dialog on first run; `/config`
+    /// points at our generated config (storage_path, API), as the ETI
+    /// launcher does with its `btsync.exe`.
     pub fn command_args(config_path: &Path) -> Vec<String> {
         if cfg!(target_os = "windows") {
             vec![
+                "/noinstall".into(),
                 "/config".into(),
                 config_path.to_string_lossy().to_string(),
                 "/minimized".into(),
@@ -878,6 +884,9 @@ impl Transport for ResilioTransport {
 /// Binary names accepted on Windows. `btsync.exe` is the renamed engine the
 /// original ETI launcher ships; it speaks the same API.
 pub const WINDOWS_BINARY_NAMES: &[&str] = &["Resilio Sync.exe", "rslsync.exe", "btsync.exe"];
+/// File name of Resilio's Windows download (the program itself, see
+/// `resilio.lock.json`).
+pub const WINDOWS_DOWNLOAD_NAME: &str = "Resilio-Sync_x64.exe";
 
 /// Environment for the Windows binary search, injectable for tests.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1044,8 +1053,13 @@ pub struct LocateResult {
     pub probed: Vec<PathBuf>,
 }
 
-/// Where to find the Resilio Sync binary: a user-configured path, bundled
-/// resource, previous download, or an installation on the system.
+/// Where to find the Resilio Sync binary, in order: a user-configured path,
+/// the copy bundled with the app (every CI and release build ships the build
+/// pinned in `resilio.lock.json`), a previous download in the data dir, the
+/// executables of running sync engines, and finally installations on the
+/// system. The bundled copy ranks first on purpose: it is the same version
+/// everywhere and does not collide with a user's own Resilio, which refuses
+/// a second start of the same executable.
 pub fn locate_binary_detailed(
     override_path: Option<&Path>,
     resource_dir: Option<&Path>,
@@ -1066,16 +1080,23 @@ pub fn locate_binary_detailed(
     } else {
         &["rslsync"]
     };
-    for base in [
-        resource_dir.map(|r| r.join("resilio")),
-        Some(data_dir.join("resilio")),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        for n in names {
-            candidates.push(base.join(n));
+    if let Some(bundled) = resource_dir.map(|r| r.join("resilio")) {
+        // The name the fetch script gives the bundled file comes from
+        // resilio.lock.json (`install`), the single source of truth shared
+        // with tools/fetch-resilio.mjs.
+        if let Some(name) = bundled_install_name() {
+            candidates.push(bundled.join(name));
         }
+        for n in names {
+            candidates.push(bundled.join(n));
+        }
+        if cfg!(target_os = "windows") {
+            // The download name, in case the fetch script did not rename it.
+            candidates.push(bundled.join(WINDOWS_DOWNLOAD_NAME));
+        }
+    }
+    for n in names {
+        candidates.push(data_dir.join("resilio").join(n));
     }
     // A running engine (the user's own Resilio, the ETI launcher's btsync)
     // ranks after the bundled/pinned binary but before guessing paths.
@@ -1105,50 +1126,6 @@ pub fn locate_binary_detailed(
     }
 }
 
-/// Convenience wrapper without override; see [`locate_binary_detailed`].
-pub fn locate_binary(resource_dir: Option<&Path>, data_dir: &Path) -> Option<PathBuf> {
-    locate_binary_detailed(None, resource_dir, data_dir).found
-}
-
-/// Windows only: the release bundles Resilio's installer
-/// (`Resilio-Sync_x64.exe`). When no installed engine is found, run it
-/// silently into the launcher's data dir and return the resulting binary.
-/// Untested on real hardware; see docs/ARCHITECTURE.md.
-pub async fn install_bundled_windows(
-    resource_dir: Option<&Path>,
-    data_dir: &Path,
-) -> Result<Option<PathBuf>> {
-    if !cfg!(target_os = "windows") {
-        return Ok(None);
-    }
-    let Some(installer) = resource_dir
-        .map(|r| r.join("resilio").join("Resilio-Sync_x64.exe"))
-        .filter(|p| p.is_file())
-    else {
-        return Ok(None);
-    };
-    let target = data_dir.join("resilio");
-    std::fs::create_dir_all(&target).map_err(|e| Error::io(&target, e))?;
-    let mut cmd = tokio::process::Command::new(&installer);
-    cmd.arg("/S");
-    // NSIS `/D=` must be the last argument and must not be quoted, even when
-    // the path contains spaces; std would add quotes, so pass it raw.
-    #[cfg(windows)]
-    cmd.raw_arg(format!("/D={}", target.display()));
-    #[cfg(not(windows))]
-    cmd.arg(format!("/D={}", target.display()));
-    let status = cmd
-        .status()
-        .await
-        .map_err(|e| Error::Transport(format!("Resilio installer: {e}")))?;
-    if !status.success() {
-        return Err(Error::Transport(format!(
-            "Resilio installer exited with {status}"
-        )));
-    }
-    Ok(locate_binary(resource_dir, data_dir))
-}
-
 /// The repository's `resilio.lock.json`, embedded so the app points users to
 /// the same pinned build the release bundles instead of whatever `stable`
 /// currently is (3.x requires a Resilio account).
@@ -1169,6 +1146,16 @@ fn lock_platform() -> &'static str {
 
 static LOCK: std::sync::LazyLock<serde_json::Value> =
     std::sync::LazyLock::new(|| serde_json::from_str(LOCK_JSON).unwrap_or(serde_json::Value::Null));
+
+/// File name (`install`) under which the fetch script places the bundled
+/// binary for this platform, from `resilio.lock.json`.
+pub fn bundled_install_name() -> Option<String> {
+    LOCK.get("artifacts")?
+        .get(lock_platform())?
+        .get("install")?
+        .as_str()
+        .map(str::to_owned)
+}
 
 /// Pinned download URL from `resilio.lock.json` for the given platform key.
 pub fn pinned_download_url(platform: &str) -> Option<String> {
@@ -1444,5 +1431,35 @@ mod tests {
     fn command_args_reference_config() {
         let args = ResilioTransport::command_args(Path::new("/tmp/config.json"));
         assert!(args.iter().any(|a| a.contains("config.json")));
+        if cfg!(target_os = "windows") {
+            assert_eq!(
+                args[0], "/noinstall",
+                "a fresh copy must not install itself"
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_binary_ranks_before_data_dir_and_system() {
+        let dir = tempfile::tempdir().unwrap();
+        let res = dir.path().join("res");
+        let data = dir.path().join("data");
+        let probed = locate_binary_detailed(None, Some(&res), &data).probed;
+        let pos = |needle: &str| {
+            probed
+                .iter()
+                .position(|p| super::super::normalise_dir(p).contains(needle))
+                .unwrap_or_else(|| panic!("{needle} not probed: {probed:?}"))
+        };
+        assert!(pos("res/resilio/") < pos("data/resilio/"));
+        // The lock file's `install` name is probed in the bundled folder.
+        let install = bundled_install_name().expect("lock has install name");
+        assert!(probed
+            .iter()
+            .any(|p| p.starts_with(&res) && p.ends_with(&install)));
+        // An override always comes first.
+        let with_override =
+            locate_binary_detailed(Some(Path::new("/opt/x/rslsync")), Some(&res), &data).probed;
+        assert_eq!(with_override[0], Path::new("/opt/x/rslsync"));
     }
 }

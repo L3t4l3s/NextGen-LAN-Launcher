@@ -93,14 +93,18 @@ WebKitGTK-Entwicklungspakete (siehe unten).
   bricht den Build ab. Der Ordner mit den gebündelten Covern wird beim Start per
   `asset_protocol_scope().allow_directory` freigegeben, die statische Scope umfasst nur die
   App-Datenordner.
-- **Resilio-Binärdatei** liegt nie im Repo. `release.yml` lädt sie per `tools/fetch-resilio.mjs`
-  nach `src-tauri/resources/resilio/`. Das Skript verweigert Downloads ohne SHA-256 in
+- **Resilio-Binärdatei** liegt nie im Repo (`.gitignore`). `release.yml` und die volle CI-Matrix
+  laden sie per `tools/fetch-resilio.mjs` nach `src-tauri/resources/resilio/`; unter Windows ist
+  der Download das Programm selbst und wird in `Resilio Sync.exe` umbenannt. Der Launcher
+  bevorzugt diese Kopie vor Systeminstallationen und startet sie mit `/noinstall /config …`
+  (kein Silent-Install). Das Skript verweigert Downloads ohne SHA-256 in
   `resilio.lock.json`. Pin-Prozess: Workflow „Resilio lock“ manuell starten → Artefakt
   `resilio.lock.proposed.json` prüfen → über `resilio.lock.json` kopieren → committen. Der Workflow
   nimmt optional einen Build (`version`, z. B. `2.8.1.1390`) statt `stable`; ab 3.0 verlangt die
-  kostenlose Lizenz ein Resilio-Konto, der ETI-Sync-Server läuft mit 2.8.1.1390. CI-Builds
-  (`ci.yml`) enthalten kein Resilio; nur Release-Builds (Tag `v*`) tun das. Das Resilio-CDN ist aus
-  der Claude-Sandbox nicht erreichbar, Hashes lassen sich nur auf GitHub-Runnern ermitteln.
+  kostenlose Lizenz ein Resilio-Konto, der ETI-Sync-Server läuft mit 2.8.1.1390. Die leichten
+  Push-Läufe von `ci.yml` bauen keine Installer; volle Läufe und Releases enthalten Resilio. Das
+  Resilio-CDN ist aus der Claude-Sandbox nicht erreichbar, Hashes lassen sich nur auf
+  GitHub-Runnern ermitteln.
 - **Katalog-Key:** `BUILTIN_CATALOG_KEY` in `crates/lanlauncher-core/src/catalog.rs` ist der
   öffentliche Read-only-Key von `eti_launcher` aus ETIs `sync_server.tar`
   (`/root/eti-config.conf`, `eti_call`). Er ist für alle ETI-Clients gleich. Override für LANs mit
