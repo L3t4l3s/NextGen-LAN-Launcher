@@ -12,6 +12,8 @@ jobs:
   hashes:
     name: Hash (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
+    # arm64 is not part of the release matrix yet; a missing download must not fail the run.
+    continue-on-error: ${{ matrix.optional == true }}
     strategy:
       fail-fast: false
       matrix:
@@ -20,6 +22,7 @@ jobs:
             os: ubuntu-latest
           - platform: linux-arm64
             os: ubuntu-latest
+            optional: true
           - platform: windows
             os: windows-latest
           - platform: osx

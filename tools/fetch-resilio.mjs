@@ -35,10 +35,32 @@ if (!artifact.sha256 && !allowUnpinned) {
 }
 
 mkdirSync(dest, { recursive: true });
-console.log(`downloading ${artifact.url}`);
-const res = await fetch(artifact.url);
-if (!res.ok) throw new Error(`HTTP ${res.status} for ${artifact.url}`);
-const buf = Buffer.from(await res.arrayBuffer());
+// Resilio's CDN answers 404 to unknown user agents and has moved paths between
+// major versions, so send a browser-like UA and try candidates in order while
+// no URL is pinned.
+const headers = { "user-agent": "Mozilla/5.0 (X11; Linux x86_64) NextGen-LAN-Launcher-release/1.0", accept: "*/*" };
+const urls = artifact.url ? [artifact.url] : (artifact.candidates ?? []);
+if (urls.length === 0) {
+  console.error(`no url or candidates for ${platform} in resilio.lock.json`);
+  process.exit(2);
+}
+let buf = null;
+let chosen = null;
+for (const url of urls) {
+  console.log(`downloading ${url}`);
+  const res = await fetch(url, { headers, redirect: "follow" });
+  console.log(`  -> HTTP ${res.status} ${res.headers.get("content-type") ?? ""} ${res.headers.get("content-length") ?? ""}`);
+  if (res.ok) {
+    buf = Buffer.from(await res.arrayBuffer());
+    chosen = url;
+    break;
+  }
+}
+if (!buf) {
+  console.error(`no candidate URL for ${platform} answered successfully`);
+  process.exit(1);
+}
+artifact.url = chosen;
 const sha = createHash("sha256").update(buf).digest("hex");
 console.log(`sha256 ${sha} (${buf.length} bytes)`);
 if (artifact.sha256 && artifact.sha256 !== sha) {
@@ -52,7 +74,8 @@ const file = path.join(dest, path.basename(new URL(artifact.url).pathname));
 writeFileSync(file, buf);
 
 if (platform.startsWith("linux")) {
-  execSync(`tar -xzf "${file}" -C "${dest}" rslsync`, { stdio: "inherit" });
+  const flags = file.endsWith(".gz") ? "-xzf" : "-xf";
+  execSync(`tar ${flags} "${file}" -C "${dest}" rslsync`, { stdio: "inherit" });
   execSync(`chmod +x "${path.join(dest, "rslsync")}"`);
 } else if (platform === "osx") {
   const mount = execSync(`hdiutil attach -nobrowse -readonly "${file}" | tail -1 | awk '{print $NF}'`).toString().trim();

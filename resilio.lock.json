@@ -1,27 +1,46 @@
 {
-  "_comment": "Official Resilio Sync downloads bundled by the release workflow. Every artifact must carry a sha256 before a release can be built; run the 'Resilio lock' workflow to compute version and hashes, then copy its proposed file over this one.",
+  "_comment": "Official Resilio Sync downloads bundled by the release workflow. Every artifact must carry a sha256 before a release can be built; run the 'Resilio lock' workflow to compute version and hashes, then copy its proposed file over this one. `url` is the pinned download; while it is null the fetch script tries `candidates` in order (Resilio has moved paths between versions).",
   "version": null,
   "artifacts": {
     "windows": {
-      "url": "https://download-cdn.resilio.com/stable/windows/Resilio-Sync_x64.exe",
+      "url": null,
+      "candidates": [
+        "https://download-cdn.resilio.com/stable/windows64/Resilio-Sync_x64.exe",
+        "https://download-cdn.resilio.com/stable/windows/Resilio-Sync_x64.exe"
+      ],
       "version": null,
       "sha256": null,
       "install": "Resilio Sync.exe"
     },
     "osx": {
-      "url": "https://download-cdn.resilio.com/stable/osx/Resilio-Sync.dmg",
+      "url": null,
+      "candidates": [
+        "https://download-cdn.resilio.com/stable/osx/Resilio-Sync.dmg",
+        "https://download-cdn.resilio.com/stable/mac/Resilio-Sync.dmg",
+        "https://download-cdn.resilio.com/stable/macos/Resilio-Sync.dmg"
+      ],
       "version": null,
       "sha256": null,
       "install": "Resilio Sync.app"
     },
     "linux-x64": {
-      "url": "https://download-cdn.resilio.com/stable/linux-x64/resilio-sync_x64.tar.gz",
+      "url": null,
+      "candidates": [
+        "https://download-cdn.resilio.com/stable/linux-x64/resilio-sync_x64.tar.gz",
+        "https://download-cdn.resilio.com/stable/linux/x64/resilio-sync_x64.tar.gz",
+        "https://download-cdn.resilio.com/stable/linux-x64/resilio-sync_x64.tar"
+      ],
       "version": null,
       "sha256": null,
       "install": "rslsync"
     },
     "linux-arm64": {
-      "url": "https://download-cdn.resilio.com/stable/linux-arm64/resilio-sync_arm64.tar.gz",
+      "url": null,
+      "candidates": [
+        "https://download-cdn.resilio.com/stable/linux-arm64/resilio-sync_arm64.tar.gz",
+        "https://download-cdn.resilio.com/stable/linux-aarch64/resilio-sync_aarch64.tar.gz",
+        "https://download-cdn.resilio.com/stable/linux-armhf/resilio-sync_armhf.tar.gz"
+      ],
       "version": null,
       "sha256": null,
       "install": "rslsync"
