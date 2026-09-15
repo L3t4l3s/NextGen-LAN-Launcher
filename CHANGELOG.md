@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Cover: `assets.eti` wird wie jede andere `.eti`-Datei als RAR gelesen (Tar und gzip-Tar weiterhin
+  möglich); das Layout der Member ist toleranter, fehlende Treffer stehen mit Beispielnamen im Log.
+  Nach dem Speichern des Spiele-Ordners im Wizard lädt der Katalog sofort, nicht erst nach 10 s.
+- Hinweis „Fremde Sync-Prozesse“ erklärt, dass der Launcher fremde Resilio-Instanzen nicht beendet.
+- Startet die Sync-Engine nicht, nennt die Meldung Binary, API-Port und Engine-Log und
+  unterscheidet „sofort beendet“ (andere Instanz läuft) von „keine Antwort“; die Engine-Ausgabe
+  landet in `transport/engine-output.log`.
 - Resilio-Suche prüft auch `%APPDATA%\Resilio Sync` (Standard des Resilio-Installers) und den
   Pfad laufender Sync-Prozesse. Statusleiste und Log nennen Version plus Commit; „Log-Ordner
   öffnen“ zeigt auf den tatsächlichen Log-Ordner. Ein beim Start nicht ladbarer Katalog wird

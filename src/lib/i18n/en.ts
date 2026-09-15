@@ -319,8 +319,9 @@ export const en: Messages = {
   "problem.transport.demo_mode.title": "Demo mode",
   "problem.transport.demo_mode.cause": "All downloads are simulated.",
   "problem.transport.foreign_instance.title": "Foreign sync processes running",
-  "problem.transport.foreign_instance.cause": "Found: {processes}. Several instances interfere with each other (“Too many workers”).",
-  "problem.transport.foreign_instance.step.close": "Close old launcher or Resilio windows; “Fix now” cleans up and restarts.",
+  "problem.transport.foreign_instance.cause":
+    "Found: {processes} – another Resilio is running (your own installation or the ETI launcher). The launcher uses its own instance; two instances slow each other down (“Too many workers”).",
+  "problem.transport.foreign_instance.step.close": "Quit the other Resilio or the old launcher. “Fix now” only restarts the launcher's own sync; other programs are left alone.",
   "problem.transport.start_failed.title": "Resilio Sync unavailable",
   "problem.transport.start_failed.cause": "{detail}",
   "problem.transport.start_failed.step.install": "Install Resilio Sync (link via “Fix now”) and restart the launcher.",

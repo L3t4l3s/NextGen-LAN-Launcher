@@ -340,7 +340,11 @@ pub async fn get_settings(state: State<'_, Arc<AppState>>) -> Cmd<Settings> {
 }
 
 #[tauri::command]
-pub async fn save_settings(state: State<'_, Arc<AppState>>, settings: Settings) -> Cmd<Settings> {
+pub async fn save_settings(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+    settings: Settings,
+) -> Cmd<Settings> {
     let mut current = state.settings.write().await;
     let mut new = settings;
     if state.demo {
@@ -387,6 +391,20 @@ pub async fn save_settings(state: State<'_, Arc<AppState>>, settings: Settings) 
             }
         }
         crate::register_catalog_share(&state).await;
+        // The wizard runs its diagnostics right after saving the first root;
+        // load the catalog now instead of waiting for the file watcher. Covers
+        // are only re-extracted when the root moved; a key change touches no
+        // files. Runs in the background so Save returns immediately.
+        if old_root != new_root {
+            let st = state.inner().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(n) = crate::reload_catalog(&st, true).await {
+                    use tauri::Emitter;
+                    log::info!("catalog loaded after settings change: {n} games");
+                    let _ = app.emit(crate::CATALOG_EVENT, n);
+                }
+            });
+        }
     }
     Ok(new)
 }

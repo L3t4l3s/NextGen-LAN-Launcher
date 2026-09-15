@@ -163,10 +163,31 @@ pub(crate) fn load_catalog_from_library(
     Some(catalog)
 }
 
+/// (size, mtime) of a file, `None` when absent.
+pub(crate) type Stamp = Option<(u64, Option<std::time::SystemTime>)>;
+/// Stamps of `game.db` and `assets.eti` under the default root.
+pub(crate) type CatalogSig = (Stamp, Stamp);
+
+pub(crate) fn catalog_signature(root: Option<&std::path::Path>) -> CatalogSig {
+    let stamp = |p: PathBuf| -> Stamp {
+        let meta = std::fs::metadata(p).ok()?;
+        Some((meta.len(), meta.modified().ok()))
+    };
+    match root {
+        Some(r) => (
+            stamp(r.join(lanlauncher_core::paths::CATALOG_RELATIVE)),
+            stamp(r.join(lanlauncher_core::paths::ASSETS_RELATIVE)),
+        ),
+        None => (None, None),
+    }
+}
+
 /// Re-read the catalog from the default library root and hand it to the
-/// install manager. `None` when no readable `game.db` exists (yet).
+/// install manager. `None` when no readable `game.db` exists (yet). On
+/// success the file signature is recorded so the watcher stays quiet.
 pub(crate) async fn reload_catalog(state: &AppState, extract_covers: bool) -> Option<usize> {
     let library = state.settings.read().await.library.clone();
+    let sig = catalog_signature(library.default_root().map(|r| r.path.as_path()));
     let dirs = state.dirs.clone();
     // SQLite open + tar extraction are blocking work; keep them off the
     // async runtime threads.
@@ -179,6 +200,9 @@ pub(crate) async fn reload_catalog(state: &AppState, extract_covers: bool) -> Op
     if let Some(m) = state.manager.read().await.as_ref() {
         m.set_catalog(catalog).await;
         m.adopt_existing().await;
+    }
+    if let Ok(mut s) = state.catalog_sig.lock() {
+        *s = sig;
     }
     Some(n)
 }
@@ -424,6 +448,7 @@ pub fn run() {
                 resource_dir,
                 running: RwLock::new(Vec::new()),
                 transport_error: RwLock::new(None),
+                catalog_sig: std::sync::Mutex::new((None, None)),
             });
             app.manage(state.clone());
             let handle = app.handle().clone();
@@ -472,7 +497,16 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
         demo_catalog()
     } else {
         let lib = library.read().map(|l| l.clone()).unwrap_or_default();
-        load_catalog_from_library(&lib, &state.dirs, true).unwrap_or_default()
+        // Signature before the load: a game.db swapped in while the load
+        // runs must show up as changed to the watcher.
+        let sig = catalog_signature(lib.default_root().map(|r| r.path.as_path()));
+        let loaded = load_catalog_from_library(&lib, &state.dirs, true);
+        if loaded.is_some() {
+            if let Ok(mut s) = state.catalog_sig.lock() {
+                *s = sig;
+            }
+        }
+        loaded.unwrap_or_default()
     };
     let lan_only = state.settings.read().await.lan_mode;
     let manager = build_manager(
@@ -548,53 +582,37 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
 
     // Catalog reload: `game.db` and `assets.eti` arrive through the catalog
     // share minutes after start at a LAN; a size/mtime change of either
-    // triggers a reload (covers are re-extracted with it).
+    // triggers a reload (covers are re-extracted when assets.eti changed).
     let st = state.clone();
     let app5 = app.clone();
     tauri::async_runtime::spawn(async move {
-        type Stamp = Option<(u64, Option<std::time::SystemTime>)>;
-        let stamp = |p: std::path::PathBuf| -> Stamp {
-            let meta = std::fs::metadata(p).ok()?;
-            Some((meta.len(), meta.modified().ok()))
-        };
-        let signature = |root: Option<std::path::PathBuf>| -> (Stamp, Stamp) {
-            match root {
-                Some(r) => (
-                    stamp(r.join(lanlauncher_core::paths::CATALOG_RELATIVE)),
-                    stamp(r.join(lanlauncher_core::paths::ASSETS_RELATIVE)),
-                ),
-                None => (None, None),
-            }
-        };
         if st.demo {
             return;
         }
-        let mut last = signature(st.default_root_path().await);
-        // Whether any load has succeeded yet (the startup load counts when it
-        // produced games). Until then an unchanged game.db is retried, because
-        // the file may have been locked or half-synced at start.
-        let mut ever_loaded = match st.manager.read().await.as_ref() {
-            Some(m) => m.catalog_len().await > 0,
-            None => false,
-        };
+        // Signature of the last attempt made by this loop; a changed but
+        // unloadable catalog is tried once per change, not every 10 s.
+        let mut tried: CatalogSig = (None, None);
         loop {
             tokio::time::sleep(Duration::from_secs(10)).await;
-            let now = signature(st.default_root_path().await);
-            // A vanished game.db keeps the old catalog. A changed one is
-            // loaded once; if it is half-written and fails quick_check, the
-            // next size/mtime change retries. Covers are re-extracted when
-            // assets.eti changed or nothing was ever loaded.
-            let changed = now != last;
+            let root = st.default_root_path().await;
+            let now = catalog_signature(root.as_deref());
+            // `last` is the signature of the last successful load, wherever it
+            // happened (startup, settings change, this loop). While nothing was
+            // ever loaded, an unchanged game.db is retried: the file may have
+            // been locked or half-synced at start. A vanished game.db keeps the
+            // old catalog.
+            let last = st.catalog_sig.lock().map(|s| *s).unwrap_or((None, None));
+            let ever_loaded = last.0.is_some();
+            let changed = now != last && (now != tried || !ever_loaded);
             if now.0.is_some() && (changed || !ever_loaded) {
+                tried = now;
                 let assets_changed = now.1 != last.1 || !ever_loaded;
-                last = now;
                 match reload_catalog(&st, assets_changed).await {
                     Some(n) => {
-                        ever_loaded = true;
                         log::info!("catalog reloaded: {n} games");
                         let _ = app5.emit(CATALOG_EVENT, n);
                     }
-                    None if changed => {
+                    None if ever_loaded => {
                         log::warn!("catalog changed on disk but could not be loaded yet")
                     }
                     None => log::debug!("catalog still not loadable; retrying"),

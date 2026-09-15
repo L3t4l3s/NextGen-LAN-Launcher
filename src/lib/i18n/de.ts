@@ -322,8 +322,9 @@ export const de: Messages = {
   "problem.transport.demo_mode.title": "Demo-Modus",
   "problem.transport.demo_mode.cause": "Alle Downloads sind simuliert.",
   "problem.transport.foreign_instance.title": "Fremde Sync-Prozesse laufen",
-  "problem.transport.foreign_instance.cause": "Gefunden: {processes}. Mehrere Instanzen stören sich gegenseitig („Too many workers“).",
-  "problem.transport.foreign_instance.step.close": "Alte Launcher oder Resilio-Fenster schließen; „Jetzt beheben“ räumt auf und startet neu.",
+  "problem.transport.foreign_instance.cause":
+    "Gefunden: {processes} – ein anderes Resilio läuft (deine eigene Installation oder der ETI-Launcher). Der Launcher nutzt eine eigene Instanz; zwei Instanzen bremsen sich gegenseitig („Too many workers“).",
+  "problem.transport.foreign_instance.step.close": "Das andere Resilio bzw. den alten Launcher beenden. „Jetzt beheben“ startet nur den Sync des Launchers neu, fremde Programme bleiben unberührt.",
   "problem.transport.start_failed.title": "Resilio Sync nicht verfügbar",
   "problem.transport.start_failed.cause": "{detail}",
   "problem.transport.start_failed.step.install": "Resilio Sync installieren (Link über „Jetzt beheben“) und den Launcher neu starten.",

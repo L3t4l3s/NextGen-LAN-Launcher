@@ -43,7 +43,7 @@ pub enum Verification {
 /// Progress callback: (bytes_done, bytes_total, current_file).
 pub type Progress<'a> = &'a mut dyn FnMut(u64, u64, &str);
 
-fn map_err(e: unrar::error::UnrarError) -> Error {
+pub(crate) fn map_err(e: unrar::error::UnrarError) -> Error {
     Error::Archive(format!("{e}"))
 }
 

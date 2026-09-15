@@ -103,8 +103,8 @@ WebKitGTK-Entwicklungspakete (siehe unten).
   eigenem Katalog über `settings.catalogKey`. Der Pfad „kein gültiger Key“ (Statusleiste
   „Server-Key fehlt“, Diagnose `catalog.key_missing`) ist mit dem eingebauten Key normalerweise
   unerreichbar und bleibt als Absicherung, falls die Konstante in einem Fork geleert wird.
-- **Test-Fixtures:** `sample_game.rar`, `truncated_game.rar` und `demo_amongus.rar` wurden mit
-  `rar a -ep1 -r -m5 -ma5` erzeugt. `*.eti` und `game.db` sind per `.gitignore` ausgeschlossen,
+- **Test-Fixtures:** `sample_game.rar`, `truncated_game.rar`, `demo_amongus.rar` und
+  `assets_covers.rar` (Cover-Layout `assets/<id>.jpg`) wurden mit `rar a -ep1 -r -m5 -ma5` erzeugt. `*.eti` und `game.db` sind per `.gitignore` ausgeschlossen,
   damit nie echte Resilio-Keys oder Spielarchive committet werden.
 - **Windows-Skripte** erwarten `%programfiles%\eti\lan launcher\unrar.exe` und `fnr.exe` sowie
   Adminrechte (`netsh`, `reg add HKLM`). Die App fordert per Manifest Elevation an

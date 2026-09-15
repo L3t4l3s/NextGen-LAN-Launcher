@@ -26,6 +26,9 @@ pub struct AppState {
     /// Games currently running (game_id → pid), for the stats beacon.
     pub running: RwLock<Vec<(String, u32)>>,
     pub transport_error: RwLock<Option<String>>,
+    /// Size/mtime of `game.db` and `assets.eti` at the last successful catalog
+    /// load, so the file watcher does not redo a load another path just did.
+    pub catalog_sig: std::sync::Mutex<crate::CatalogSig>,
 }
 
 impl AppState {

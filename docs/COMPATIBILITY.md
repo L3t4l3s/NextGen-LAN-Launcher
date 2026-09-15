@@ -20,7 +20,8 @@ discarded(del_id, game_id, game_key)
 tools(tool_id, db_id, tool_name, tool_key, tool_maintainer, tool_size, tool_readme_*, tool_disabled)
 ```
 
-`assets.eti` next to it is a tar archive with `assets/<game_id>.jpg|png` covers.
+`assets.eti` next to it holds the covers as `assets/<game_id>.jpg|png`. Like every other `.eti` it
+is a RAR archive; the launcher sniffs the format and also accepts a plain or gzip-compressed tar.
 
 ## Game share `<root>/<game_id>/`
 

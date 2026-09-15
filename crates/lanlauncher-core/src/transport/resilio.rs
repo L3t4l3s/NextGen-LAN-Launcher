@@ -602,13 +602,39 @@ impl ResilioTransport {
             if self.client.version().await.is_ok() {
                 return Ok(());
             }
+            // An engine that quit right away (another instance of the same
+            // binary is running, bad config) is reported as such instead of
+            // as a timeout.
+            let exited = self
+                .child
+                .lock()
+                .ok()
+                .and_then(|mut c| c.as_mut().and_then(|ch| ch.try_wait().ok().flatten()));
+            if let Some(status) = exited {
+                return Err(Error::Transport(format!(
+                    "Resilio Sync exited with {status} before its API came up ({}); another instance of the same binary may be running",
+                    self.startup_hint()
+                )));
+            }
             if start.elapsed() > timeout {
-                return Err(Error::Transport(
-                    "Resilio API did not become reachable".into(),
-                ));
+                return Err(Error::Transport(format!(
+                    "Resilio API did not become reachable within {}s ({})",
+                    timeout.as_secs(),
+                    self.startup_hint()
+                )));
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
+    }
+
+    /// Where to look when the engine does not come up.
+    fn startup_hint(&self) -> String {
+        format!(
+            "binary {}, api port {}, engine log {}",
+            self.config.binary.display(),
+            self.config.api_port,
+            self.config.storage_dir.join("sync.log").display()
+        )
     }
 }
 
@@ -641,12 +667,29 @@ impl Transport for ResilioTransport {
         }
         self.cleanup_orphans();
         self.config.write(&self.config_path)?;
+        let args = Self::command_args(&self.config_path);
+        log::info!(
+            "starting sync engine: {} {} (storage {}, api 127.0.0.1:{})",
+            self.config.binary.display(),
+            args.join(" "),
+            self.config.storage_dir.display(),
+            self.config.api_port
+        );
+        // Engine output goes to a file next to its storage so a failed start
+        // can be diagnosed from the data directory.
+        let output = std::fs::File::create(self.config.storage_dir.join("engine-output.log")).ok();
         let mut cmd = Command::new(&self.config.binary);
-        cmd.args(Self::command_args(&self.config_path))
+        cmd.args(&args)
             .current_dir(&self.config.storage_dir)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(match output.as_ref().and_then(|f| f.try_clone().ok()) {
+                Some(f) => Stdio::from(f),
+                None => Stdio::null(),
+            })
+            .stderr(match output {
+                Some(f) => Stdio::from(f),
+                None => Stdio::null(),
+            })
             .kill_on_drop(true);
         let child = cmd
             .spawn()

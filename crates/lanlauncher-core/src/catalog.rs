@@ -24,7 +24,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 /// Resilio read-only secret: `B` + 32 Base32 characters.
@@ -393,29 +393,136 @@ fn parse_game(row: &rusqlite::Row<'_>, raw_id: &str) -> std::result::Result<Game
     })
 }
 
-/// Extract cover images from `assets.eti` (a tar archive, optionally
-/// gzip-compressed, with members `assets/<game_id>.jpg|png`) into
-/// `dest_dir/<game_id>.<ext>`. Returns the number of covers written. Members
-/// with unexpected names are ignored.
-pub fn extract_covers(assets_tar: &Path, dest_dir: &Path) -> Result<usize> {
+/// A cover image inside `assets.eti`: where it goes and whether it sits
+/// directly in `assets/` (the official layout, which wins over screenshots
+/// or duplicates in other folders).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CoverMember {
+    target: PathBuf,
+    direct: bool,
+}
+
+/// Archive member → cover, or `None` for anything that is not a cover image.
+/// Accepts `assets/<id>.jpg`, a flat `<id>.png`, nested folders, `./`
+/// prefixes and Windows separators; the id is lowercased so it matches the
+/// catalog's lowercase game ids.
+fn cover_member(dest_dir: &Path, member: &str) -> Option<CoverMember> {
     static MEMBER_RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"^(?:\./)?assets/([a-z0-9][a-z0-9_-]{0,63})\.(jpg|jpeg|png)$")
+        Regex::new(r"(?i)^(?:\./)?(.*?)([a-z0-9][a-z0-9_-]{0,63})\.(jpe?g|png)$")
             .expect("valid regex")
     });
+    let normalised = member.replace('\\', "/");
+    let caps = MEMBER_RE.captures(&normalised)?;
+    let folder = &caps[1];
+    if !folder.is_empty() && !folder.ends_with('/') {
+        return None;
+    }
+    Some(CoverMember {
+        target: dest_dir.join(format!(
+            "{}.{}",
+            caps[2].to_ascii_lowercase(),
+            caps[3].to_ascii_lowercase()
+        )),
+        direct: folder.eq_ignore_ascii_case("assets/") || folder.is_empty(),
+    })
+}
+
+/// Covers larger than this are skipped (the real ones are a few hundred KB).
+const MAX_COVER_BYTES: u64 = 20 * 1024 * 1024;
+
+/// Bookkeeping for one extraction run: members directly under `assets/`
+/// always win, anything nested only fills gaps.
+#[derive(Default)]
+struct CoverRun {
+    written: usize,
+    /// Targets written in this run by a member directly under `assets/`.
+    direct_targets: std::collections::HashSet<PathBuf>,
+    /// Every target written in this run (direct or nested).
+    targets: std::collections::HashSet<PathBuf>,
+    /// First member names, for the log when nothing matched.
+    seen: Vec<String>,
+}
+
+impl CoverRun {
+    fn note(&mut self, member: &str) {
+        if self.seen.len() < 5 {
+            self.seen.push(member.to_string());
+        }
+    }
+    /// Decide whether this member should be written now. A direct member
+    /// always wins; a nested one only fills a gap this run has not written
+    /// yet. Files from earlier runs are replaced, so an updated `assets.eti`
+    /// takes effect and a switched catalog does not inherit stale covers.
+    fn accept(&mut self, m: &CoverMember) -> bool {
+        if m.direct {
+            self.direct_targets.insert(m.target.clone());
+            true
+        } else {
+            !self.direct_targets.contains(&m.target) && !self.targets.contains(&m.target)
+        }
+    }
+    fn wrote(&mut self, m: &CoverMember) {
+        self.written += 1;
+        self.targets.insert(m.target.clone());
+    }
+}
+
+/// Covers are written to `<target>.part` first and renamed on success, so a
+/// member that fails half-way never destroys the cover of an earlier run.
+fn part_path(target: &Path) -> PathBuf {
+    let mut os = target.as_os_str().to_owned();
+    os.push(".part");
+    PathBuf::from(os)
+}
+
+/// Move a completely written `.part` file onto its target.
+fn commit_part(part: &Path, target: &Path) -> std::io::Result<()> {
+    std::fs::rename(part, target).inspect_err(|_| {
+        let _ = std::fs::remove_file(part);
+    })
+}
+
+/// Extract cover images from `assets.eti` into `dest_dir/<game_id>.<ext>`.
+/// ETI ships covers as `assets/<game_id>.jpg|png` inside an archive that is
+/// RAR like every other `.eti` (a plain or gzip-compressed tar is accepted as
+/// well; the format is sniffed from the first bytes). Returns the number of
+/// covers written; members that are no cover image are ignored, a member
+/// that cannot be written is logged and skipped.
+pub fn extract_covers(assets: &Path, dest_dir: &Path) -> Result<usize> {
     std::fs::create_dir_all(dest_dir).map_err(|e| Error::io(dest_dir, e))?;
-    let mut file = std::fs::File::open(assets_tar).map_err(|e| Error::io(assets_tar, e))?;
-    // gzip magic 1f 8b: `tar -tf` accepts both, so do we.
-    let mut magic = [0u8; 2];
-    let gzipped = std::io::Read::read_exact(&mut file, &mut magic).is_ok() && magic == [0x1f, 0x8b];
-    std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(0))
-        .map_err(|e| Error::io(assets_tar, e))?;
-    let reader: Box<dyn std::io::Read> = if gzipped {
-        Box::new(flate2::read::GzDecoder::new(file))
+    let mut file = std::fs::File::open(assets).map_err(|e| Error::io(assets, e))?;
+    let mut magic = Vec::with_capacity(8);
+    std::io::Read::read_to_end(&mut std::io::Read::take(&mut file, 8), &mut magic)
+        .map_err(|e| Error::io(assets, e))?;
+    let mut run = CoverRun::default();
+    if magic.starts_with(b"Rar!\x1a\x07") {
+        extract_covers_rar(assets, dest_dir, &mut run)?;
     } else {
-        Box::new(file)
-    };
+        std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(0))
+            .map_err(|e| Error::io(assets, e))?;
+        let reader: Box<dyn std::io::Read> = if magic.starts_with(&[0x1f, 0x8b]) {
+            Box::new(flate2::read::GzDecoder::new(file))
+        } else {
+            Box::new(file)
+        };
+        extract_covers_tar(reader, dest_dir, &mut run)?;
+    }
+    if run.written == 0 {
+        log::warn!(
+            "covers: no cover images in {} (first members: {})",
+            assets.display(),
+            run.seen.join(", ")
+        );
+    }
+    Ok(run.written)
+}
+
+fn extract_covers_tar(
+    reader: Box<dyn std::io::Read>,
+    dest_dir: &Path,
+    run: &mut CoverRun,
+) -> Result<()> {
     let mut archive = tar::Archive::new(reader);
-    let mut written = 0;
     for entry in archive
         .entries()
         .map_err(|e| Error::Archive(e.to_string()))?
@@ -425,19 +532,83 @@ pub fn extract_covers(assets_tar: &Path, dest_dir: &Path) -> Result<usize> {
             .path()
             .map_err(|e| Error::Archive(e.to_string()))?
             .to_string_lossy()
-            .replace('\\', "/");
-        let Some(caps) = MEMBER_RE.captures(&path) else {
+            .to_string();
+        run.note(&path);
+        let Some(m) = cover_member(dest_dir, &path) else {
             continue;
         };
-        if entry.size() > 20 * 1024 * 1024 {
+        if entry.size() > MAX_COVER_BYTES || !run.accept(&m) {
             continue;
         }
-        let target = dest_dir.join(format!("{}.{}", &caps[1], &caps[2]));
-        let mut out = std::fs::File::create(&target).map_err(|e| Error::io(&target, e))?;
-        std::io::copy(&mut entry, &mut out).map_err(|e| Error::io(&target, e))?;
-        written += 1;
+        let part = part_path(&m.target);
+        let write = std::fs::File::create(&part)
+            .and_then(|mut out| std::io::copy(&mut entry, &mut out))
+            .and_then(|_| commit_part(&part, &m.target));
+        match write {
+            Ok(()) => run.wrote(&m),
+            Err(e) => {
+                let _ = std::fs::remove_file(&part);
+                log::warn!("covers: cannot write {}: {e}", m.target.display());
+            }
+        }
     }
-    Ok(written)
+    Ok(())
+}
+
+fn extract_covers_rar(assets: &Path, dest_dir: &Path, run: &mut CoverRun) -> Result<()> {
+    use crate::extract::map_err;
+    // unrar consumes the archive handle when a member fails to extract. To
+    // keep the covers after a bad member (CRC error, reserved Windows name),
+    // the archive is reopened and the members up to the failed one skipped.
+    let mut handled = 0usize;
+    loop {
+        let mut open = unrar::Archive::new(assets)
+            .open_for_processing()
+            .map_err(map_err)?;
+        let mut index = 0usize;
+        loop {
+            let Some(header) = open.read_header().map_err(map_err)? else {
+                return Ok(());
+            };
+            index += 1;
+            if index <= handled {
+                open = header.skip().map_err(map_err)?;
+                continue;
+            }
+            let name = header.entry().filename.to_string_lossy().to_string();
+            run.note(&name);
+            let member = if header.entry().is_directory()
+                || header.entry().unpacked_size > MAX_COVER_BYTES
+            {
+                None
+            } else {
+                cover_member(dest_dir, &name).filter(|m| run.accept(m))
+            };
+            open = match &member {
+                Some(m) => {
+                    let part = part_path(&m.target);
+                    match header.extract_to(&part) {
+                        Ok(next) => {
+                            match commit_part(&part, &m.target) {
+                                Ok(()) => run.wrote(m),
+                                Err(e) => {
+                                    log::warn!("covers: cannot write {}: {e}", m.target.display())
+                                }
+                            }
+                            next
+                        }
+                        Err(e) => {
+                            log::warn!("covers: cannot extract {name}: {e}");
+                            let _ = std::fs::remove_file(&part);
+                            handled = index;
+                            break;
+                        }
+                    }
+                }
+                None => header.skip().map_err(map_err)?,
+            };
+        }
+    }
 }
 
 /// Locate a preview video shipped in the launcher share
@@ -587,14 +758,32 @@ mod tests {
             h2.set_size(3);
             h2.set_mode(0o644);
             h2.set_cksum();
+            // A member outside assets/ still lands flat in the cover dir.
             b.append_data(&mut h2, "other/evil.jpg", &b"abc"[..])
                 .unwrap();
             b.finish().unwrap();
         }
         let out = dir.path().join("covers");
-        assert_eq!(extract_covers(&tar_path, &out).unwrap(), 1);
+        // Stale covers from an earlier run are replaced, direct or nested.
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("quake3.jpg"), "old direct").unwrap();
+        std::fs::write(out.join("evil.jpg"), "old nested").unwrap();
+        assert_eq!(extract_covers(&tar_path, &out).unwrap(), 2);
         assert!(find_cover(&out, "quake3").is_some());
-        assert!(find_cover(&out, "evil").is_none());
+        assert!(out.join("evil.jpg").is_file(), "kept inside the cover dir");
+        assert_eq!(std::fs::read(out.join("evil.jpg")).unwrap(), b"abc");
+        assert!(std::fs::read(out.join("quake3.jpg"))
+            .unwrap()
+            .starts_with(b"\xFF\xD8"));
+        assert!(!dir.path().join("other").exists());
+        assert!(
+            std::fs::read_dir(&out).unwrap().all(|e| !e
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".part")),
+            "no .part files left behind"
+        );
 
         // The same archive gzip-compressed yields the same covers.
         let gz_path = dir.path().join("assets.gz.eti");
@@ -607,12 +796,49 @@ mod tests {
             enc.finish().unwrap();
         }
         let out2 = dir.path().join("covers2");
-        assert_eq!(extract_covers(&gz_path, &out2).unwrap(), 1);
+        assert_eq!(extract_covers(&gz_path, &out2).unwrap(), 2);
         assert!(find_cover(&out2, "quake3").is_some());
 
         // Not an archive at all → error, not silent success.
         let bogus = dir.path().join("bogus.eti");
-        std::fs::write(&bogus, "Rar!\x1a\x07\x01\x00 definitely not tar").unwrap();
+        std::fs::write(&bogus, "definitely not an archive of any kind").unwrap();
         assert!(extract_covers(&bogus, &out2).is_err());
+        // A RAR signature without content is tolerated by unrar: no covers, no crash.
+        let bogus_rar = dir.path().join("bogus_rar.eti");
+        std::fs::write(&bogus_rar, "Rar!\x1a\x07\x01\x00 truncated").unwrap();
+        assert!(matches!(extract_covers(&bogus_rar, &out2), Ok(0) | Err(_)));
+    }
+
+    #[test]
+    fn extracts_covers_from_rar_like_eti_ships_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("covers");
+        let rar = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/assets_covers.rar");
+        // assets/quake3.jpg, assets/nested/amongus.png, assets/readme.txt
+        assert_eq!(extract_covers(&rar, &out).unwrap(), 2);
+        assert!(find_cover(&out, "quake3").is_some());
+        assert!(find_cover(&out, "amongus").is_some());
+        assert!(!out.join("readme.txt").exists());
+    }
+
+    #[test]
+    fn cover_member_accepts_eti_layouts_only() {
+        let d = Path::new("/c");
+        let m = |s: &str| cover_member(d, s);
+        let quake = m("assets/quake3.jpg").unwrap();
+        assert_eq!(quake.target, PathBuf::from("/c/quake3.jpg"));
+        assert!(quake.direct);
+        assert_eq!(
+            m("./assets/Quake3.JPG").unwrap().target,
+            PathBuf::from("/c/quake3.jpg")
+        );
+        let nested = m("assets\\sub\\cod4.png").unwrap();
+        assert_eq!(nested.target, PathBuf::from("/c/cod4.png"));
+        assert!(!nested.direct);
+        assert!(m("wc3.jpeg").unwrap().direct);
+        assert_eq!(m("assets/readme.txt"), None);
+        assert_eq!(m("assets/.hidden.jpg"), None);
+        assert_eq!(m("assets/"), None);
+        assert_eq!(m("assets/bad name.jpg"), None);
     }
 }
