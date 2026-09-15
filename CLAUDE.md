@@ -82,7 +82,11 @@ WebKitGTK-Entwicklungspakete (siehe unten).
   `tauri`-Abhängigkeit das Feature `protocol-asset`. `bundle.resources` ist eine Map
   (`../manifests/` → `manifests/`); ein Glob auf leere Ordner bricht den Build ab.
 - **Resilio-Binärdatei** liegt nie im Repo. `release.yml` lädt sie per `tools/fetch-resilio.mjs`
-  nach `src-tauri/resources/resilio/`. Hashes in `resilio.lock.json` sind noch nicht gepinnt.
+  nach `src-tauri/resources/resilio/`. Das Skript verweigert Downloads ohne SHA-256 in
+  `resilio.lock.json`. Pin-Prozess: Workflow „Resilio lock“ manuell starten → Artefakt
+  `resilio.lock.proposed.json` prüfen → über `resilio.lock.json` kopieren → committen. CI-Builds
+  (`ci.yml`) enthalten kein Resilio; nur Release-Builds (Tag `v*`) tun das. Das Resilio-CDN ist aus
+  der Claude-Sandbox nicht erreichbar, Hashes lassen sich nur auf GitHub-Runnern ermitteln.
 - **Test-Fixtures:** `sample_game.rar`, `truncated_game.rar` und `demo_amongus.rar` wurden mit
   `rar a -ep1 -r -m5 -ma5` erzeugt. `*.eti` und `game.db` sind per `.gitignore` ausgeschlossen,
   damit nie echte Resilio-Keys oder Spielarchive committet werden.

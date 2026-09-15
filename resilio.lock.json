@@ -1,24 +1,28 @@
 {
-  "_comment": "Official Resilio Sync downloads bundled by the release workflow. sha256 = null means 'not pinned yet': the fetch script prints the hash so it can be pinned before the first public release.",
-  "version": "2.8.1",
+  "_comment": "Official Resilio Sync downloads bundled by the release workflow. Every artifact must carry a sha256 before a release can be built; run the 'Resilio lock' workflow to compute version and hashes, then copy its proposed file over this one.",
+  "version": null,
   "artifacts": {
     "windows": {
       "url": "https://download-cdn.resilio.com/stable/windows/Resilio-Sync_x64.exe",
+      "version": null,
       "sha256": null,
       "install": "Resilio Sync.exe"
     },
     "osx": {
       "url": "https://download-cdn.resilio.com/stable/osx/Resilio-Sync.dmg",
+      "version": null,
       "sha256": null,
       "install": "Resilio Sync.app"
     },
     "linux-x64": {
       "url": "https://download-cdn.resilio.com/stable/linux-x64/resilio-sync_x64.tar.gz",
+      "version": null,
       "sha256": null,
       "install": "rslsync"
     },
     "linux-arm64": {
       "url": "https://download-cdn.resilio.com/stable/linux-arm64/resilio-sync_arm64.tar.gz",
+      "version": null,
       "sha256": null,
       "install": "rslsync"
     }

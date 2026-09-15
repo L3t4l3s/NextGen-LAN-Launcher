@@ -65,9 +65,11 @@ In the browser, `http://localhost:1420/?wizard` shows the first-run wizard.
 - **Real Resilio operation:** the client speaks the documented Sync API (`/api`, with an API key)
   and falls back to the GUI endpoints. Both can only be verified against a running sync server.
   The install logic deliberately does not depend on either.
-- **Windows installer with Resilio:** `release.yml` downloads the official binary; the hashes in
-  `resilio.lock.json` are not pinned yet. The silent installer run on first start
-  (`install_bundled_windows`) and launching scripts via `cmd.exe /S /C` are untested.
+- **Windows installer with Resilio:** CI artifacts contain no Resilio. `release.yml` bundles the
+  official binary pinned by version and SHA-256 in `resilio.lock.json`; the pins are produced by
+  the manual "Resilio lock" workflow and are still to be filled in before the first tag. The
+  silent installer run on first start (`install_bundled_windows`) and launching scripts via
+  `cmd.exe /S /C` are untested.
 - **Covers and videos** come from the `eti_launcher` share at the LAN (`update/assets.eti`,
   `video/<id>.mp4`). Demo mode intentionally ships no game artwork.
 - **macOS/Linux launch profiles:** six games have curated profiles; every other game gets a profile

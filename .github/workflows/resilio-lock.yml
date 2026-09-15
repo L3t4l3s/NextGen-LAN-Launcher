@@ -1,0 +1,118 @@
+name: Resilio lock
+
+# Computes the SHA-256 hashes and version numbers of the official Resilio Sync
+# downloads so they can be pinned in resilio.lock.json. Run it manually, then
+# copy the artifact `resilio.lock.proposed.json` over resilio.lock.json and
+# commit. The release workflow refuses to build without pinned hashes.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  hashes:
+    name: Hash (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            os: ubuntu-latest
+          - platform: linux-arm64
+            os: ubuntu-latest
+          - platform: windows
+            os: windows-latest
+          - platform: osx
+            os: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Download and hash
+        id: fetch
+        shell: bash
+        run: |
+          set -euo pipefail
+          out=$(node tools/fetch-resilio.mjs "${{ matrix.platform }}" out --allow-unpinned)
+          echo "$out"
+          echo "$out" | grep '^::lock:: ' | sed 's/^::lock:: //' > lock-entry.json
+      - name: Read version (Linux)
+        if: startsWith(matrix.platform, 'linux')
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.platform }}" = "linux-x64" ]; then
+            ver=$(./out/rslsync --help 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)
+          else
+            ver=$(strings out/rslsync | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$' | head -1 || true)
+          fi
+          echo "version=$ver" >> lock-version.txt
+      - name: Read version (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $f = Get-ChildItem out\*.exe | Select-Object -First 1
+          $v = (Get-Item $f.FullName).VersionInfo.ProductVersion
+          "version=$v" | Out-File -Encoding utf8 -Append lock-version.txt
+      - name: Read version (macOS)
+        if: matrix.platform == 'osx'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "out/Resilio Sync.app/Contents/Info.plist" || true)
+          echo "version=$ver" >> lock-version.txt
+      - name: Assemble entry
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const e = JSON.parse(fs.readFileSync("lock-entry.json", "utf8"));
+            const v = (fs.existsSync("lock-version.txt") ? fs.readFileSync("lock-version.txt","utf8") : "").match(/version=(.*)/);
+            e.version = v ? v[1].trim() : null;
+            e.retrieved_at = new Date().toISOString();
+            fs.writeFileSync(`entry-${e.platform}.json`, JSON.stringify(e, null, 2));
+            console.log(JSON.stringify(e, null, 2));
+          '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: entry-${{ matrix.platform }}
+          path: entry-*.json
+
+  assemble:
+    name: Proposed resilio.lock.json
+    needs: hashes
+    # Merge whatever platforms succeeded even if one hash job failed.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: entry-*
+          merge-multiple: true
+          path: entries
+      - name: Merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const lock = JSON.parse(fs.readFileSync("resilio.lock.json", "utf8"));
+            for (const f of fs.readdirSync("entries")) {
+              const e = JSON.parse(fs.readFileSync(`entries/${f}`, "utf8"));
+              const cur = lock.artifacts[e.platform] ?? {};
+              lock.artifacts[e.platform] = { ...cur, url: e.url, version: e.version, sha256: e.sha256, bytes: e.bytes, retrieved_at: e.retrieved_at };
+            }
+            // Windows reports a four-part ProductVersion; compare the release part only.
+            const short = (v) => String(v).split(".").slice(0, 3).join(".");
+            const versions = [...new Set(Object.values(lock.artifacts).map(a => a.version).filter(Boolean).map(short))];
+            lock.version = versions.length === 1 ? versions[0] : versions.join(" / ");
+            fs.writeFileSync("resilio.lock.proposed.json", JSON.stringify(lock, null, 2) + "\n");
+            console.log(fs.readFileSync("resilio.lock.proposed.json", "utf8"));
+          '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: resilio.lock.proposed
+          path: resilio.lock.proposed.json

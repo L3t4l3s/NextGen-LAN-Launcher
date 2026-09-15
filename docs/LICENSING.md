@@ -9,8 +9,11 @@
   but **not** with the GPL when linked statically. Choosing GPL would force extraction through
   an external `unrar` process.
 * Resilio Sync is proprietary and is **never** committed to this repository. Release builds
-  download the official binary from Resilio and bundle it as a sidecar; before a public
-  release, review Resilio's EULA regarding redistribution or switch to first-run download
+  download the official binary from Resilio and bundle it as a sidecar, pinned by version and
+  SHA-256 in `resilio.lock.json`: run the "Resilio lock" workflow, copy its proposed file over
+  `resilio.lock.json`, commit. `tools/fetch-resilio.mjs` refuses unpinned downloads, so a
+  release can never silently pick up a different Resilio version. Before a public release,
+  review Resilio's EULA regarding redistribution or switch to first-run download
   (`transport::resilio::official_download_url`), which the code already supports through
   `locate_binary` fallbacks.
 * Future features: GPL code (e.g. DC++ clients for LAN-Share, Poeschl/LAN-Info-Page) can only
