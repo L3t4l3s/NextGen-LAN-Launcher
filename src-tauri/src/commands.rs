@@ -504,6 +504,37 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
     if let Some(t) = &transport {
         let health = t.health().await;
         problems.extend(diagnostics::check_transport(&health));
+        // The bundled (or downloaded) engine runs in place and no installer
+        // added firewall rules for it; a system Resilio or ETI's btsync.exe
+        // brought their own rules and are left alone.
+        if health.kind == lanlauncher_core::transport::TransportKind::Resilio {
+            let (override_path, resource_dir, data_dir) = (
+                settings.resilio_binary.clone(),
+                state.resource_dir.clone(),
+                state.dirs.data.clone(),
+            );
+            let ours = tauri::async_runtime::spawn_blocking(move || {
+                let found = lanlauncher_core::transport::resilio::locate_binary_detailed(
+                    override_path.as_deref(),
+                    resource_dir.as_deref(),
+                    &data_dir,
+                )
+                .found?;
+                let in_ours = resource_dir
+                    .as_deref()
+                    .is_some_and(|r| found.starts_with(r))
+                    || found.starts_with(&data_dir);
+                in_ours.then_some(found)
+            })
+            .await
+            .ok()
+            .flatten();
+            if let Some(program) = ours {
+                if crate::fixes::firewall_rule_present().await == Some(false) {
+                    problems.push(diagnostics::firewall_missing_problem(&program));
+                }
+            }
+        }
     }
     checks.push("covers".into());
     if let Some(root) = state.default_root_path().await {

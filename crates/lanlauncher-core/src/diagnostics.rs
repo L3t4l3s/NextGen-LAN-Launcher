@@ -191,6 +191,19 @@ pub fn ps_set_private(interface_index: u32) -> String {
     format!("Set-NetConnectionProfile -InterfaceIndex {interface_index} -NetworkCategory Private")
 }
 
+/// Name of the inbound rule `firewall_rules` creates; `netsh … show rule
+/// name=…` with it tells whether the rules exist.
+pub const FIREWALL_RULE_IN: &str = "NextGen LAN Launcher Sync (in)";
+
+/// Problem for a sync engine without Windows firewall rules: other players
+/// cannot connect to this PC, LAN discovery answers may be dropped.
+pub fn firewall_missing_problem(program: &std::path::Path) -> Problem {
+    Problem::new("transport.firewall_missing", Severity::Warning)
+        .param("program", program.display().to_string())
+        .step("transport.firewall_missing.step.fix")
+        .with_fix(FixAction::AddFirewallRules)
+}
+
 /// `netsh` commands that allow the sync engine on every profile, so a later
 /// flip back to "Public" does not silently break transfers again.
 pub fn firewall_rules(program: &Path, listening_port: u16) -> Vec<Vec<String>> {
@@ -201,7 +214,7 @@ pub fn firewall_rules(program: &Path, listening_port: u16) -> Vec<Vec<String>> {
             "firewall",
             "add",
             "rule",
-            "name=NextGen LAN Launcher Sync (in)",
+            &format!("name={FIREWALL_RULE_IN}"),
             "dir=in",
             "action=allow",
             &format!("program={prog}"),
@@ -305,14 +318,17 @@ pub fn check_transport(health: &TransportHealth) -> Vec<Problem> {
             } else if health.peers == 0 {
                 out.push(
                     Problem::new("transport.no_peers", Severity::Warning)
+                        .param("detail", health.detail.clone().unwrap_or_default())
                         .step("transport.no_peers.step.server")
-                        .step("transport.no_peers.step.network"),
+                        .step("transport.no_peers.step.network")
+                        .step("transport.no_peers.step.webui"),
                 );
             } else if health.server_found == Some(false) {
                 // Other players are connected, but nobody serves the catalog
                 // share, so the sync server itself is missing.
                 out.push(
                     Problem::new("transport.no_server", Severity::Warning)
+                        .param("detail", health.detail.clone().unwrap_or_default())
                         .step("transport.no_server.step.server")
                         .step("transport.no_server.step.wait"),
                 );
@@ -468,6 +484,37 @@ mod tests {
         assert_eq!(codes(&health(0, Some(false))), vec!["transport.no_peers"]);
         assert!(codes(&health(2, None)).is_empty());
         assert!(codes(&health(2, Some(true))).is_empty());
+    }
+
+    #[test]
+    fn transport_problems_carry_the_engine_detail() {
+        let health = crate::transport::TransportHealth {
+            kind: crate::transport::TransportKind::Resilio,
+            running: true,
+            api_reachable: true,
+            version: Some("2.8.1".into()),
+            peers: 0,
+            catalog_peers: 0,
+            server_found: Some(false),
+            lan_mode: true,
+            detail: Some("E:\\LAN\\eti_launcher: 0 peers, Indexing".into()),
+        };
+        let problems = check_transport(&health);
+        let p = problems
+            .iter()
+            .find(|p| p.code == "transport.no_peers")
+            .expect("no_peers");
+        assert_eq!(
+            p.params.get("detail").map(String::as_str),
+            Some("E:\\LAN\\eti_launcher: 0 peers, Indexing")
+        );
+        let fw = firewall_missing_problem(Path::new(r"C:\App\Resilio Sync.exe"));
+        assert_eq!(fw.code, "transport.firewall_missing");
+        assert!(matches!(fw.fix, Some(FixAction::AddFirewallRules)));
+        assert_eq!(
+            fw.params.get("program").map(String::as_str),
+            Some(r"C:\App\Resilio Sync.exe")
+        );
     }
 
     #[test]

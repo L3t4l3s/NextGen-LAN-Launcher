@@ -93,10 +93,12 @@ pub async fn fetch_event(host: &str) -> EventBundle {
     }
 
     // The optional files are independent; fetch them concurrently.
-    let theme_url = bundle
+    let explicit_theme_url = bundle
         .config
         .as_ref()
-        .and_then(|c| c.extra.get("theme_url").cloned())
+        .and_then(|c| c.extra.get("theme_url").cloned());
+    let theme_url = explicit_theme_url
+        .clone()
         .unwrap_or_else(|| format!("{base}/theme.json"));
     let logo_url = format!("{base}/logo.png");
     let (css, logo, theme) = tokio::join!(
@@ -134,6 +136,12 @@ pub async fn fetch_event(host: &str) -> EventBundle {
     if let Ok(resp) = theme {
         if resp.status().is_success() {
             if let Ok(text) = resp.text().await {
+                // Web servers often answer the probed default theme.json with
+                // an HTML page and status 200; that is no error. A theme_url
+                // the organiser configured must parse, or the error is kept.
+                if explicit_theme_url.is_none() && !looks_like_json(&text) {
+                    return bundle;
+                }
                 match Theme::parse(&text) {
                     Ok(t) => {
                         bundle.fetched.push("theme.json".into());
@@ -145,6 +153,11 @@ pub async fn fetch_event(host: &str) -> EventBundle {
         }
     }
     bundle
+}
+
+/// A body that can be a theme at all (an HTML 404 page is not).
+pub fn looks_like_json(body: &str) -> bool {
+    body.trim_start().starts_with('{')
 }
 
 /// Hardware/identity report the ETI LANPage expects.
@@ -262,6 +275,12 @@ impl StatsReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn html_error_pages_are_not_themes() {
+        assert!(!looks_like_json("<!DOCTYPE html><html>404</html>"));
+        assert!(looks_like_json("  {\"version\": 1}"));
+    }
 
     #[test]
     fn latin9_encoding_keeps_umlauts_single_byte() {

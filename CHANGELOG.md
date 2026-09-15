@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Diagnose zeigt den Zustand des Katalog-Ordners laut Sync-Engine (Peers, Status, Fehlercode) und
+  die Adresse der Resilio-Oberfläche; Änderungen landen im Log. Fehlende Windows-Firewall-Regeln
+  für die mitgelieferte Engine werden erkannt und per „Jetzt beheben“ angelegt. Eine LANPage, die
+  unter `theme.json` HTML liefert, erzeugt keinen Fehler mehr.
 - Der Launcher startet ohne Adminrechte. Die Windows-Abfrage erscheint nur noch bei Bedarf: beim
   einmaligen Setup eines Spiels (dabei legt der Launcher die Firewall-Regeln aus dem Startskript
   gleich mit an), bei Startskripten, die in HKLM schreiben, bei Server-Skripten, bei

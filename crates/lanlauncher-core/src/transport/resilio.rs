@@ -554,6 +554,8 @@ pub struct ResilioTransport {
     /// Keys per directory, needed for remove_folder.
     keys: Mutex<HashMap<PathBuf, ShareKey>>,
     lan_only: Mutex<bool>,
+    /// Last health detail written to the log (logged only on change).
+    last_detail: Mutex<Option<String>>,
 }
 
 impl std::fmt::Debug for ResilioTransport {
@@ -584,6 +586,7 @@ impl ResilioTransport {
             client,
             child: Mutex::new(None),
             keys: Mutex::new(HashMap::new()),
+            last_detail: Mutex::new(None),
             lan_only: Mutex::new(lan_only),
         }
     }
@@ -863,12 +866,53 @@ impl Transport for ResilioTransport {
         let version = self.client.version().await.ok();
         // One folder query feeds both counters; an API failure leaves the
         // server state unknown rather than "not found".
-        let summary = self
-            .client
-            .folders()
-            .await
+        let folders = self.client.folders().await;
+        let summary = folders
+            .as_ref()
             .ok()
             .map(|f| super::peer_summary(f.values()));
+        // What the engine reports for the catalog share(s), for the
+        // diagnostics page and the log (only when it changes): peers, state,
+        // error. Sorted so the text is stable between polls.
+        let catalog = match &folders {
+            Ok(f) => {
+                let mut shares: Vec<String> = f
+                    .values()
+                    .filter(|s| super::is_catalog_share(&s.dir))
+                    .map(|s| {
+                        format!(
+                            "{}: {} peers, {:?}{}",
+                            s.dir.display(),
+                            s.peers,
+                            s.state,
+                            s.error
+                                .as_deref()
+                                .map(|e| format!(", {e}"))
+                                .unwrap_or_default()
+                        )
+                    })
+                    .collect();
+                shares.sort();
+                if shares.is_empty() {
+                    "catalog share not listed by the engine".to_string()
+                } else {
+                    shares.join(" | ")
+                }
+            }
+            Err(e) => format!("folder list unavailable: {e}"),
+        };
+        let detail = format!(
+            "{catalog}; web UI http://127.0.0.1:{}/gui/ (login {}, password in {})",
+            self.config.api_port,
+            self.config.login,
+            self.config_path.display()
+        );
+        if let Ok(mut last) = self.last_detail.lock() {
+            if last.as_deref() != Some(detail.as_str()) {
+                log::info!("sync engine: {detail}");
+                *last = Some(detail.clone());
+            }
+        }
         TransportHealth {
             kind: TransportKind::Resilio,
             running,
@@ -878,7 +922,7 @@ impl Transport for ResilioTransport {
             catalog_peers: summary.and_then(|s| s.catalog).unwrap_or(0),
             server_found: summary.and_then(|s| s.catalog).map(|n| n > 0),
             lan_mode: *self.lan_only.lock().unwrap_or_else(|e| e.into_inner()),
-            detail: None,
+            detail: Some(detail),
         }
     }
 

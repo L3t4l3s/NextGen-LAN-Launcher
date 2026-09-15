@@ -98,6 +98,9 @@ Tags `v*` are built by `release.yml` instead.
 - **Runtime package installer:** Settings offers ETI's `eti_launcher/bin/preqsetup.exe` (about
   3.3 GB, .NET 4.8, VC++, DirectX 11, PhysX) behind a confirmation like the ETI client; whether
   the installer needs arguments is unknown and untested on hardware.
+- **Firewall rule check:** diagnostics ask `Get-NetFirewallRule` for the launcher's own rule and
+  offer the fix only for the bundled or downloaded engine; the PowerShell output format and the
+  behaviour with a stopped firewall service are untested on hardware.
 - **On-demand elevation:** the manifest is `asInvoker`; setup scripts, firewall rules, HKLM
   scripts and repairs run through PowerShell `Start-Process -Verb RunAs`. The UAC flow, the exit
   code hand-over and scripts that need admin in places the detection does not see are untested

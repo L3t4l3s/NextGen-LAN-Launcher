@@ -25,8 +25,14 @@ pub fn running_elevated() -> Option<bool> {
     }
     static CACHE: OnceLock<bool> = OnceLock::new();
     Some(*CACHE.get_or_init(|| {
-        std::process::Command::new("net")
-            .arg("session")
+        let mut cmd = std::process::Command::new("net");
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // CREATE_NO_WINDOW: no console flash from a GUI process.
+            cmd.creation_flags(0x0800_0000);
+        }
+        cmd.arg("session")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

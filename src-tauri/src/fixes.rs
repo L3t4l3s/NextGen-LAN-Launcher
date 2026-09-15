@@ -4,6 +4,8 @@
 use crate::state::AppState;
 use lanlauncher_core::diagnostics;
 use lanlauncher_core::problem::FixAction;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -43,7 +45,7 @@ pub(crate) async fn run_admin_lines(
     };
     let mut cmd = tokio::process::Command::new(&plan.program);
     apply_args(&mut cmd, &plan);
-    let out = cmd
+    let out = hidden(&mut cmd)
         .current_dir(&plan.cwd)
         .output()
         .await
@@ -123,6 +125,22 @@ pub(crate) async fn ensure_firewall_rules(
     }
 }
 
+/// Windows: does the inbound firewall rule for the sync engine exist?
+/// `Get-NetFirewallRule` needs no elevation and its output is a plain count,
+/// unlike netsh whose messages are localised. `None` off Windows, when
+/// PowerShell fails or the firewall service is not running.
+pub async fn firewall_rule_present() -> Option<bool> {
+    if !cfg!(target_os = "windows") {
+        return None;
+    }
+    let name = diagnostics::FIREWALL_RULE_IN.replace('\'', "''");
+    let script = format!(
+        "$ErrorActionPreference = 'Stop'; @(Get-NetFirewallRule -DisplayName '{name}' -ErrorAction SilentlyContinue).Count"
+    );
+    let out = powershell(&script).await.ok()?;
+    out.trim().parse::<u32>().ok().map(|n| n > 0)
+}
+
 /// Whether administrative commands must go through `run_admin_lines`.
 fn needs_runas() -> bool {
     lanlauncher_core::launch::elevate::running_elevated() == Some(false)
@@ -151,9 +169,22 @@ fn netsh_line(args: &[String]) -> String {
     line
 }
 
+/// CREATE_NO_WINDOW: helper processes must not flash a console window from
+/// this GUI process.
+#[cfg(target_os = "windows")]
+fn hidden(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
+    cmd.creation_flags(0x0800_0000)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn hidden(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
+    cmd
+}
+
 #[cfg(target_os = "windows")]
 async fn powershell(script: &str) -> Result<String, String> {
-    let out = tokio::process::Command::new("powershell")
+    let mut cmd = tokio::process::Command::new("powershell");
+    let out = hidden(&mut cmd)
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -187,7 +218,8 @@ pub async fn network_profiles() -> Vec<diagnostics::NetworkProfile> {
 
 #[cfg(target_os = "windows")]
 async fn netsh(args: &[String]) -> Result<(), String> {
-    let out = tokio::process::Command::new("netsh")
+    let mut cmd = tokio::process::Command::new("netsh");
+    let out = hidden(&mut cmd)
         .args(args)
         .output()
         .await
