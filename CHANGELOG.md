@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Bibliothekskacheln sind Querformat (7:5) wie ETIs 140×100-Cover; bisher wurden die Bilder im
+  Hochformat stark beschnitten.
+- Beendet sich die Sync-Engine sofort, nennt die Meldung die PID eines bereits laufenden Resilio
+  aus derselben Datei (Resilio startet pro Programmdatei nur einmal) und was zu tun ist.
+- Wizard-Reload und Katalog-Watcher entpacken `assets.eti` nicht mehr doppelt.
 - Die Cover aller Katalogspiele werden mit dem Launcher ausgeliefert (Quelle: öffentliches Repo
   eti-lan/LAN-Launcher) und erscheinen sofort, auch ohne Sync-Server oder `assets.eti`. Cover aus
   `assets.eti` ersetzen sie, sobald der Katalog-Share da ist.

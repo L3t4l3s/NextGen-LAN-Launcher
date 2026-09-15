@@ -198,23 +198,41 @@ pub(crate) fn catalog_signature(root: Option<&std::path::Path>) -> CatalogSig {
 /// install manager. `None` when no readable `game.db` exists (yet). On
 /// success the file signature is recorded so the watcher stays quiet.
 pub(crate) async fn reload_catalog(state: &AppState, extract_covers: bool) -> Option<usize> {
+    // One reload at a time; a caller that queued behind another one still
+    // runs (an explicit refresh must not be swallowed).
+    let _serial = state.catalog_reload.lock().await;
     let library = state.settings.read().await.library.clone();
     let sig = catalog_signature(library.default_root().map(|r| r.path.as_path()));
+    // Claim the signature before the (slow) load so the watcher does not
+    // start a second extraction of the same assets.eti meanwhile; on failure
+    // the previous signature is restored. Only this function writes the
+    // signature while the reload lock is held, so the claim is ours.
+    let previous = state
+        .catalog_sig
+        .lock()
+        .map(|mut s| std::mem::replace(&mut *s, sig))
+        .ok();
     let dirs = state.dirs.clone();
-    // SQLite open + tar extraction are blocking work; keep them off the
+    // SQLite open + archive extraction are blocking work; keep them off the
     // async runtime threads.
     let catalog = tauri::async_runtime::spawn_blocking(move || {
         load_catalog_from_library(&library, &dirs, extract_covers)
     })
     .await
-    .ok()??;
+    .ok()
+    .flatten();
+    let Some(catalog) = catalog else {
+        if let (Some(prev), Ok(mut s)) = (previous, state.catalog_sig.lock()) {
+            if *s == sig {
+                *s = prev;
+            }
+        }
+        return None;
+    };
     let n = catalog.games.len();
     if let Some(m) = state.manager.read().await.as_ref() {
         m.set_catalog(catalog).await;
         m.adopt_existing().await;
-    }
-    if let Ok(mut s) = state.catalog_sig.lock() {
-        *s = sig;
     }
     Some(n)
 }
@@ -470,6 +488,7 @@ pub fn run() {
                 running: RwLock::new(Vec::new()),
                 transport_error: RwLock::new(None),
                 catalog_sig: std::sync::Mutex::new((None, None)),
+                catalog_reload: tokio::sync::Mutex::new(()),
             });
             app.manage(state.clone());
             let handle = app.handle().clone();

@@ -605,14 +605,35 @@ impl ResilioTransport {
             // An engine that quit right away (another instance of the same
             // binary is running, bad config) is reported as such instead of
             // as a timeout.
-            let exited = self
+            // The pid must be read before try_wait: once the exit has been
+            // observed, tokio's Child::id() returns None.
+            let (own_pid, exited) = self
                 .child
                 .lock()
                 .ok()
-                .and_then(|mut c| c.as_mut().and_then(|ch| ch.try_wait().ok().flatten()));
+                .and_then(|mut c| c.as_mut().map(|ch| (ch.id(), ch.try_wait().ok().flatten())))
+                .unwrap_or((None, None));
             if let Some(status) = exited {
+                let binary = self.config.binary.clone();
+                let others =
+                    tokio::task::spawn_blocking(move || foreign_instances(&binary, own_pid))
+                        .await
+                        .unwrap_or_default();
+                let why = if others.is_empty() {
+                    "another instance of the same binary may be running; see the engine log"
+                        .to_string()
+                } else {
+                    format!(
+                        "the same program is already running outside the launcher (pid {}) and Resilio allows one instance per binary: close it (tray icon, Exit) or choose another binary in Settings",
+                        others
+                            .iter()
+                            .map(u32::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
                 return Err(Error::Transport(format!(
-                    "Resilio Sync exited with {status} before its API came up ({}); another instance of the same binary may be running",
+                    "Resilio Sync exited with {status} before its API came up; {why} ({})",
                     self.startup_hint()
                 )));
             }
@@ -636,6 +657,29 @@ impl ResilioTransport {
             self.config.storage_dir.join("sync.log").display()
         )
     }
+}
+
+/// Pids of running processes that run the very same executable, except our
+/// own child. Resilio refuses to start twice from one binary, so these are
+/// the reason when the engine exits right away.
+pub fn foreign_instances(binary: &Path, own_pid: Option<u32>) -> Vec<u32> {
+    // Process tables report the resolved executable; the configured binary
+    // may be a symlink or a non-canonical spelling.
+    let canon =
+        |p: &Path| super::normalise_dir(&std::fs::canonicalize(p).unwrap_or(p.to_path_buf()));
+    let want = canon(binary);
+    let sys = scan_processes_with(
+        sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always),
+    );
+    let mut pids: Vec<u32> = sys
+        .processes()
+        .iter()
+        .filter(|(pid, _)| Some(pid.as_u32()) != own_pid)
+        .filter(|(_, p)| p.exe().is_some_and(|e| canon(e) == want))
+        .map(|(pid, _)| pid.as_u32())
+        .collect();
+    pids.sort_unstable();
+    pids
 }
 
 fn pick_free_port() -> Option<u16> {
@@ -963,14 +1007,17 @@ pub fn is_sync_engine(name: &std::ffi::OsStr) -> bool {
 /// Process table with only what the launcher needs (name, executable,
 /// command line), shared by orphan cleanup, diagnostics and binary discovery.
 pub fn scan_processes() -> sysinfo::System {
-    let mut sys = sysinfo::System::new();
-    sys.refresh_processes_specifics(
-        sysinfo::ProcessesToUpdate::All,
-        true,
+    scan_processes_with(
         sysinfo::ProcessRefreshKind::nothing()
             .with_exe(sysinfo::UpdateKind::Always)
             .with_cmd(sysinfo::UpdateKind::Always),
-    );
+    )
+}
+
+/// Process table refreshed with exactly the fields the caller reads.
+pub fn scan_processes_with(kind: sysinfo::ProcessRefreshKind) -> sysinfo::System {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, kind);
     sys
 }
 
@@ -1142,6 +1189,17 @@ pub fn official_download_url() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn foreign_instances_excludes_our_own_pid() {
+        let exe = std::env::current_exe().unwrap();
+        let me = std::process::id();
+        assert!(!foreign_instances(&exe, Some(me)).contains(&me));
+        assert!(
+            foreign_instances(&exe, None).contains(&me),
+            "the test process itself runs this executable"
+        );
+    }
 
     #[test]
     fn windows_candidates_cover_eti_path_and_other_profiles() {

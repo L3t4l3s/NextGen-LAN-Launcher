@@ -32,6 +32,9 @@ pub struct AppState {
     /// Size/mtime of `game.db` and `assets.eti` at the last successful catalog
     /// load, so the file watcher does not redo a load another path just did.
     pub catalog_sig: std::sync::Mutex<crate::CatalogSig>,
+    /// Serialises catalog reloads: two at once would extract `assets.eti`
+    /// into the same cover cache concurrently.
+    pub catalog_reload: tokio::sync::Mutex<()>,
 }
 
 impl AppState {

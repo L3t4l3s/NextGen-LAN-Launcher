@@ -78,6 +78,10 @@ Tags `v*` are built by `release.yml` instead.
   that matters for LAN transfers; both versions sync with each other. Re-pin with the "Resilio
   lock" workflow (input `version`). The silent installer run on first start
   (`install_bundled_windows`) and launching scripts via `cmd.exe /S /C` are untested.
+- **Engine start diagnostics:** when the sync engine exits before its API answers, the error names
+  other processes running the same executable (Resilio starts once per binary; a user's own
+  Resilio Sync or the ETI launcher's engine blocks ours). Relies on Resilio's single-instance
+  behaviour and on the process table exposing executable paths on Windows; untested there.
 - **Windows network check:** the diagnostics now read `IPv4Connectivity`/`IPv6Connectivity` from
   `Get-NetConnectionProfile`, skip idle adapters and downgrade a public adapter next to a
   private/domain one to a warning. Written against a test system with a domain network plus an
