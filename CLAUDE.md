@@ -73,7 +73,10 @@ WebKitGTK-Entwicklungspakete (siehe unten).
   gebrückt. Neue Log-Zeilen im Core immer mit `log::…` schreiben.
 - **Vite 8:** `minify: "esbuild"` schlägt fehl (esbuild ist nicht mehr enthalten). `minify: true`
   nutzt den eingebauten Minifier. `vite.config.ts` importiert `defineConfig` aus `vitest/config`.
-- **sysinfo** ist auf 0.38 gepinnt, weil 0.39 einen neueren Rust-Compiler verlangt als die CI hat.
+- **Rust-Toolchain** ist per `rust-toolchain.toml` und in den Workflows auf 1.98.1 gepinnt, damit CI
+  und Entwickler dieselben Clippy-Lints sehen (eine neuere Clippy-Version hat die CI schon einmal
+  mit einem hier unsichtbaren Lint gebrochen). Beim Anheben lokal `cargo +<version> clippy` prüfen.
+- **sysinfo** ist auf 0.38 gepinnt, weil 0.39 einen neueren Rust-Compiler verlangt.
 - **rand 0.10:** Der Trait heißt `RngExt`, nicht `Rng`.
 - **Tauri:** `tauri.conf.json` aktiviert das Asset-Protokoll (Cover-Bilder), daher braucht die
   `tauri`-Abhängigkeit das Feature `protocol-asset`. `bundle.resources` ist eine Map

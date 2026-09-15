@@ -182,7 +182,7 @@ impl ScriptProbe {
         }
         probe
             .candidates
-            .sort_by(|a, b| b.confidence.cmp(&a.confidence));
+            .sort_by_key(|a| std::cmp::Reverse(a.confidence));
         probe
     }
 
