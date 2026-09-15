@@ -8,7 +8,6 @@
   const tabs: { id: View; label: string; count?: () => number }[] = [
     { id: "library", label: "nav.library" },
     { id: "downloads", label: "nav.downloads", count: () => app.activeGames.length },
-    { id: "lan", label: "nav.lan" },
     { id: "diagnostics", label: "nav.diagnostics" },
   ];
 
@@ -46,7 +45,6 @@
         {#if tab.count && tab.count() > 0}<span class="count">{tab.count()}</span>{/if}
       </button>
     {/each}
-    <button class="tab disabled" disabled title={t("nav.soon")}>{t("nav.files")} <span class="soon">{t("nav.soon")}</span></button>
   </nav>
 
   <div class="right">
@@ -118,21 +116,12 @@
     background: var(--color-surface-alt);
     box-shadow: inset 0 -3px 0 var(--color-primary);
   }
-  .tab.disabled {
-    opacity: 0.45;
-  }
   .count {
     background: var(--color-primary);
     color: var(--color-primary-text);
     border-radius: 999px;
     font-size: 0.72rem;
     padding: 0 0.5em;
-  }
-  .soon {
-    font-size: 0.68rem;
-    border: 1px solid var(--color-border);
-    border-radius: 999px;
-    padding: 0 0.4em;
   }
   .right {
     display: flex;

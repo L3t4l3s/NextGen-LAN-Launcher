@@ -62,6 +62,8 @@ function g(
         : { origin: "derived_from_script", exe: `${id}.exe`, args: [], runner: "auto", alternatives: [], notes: null, verifiedForRevision: false },
     disabledByEvent: false,
     shareDir: `D:\\LAN\\${id}`,
+    hasKeygen: id === "cod4",
+    hasServerScript: id === "goldsrc" || id === "quake3",
   };
 }
 
@@ -271,6 +273,8 @@ export function createMock() {
       case "uninstall_game":
         sims.delete(id);
         return;
+      case "run_extra":
+        return 4242;
       case "play_game":
         throw new Error("Im Demo-Modus werden keine Spiele gestartet.");
       case "get_launch_plan":

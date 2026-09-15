@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Detailseite: Buttons „Keygen“ und „Server starten“ erscheinen nur, wenn das Paket `keygen.exe`
+  bzw. `server_start.cmd` mitbringt (ETI-Konvention), und starten sie direkt. Der Hinweis auf das
+  Startskript ist weg, die Kommandozeile steht bei spielbereiten Spielen immer unten.
+- Tab „LAN“ und der Platzhalter „Dateien (Bald)“ sind entfernt; LANPage, TeamSpeak, Discord und
+  Datei-Freigabe kommen später als eigene Punkte in die Kopfzeile.
+- Der Katalog erscheint direkt nach dem Start, auch wenn die Sync-Engine noch startet oder
+  scheitert (Ladevorgang parallel, Ereignis an die Oberfläche).
+- Einstellungen: Eine geänderte LANPage-Adresse wird sofort abgefragt und meldet, ob dort eine
+  `launcher.ini` liegt; der Hinweistext erklärt, was daraus geladen wird.
+- Beendet sich die Sync-Engine sofort, nennt die Meldung jedes andere laufende Resilio mit PID und
+  Pfad, auch wenn es aus einer anderen Datei stammt.
 - Resilio Sync 2.8.1.1390 liegt jedem Installer aus der vollen CI und aus Releases bei. Der
   Launcher bevorzugt diese Kopie vor einer auf dem System installierten Resilio-Version und
   startet sie ohne Installation (`/noinstall`); der bisherige Silent-Install-Pfad entfällt. Die

@@ -4,6 +4,7 @@
 import type {
   BootstrapInfo,
   EventBundle,
+  Extra,
   FixAction,
   GameStatus,
   GameView,
@@ -49,6 +50,7 @@ export const api = {
   pause: (gameId: string, paused: boolean) => invoke<void>("pause_game", { gameId, paused }),
   uninstall: (gameId: string) => invoke<void>("uninstall_game", { gameId }),
   play: (gameId: string, alternative?: number) => invoke<number>("play_game", { gameId, alternative: alternative ?? null }),
+  runExtra: (gameId: string, extra: Extra) => invoke<number>("run_extra", { gameId, extra }),
   launchPlan: (gameId: string, alternative?: number) => invoke<LaunchPlan>("get_launch_plan", { gameId, alternative: alternative ?? null }),
   listExecutables: (gameId: string) => invoke<string[]>("list_executables", { gameId }),
   setExeOverride: (gameId: string, exe: string) => invoke<void>("set_exe_override", { gameId, exe }),

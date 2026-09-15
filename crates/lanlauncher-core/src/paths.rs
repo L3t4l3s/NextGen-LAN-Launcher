@@ -64,6 +64,24 @@ pub struct GamePaths {
 }
 
 impl GamePaths {
+    /// Optional ETI script that starts a dedicated server (30 of the official
+    /// packages ship one).
+    pub fn server_script(&self) -> PathBuf {
+        self.share_dir.join("server_start.cmd")
+    }
+
+    /// Key generator some packages ship (`<game>/keygen.exe`, started by
+    /// ETI's setup scripts as `..\keygen.exe` from `local/`; a copy inside
+    /// `local/` is accepted too).
+    pub fn keygen(&self) -> Option<PathBuf> {
+        [
+            self.share_dir.join("keygen.exe"),
+            self.local_dir.join("keygen.exe"),
+        ]
+        .into_iter()
+        .find(|p| p.is_file())
+    }
+
     pub fn new(library_root: &Path, game_id: &str) -> Self {
         let share_dir = library_root.join(game_id);
         Self {

@@ -6,7 +6,7 @@ import { setLanguage } from "$lib/i18n";
 import { applyTheme, defaultTheme } from "$lib/theme";
 import type { BootstrapInfo, EventBundle, GameStatus, GameView, Settings, TransportHealth, Theme } from "$lib/types";
 
-export type View = "library" | "downloads" | "lan" | "diagnostics" | "settings";
+export type View = "library" | "downloads" | "diagnostics" | "settings";
 
 export interface Toast {
   id: number;
@@ -66,8 +66,8 @@ class AppStore {
       setByteUnits(b.platform);
       this.applyThemeFor(b.settings, b.event);
       this.showWizard = b.needsSetup;
-      await this.reloadGames();
-      this.health = await api.health();
+      // Listeners first: the backend emits catalog-updated as soon as the
+      // startup load finishes, which may be before the first get_games.
       await listen("install-status", (payload) => {
         const list = payload as GameStatus[];
         const next: Record<string, GameStatus> = {};
@@ -84,6 +84,8 @@ class AppStore {
         this.event = payload as EventBundle;
         if (this.settings) this.applyThemeFor(this.settings, this.event);
       });
+      await this.reloadGames();
+      this.health = await api.health();
       this.ready = true;
     } catch (e) {
       this.loadError = String(e);
@@ -104,6 +106,12 @@ class AppStore {
       theme = event.theme;
     }
     applyTheme({ ...theme, legacyCss: settings.theme === null ? (event?.legacy_css ?? null) : null });
+  }
+
+  /** Re-read launcher.ini from the LANPage host (after the address changed). */
+  async refreshEvent() {
+    this.event = await api.refreshEvent();
+    if (this.settings) this.applyThemeFor(this.settings, this.event);
   }
 
   async reloadGames() {

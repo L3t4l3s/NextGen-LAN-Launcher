@@ -70,6 +70,11 @@ pub struct GameView {
     pub manifest: Option<ManifestInfo>,
     pub disabled_by_event: bool,
     pub share_dir: Option<String>,
+    /// `keygen.exe` present in the game folder (ETI packages with a key
+    /// generator); the UI offers a button only then.
+    pub has_keygen: bool,
+    /// `server_start.cmd` present (dedicated server script).
+    pub has_server_script: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -200,7 +205,11 @@ pub async fn get_games(state: State<'_, Arc<AppState>>) -> Cmd<Vec<GameView>> {
                 .as_ref()
                 .map(|c| c.is_game_disabled(&g.id))
                 .unwrap_or(false),
-            share_dir: paths.map(|p| p.share_dir.to_string_lossy().to_string()),
+            share_dir: paths
+                .as_ref()
+                .map(|p| p.share_dir.to_string_lossy().to_string()),
+            has_keygen: paths.as_ref().and_then(|p| p.keygen()).is_some(),
+            has_server_script: paths.as_ref().is_some_and(|p| p.server_script().is_file()),
         });
     }
     Ok(out)
@@ -300,6 +309,40 @@ pub async fn play_game(
     running.retain(|(g, _)| g != &game_id);
     running.insert(0, (game_id, pid));
     Ok(pid)
+}
+
+/// Start a per-game extra (`keygen.exe`, `server_start.cmd`) that an ETI
+/// package ships next to the game. Offered by the UI only when the file
+/// exists; Windows only like the scripts themselves.
+#[tauri::command]
+pub async fn run_extra(
+    state: State<'_, Arc<AppState>>,
+    game_id: String,
+    extra: launch::Extra,
+) -> Cmd<u32> {
+    if state.demo {
+        return Err("err.demo_no_play".into());
+    }
+    let settings = state.settings.read().await.clone();
+    let paths = settings
+        .library
+        .game_paths(&game_id)
+        .ok_or("err.no_library")?;
+    let ctx = LaunchContext {
+        paths: &paths,
+        game_id: &game_id,
+        settings: &settings,
+        manifest: None,
+        receipt: None,
+        alternative: None,
+    };
+    let plan = launch::extra_plan(extra, &ctx).map_err(err)?;
+    log::info!(
+        "starting extra {extra:?} for {game_id}: {} {}",
+        plan.program.display(),
+        plan.raw_command_line.clone().unwrap_or_default()
+    );
+    launch::spawn(&plan).await.map_err(err)
 }
 
 #[tauri::command]

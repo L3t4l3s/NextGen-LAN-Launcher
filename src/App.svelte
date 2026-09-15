@@ -5,7 +5,6 @@
   import Toasts from "$lib/components/Toasts.svelte";
   import LibraryView from "$lib/components/LibraryView.svelte";
   import DownloadsView from "$lib/components/DownloadsView.svelte";
-  import LanView from "$lib/components/LanView.svelte";
   import DiagnosticsView from "$lib/components/DiagnosticsView.svelte";
   import SettingsView from "$lib/components/SettingsView.svelte";
   import SetupWizard from "$lib/components/SetupWizard.svelte";
@@ -32,8 +31,6 @@
         <LibraryView />
       {:else if app.view === "downloads"}
         <DownloadsView />
-      {:else if app.view === "lan"}
-        <LanView />
       {:else if app.view === "diagnostics"}
         <DiagnosticsView />
       {:else}

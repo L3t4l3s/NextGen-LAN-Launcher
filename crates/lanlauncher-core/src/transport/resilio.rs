@@ -621,13 +621,21 @@ impl ResilioTransport {
                 .unwrap_or((None, None));
             if let Some(status) = exited {
                 let binary = self.config.binary.clone();
-                let others =
-                    tokio::task::spawn_blocking(move || foreign_instances(&binary, own_pid))
-                        .await
-                        .unwrap_or_default();
-                let why = if others.is_empty() {
-                    "another instance of the same binary may be running; see the engine log"
-                        .to_string()
+                let scan = tokio::task::spawn_blocking(move || engine_scan(&binary, own_pid))
+                    .await
+                    .unwrap_or_default();
+                let (others, engines) = (scan.same_binary, scan.other_engines);
+                let why = if others.is_empty() && engines.is_empty() {
+                    "no other sync engine is running; see the engine log for the reason".to_string()
+                } else if others.is_empty() {
+                    format!(
+                        "another Resilio is running from a different file ({}) and Resilio may allow only one instance per machine: exit it (tray icon, Exit) and retry, or use folder mode with that instance",
+                        engines
+                            .iter()
+                            .map(|(pid, exe)| format!("pid {pid}: {exe}"))
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    )
                 } else {
                     format!(
                         "the same program is already running outside the launcher (pid {}) and Resilio allows one instance per binary: close it (tray icon, Exit) or choose another binary in Settings",
@@ -665,10 +673,23 @@ impl ResilioTransport {
     }
 }
 
-/// Pids of running processes that run the very same executable, except our
-/// own child. Resilio refuses to start twice from one binary, so these are
-/// the reason when the engine exits right away.
+/// Pids running exactly `binary` (canonicalised), our own child excluded;
+/// see [`engine_scan`].
 pub fn foreign_instances(binary: &Path, own_pid: Option<u32>) -> Vec<u32> {
+    engine_scan(binary, own_pid).same_binary
+}
+
+/// One pass over the process table for the engine-start diagnosis.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct EngineScan {
+    /// Pids running exactly `binary` (canonicalised), our child excluded.
+    pub same_binary: Vec<u32>,
+    /// Other sync engines by process name (any path), our child excluded,
+    /// as `(pid, executable or name)`.
+    pub other_engines: Vec<(u32, String)>,
+}
+
+pub fn engine_scan(binary: &Path, own_pid: Option<u32>) -> EngineScan {
     // Process tables report the resolved executable; the configured binary
     // may be a symlink or a non-canonical spelling.
     let canon =
@@ -677,15 +698,25 @@ pub fn foreign_instances(binary: &Path, own_pid: Option<u32>) -> Vec<u32> {
     let sys = scan_processes_with(
         sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always),
     );
-    let mut pids: Vec<u32> = sys
-        .processes()
-        .iter()
-        .filter(|(pid, _)| Some(pid.as_u32()) != own_pid)
-        .filter(|(_, p)| p.exe().is_some_and(|e| canon(e) == want))
-        .map(|(pid, _)| pid.as_u32())
-        .collect();
-    pids.sort_unstable();
-    pids
+    let mut scan = EngineScan::default();
+    for (pid, p) in sys.processes() {
+        if Some(pid.as_u32()) == own_pid {
+            continue;
+        }
+        if p.exe().is_some_and(|e| canon(e) == want) {
+            scan.same_binary.push(pid.as_u32());
+        } else if is_sync_engine(p.name()) {
+            scan.other_engines.push((
+                pid.as_u32(),
+                p.exe()
+                    .map(|e| e.display().to_string())
+                    .unwrap_or_else(|| p.name().to_string_lossy().to_string()),
+            ));
+        }
+    }
+    scan.same_binary.sort_unstable();
+    scan.other_engines.sort_unstable();
+    scan
 }
 
 fn pick_free_port() -> Option<u16> {

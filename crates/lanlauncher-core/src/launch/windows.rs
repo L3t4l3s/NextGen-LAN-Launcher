@@ -76,16 +76,44 @@ pub fn setup_plan(
     lang: &str,
     player: &str,
 ) -> Option<LaunchPlan> {
-    if !paths.setup_script.is_file() {
+    script_plan(&paths.setup_script, paths, game_id, lang, player)
+}
+
+/// Plan for the optional `server_start.cmd` (dedicated server). The official
+/// scripts only rely on `%~dp0`, but they get the same four arguments as
+/// `game_start.cmd` so a script that reads them keeps working.
+pub fn server_plan(
+    paths: &crate::paths::GamePaths,
+    game_id: &str,
+    lang: &str,
+    player: &str,
+) -> Option<LaunchPlan> {
+    script_plan(&paths.server_script(), paths, game_id, lang, player)
+}
+
+/// `cmd.exe /S /C "<script> "<game_path>" <id> <lang> "<player>""` for any
+/// ETI batch script in the game folder; `None` when the script is absent.
+fn script_plan(
+    script: &Path,
+    paths: &crate::paths::GamePaths,
+    game_id: &str,
+    lang: &str,
+    player: &str,
+) -> Option<LaunchPlan> {
+    if !script.is_file() {
         return None;
     }
-    let raw = script_command_line(&paths.setup_script, &paths.share_dir, game_id, lang, player);
+    let raw = script_command_line(script, &paths.share_dir, game_id, lang, player);
+    let runner = script
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "script".into());
     Some(LaunchPlan {
         program: PathBuf::from(comspec()),
         args: vec!["/S".into(), "/C".into(), raw.clone()],
         cwd: paths.share_dir.clone(),
         env: BTreeMap::new(),
-        runner: "game_setup.cmd".into(),
+        runner,
         needs_elevation: true,
         raw_command_line: Some(format!("/S /C {raw}")),
     })

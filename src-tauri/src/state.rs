@@ -35,6 +35,10 @@ pub struct AppState {
     /// Serialises catalog reloads: two at once would extract `assets.eti`
     /// into the same cover cache concurrently.
     pub catalog_reload: tokio::sync::Mutex<()>,
+    /// Catalog loaded at start before the install manager exists (the sync
+    /// engine may take its whole API timeout to come up); `catalog()` falls
+    /// back to it so the library shows up right away.
+    pub startup_catalog: RwLock<Option<Catalog>>,
 }
 
 impl AppState {
@@ -71,7 +75,12 @@ impl AppState {
     pub async fn catalog(&self) -> Catalog {
         match self.manager.read().await.as_ref() {
             Some(m) => m.catalog().await,
-            None => Catalog::default(),
+            None => self
+                .startup_catalog
+                .read()
+                .await
+                .clone()
+                .unwrap_or_default(),
         }
     }
 }

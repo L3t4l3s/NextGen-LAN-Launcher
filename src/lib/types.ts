@@ -77,7 +77,11 @@ export interface GameView {
   manifest: ManifestInfo | null;
   disabledByEvent: boolean;
   shareDir: string | null;
+  hasKeygen: boolean;
+  hasServerScript: boolean;
 }
+
+export type Extra = "keygen" | "server";
 
 export interface LibraryRoot {
   path: string;

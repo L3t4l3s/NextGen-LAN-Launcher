@@ -51,6 +51,52 @@ pub struct LaunchContext<'a> {
     pub alternative: Option<usize>,
 }
 
+/// Optional per-game tools ETI packages may ship next to the game.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Extra {
+    /// `keygen.exe` in the game folder.
+    Keygen,
+    /// `server_start.cmd`, a dedicated server.
+    Server,
+}
+
+/// Plan for a per-game extra. Both are Windows programs; on other platforms
+/// the UI does not offer them and this returns an error code.
+pub fn extra_plan(extra: Extra, ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
+    if !cfg!(target_os = "windows") {
+        return Err(Error::Code("err.windows_only".into()));
+    }
+    match extra {
+        Extra::Keygen => {
+            let exe = ctx
+                .paths
+                .keygen()
+                .ok_or_else(|| Error::Code("err.extra_missing".into()))?;
+            let cwd = exe
+                .parent()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| ctx.paths.share_dir.clone());
+            Ok(LaunchPlan {
+                program: exe,
+                args: Vec::new(),
+                cwd,
+                env: BTreeMap::new(),
+                runner: "keygen.exe".into(),
+                needs_elevation: false,
+                raw_command_line: None,
+            })
+        }
+        Extra::Server => windows::server_plan(
+            ctx.paths,
+            ctx.game_id,
+            &ctx.settings.game_language,
+            &ctx.settings.safe_player_name(),
+        )
+        .ok_or_else(|| Error::Code("err.extra_missing".into())),
+    }
+}
+
 /// Build the launch plan for the current platform.
 pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
     if cfg!(target_os = "windows") {

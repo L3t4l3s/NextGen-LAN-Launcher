@@ -82,9 +82,14 @@ Tags `v*` are built by `release.yml` instead.
   folder instead of copying itself to `%APPDATA%`, that a bundled copy runs next to a user's own
   Resilio Sync, and launching scripts via `cmd.exe /S /C`.
 - **Engine start diagnostics:** when the sync engine exits before its API answers, the error names
-  other processes running the same executable (Resilio starts once per binary; a user's own
-  Resilio Sync or the ETI launcher's engine blocks ours). Relies on Resilio's single-instance
-  behaviour and on the process table exposing executable paths on Windows; untested there.
+  other processes running the same executable and, failing that, every other running sync engine
+  with pid and path (a user's own Resilio Sync or the ETI launcher's engine may block ours if
+  Resilio allows one instance per machine). Whether two copies of Resilio 2.8.1 can run side by
+  side, and whether the process table exposes executable paths on Windows, is untested.
+- **Keygen and server start:** the detail page offers `keygen.exe` (started from `local/` like
+  ETI's setup scripts do) and `server_start.cmd` (same four-argument contract as
+  `game_start.cmd`) when the package ships them. Both run through `cmd.exe`/Windows and are
+  untested on hardware.
 - **Windows network check:** the diagnostics now read `IPv4Connectivity`/`IPv6Connectivity` from
   `Get-NetConnectionProfile`, skip idle adapters and downgrade a public adapter next to a
   private/domain one to a warning. Written against a test system with a domain network plus an

@@ -477,6 +477,7 @@ pub fn run() {
                 transport_error: RwLock::new(None),
                 catalog_sig: std::sync::Mutex::new((None, None)),
                 catalog_reload: tokio::sync::Mutex::new(()),
+                startup_catalog: RwLock::new(None),
             });
             app.manage(state.clone());
             let handle = app.handle().clone();
@@ -494,6 +495,7 @@ pub fn run() {
             commands::pause_game,
             commands::uninstall_game,
             commands::play_game,
+            commands::run_extra,
             commands::get_launch_plan,
             commands::list_executables,
             commands::set_exe_override,
@@ -516,26 +518,46 @@ pub fn run() {
 
 async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
     let library = state.library.clone();
+    // The catalog is loaded while the sync engine starts (which may take up
+    // to its API timeout), so the library appears as early as possible.
+    let catalog_task = {
+        let st = state.clone();
+        let library = library.clone();
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let st2 = st.clone();
+            let catalog = tauri::async_runtime::spawn_blocking(move || {
+                if st2.demo {
+                    return demo_catalog();
+                }
+                let lib = library.read().map(|l| l.clone()).unwrap_or_default();
+                // Signature before the load: a game.db swapped in while the
+                // load runs must show up as changed to the watcher.
+                let sig = catalog_signature(lib.default_root().map(|r| r.path.as_path()));
+                let loaded = load_catalog_from_library(&lib, &st2.dirs, true);
+                if loaded.is_some() {
+                    if let Ok(mut s) = st2.catalog_sig.lock() {
+                        *s = sig;
+                    }
+                }
+                loaded.unwrap_or_default()
+            })
+            .await
+            .unwrap_or_default();
+            // Visible before the manager exists: `AppState::catalog()` falls
+            // back to this copy, and the UI is told to re-read the games.
+            *st.startup_catalog.write().await = Some(catalog.clone());
+            log::info!("catalog ready at start: {} games", catalog.games.len());
+            let _ = app.emit(CATALOG_EVENT, catalog.games.len());
+            catalog
+        })
+    };
     let (transport, error) = build_transport(&state).await;
     *state.transport_error.write().await = error;
     *state.transport.write().await = Some(transport.clone());
     register_catalog_share(&state).await;
 
-    let catalog = if state.demo {
-        demo_catalog()
-    } else {
-        let lib = library.read().map(|l| l.clone()).unwrap_or_default();
-        // Signature before the load: a game.db swapped in while the load
-        // runs must show up as changed to the watcher.
-        let sig = catalog_signature(lib.default_root().map(|r| r.path.as_path()));
-        let loaded = load_catalog_from_library(&lib, &state.dirs, true);
-        if loaded.is_some() {
-            if let Ok(mut s) = state.catalog_sig.lock() {
-                *s = sig;
-            }
-        }
-        loaded.unwrap_or_default()
-    };
+    let catalog = catalog_task.await.unwrap_or_default();
     let lan_only = state.settings.read().await.lan_mode;
     let manager = build_manager(
         &state,
@@ -546,6 +568,8 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
     );
     manager.adopt_existing().await;
     *state.manager.write().await = Some(manager.clone());
+    // Statuses exist only now; the UI re-reads the games once more.
+    let _ = app.emit(CATALOG_EVENT, 0usize);
 
     // Keep the shared library in sync with settings changes.
     let lib_sync = library.clone();

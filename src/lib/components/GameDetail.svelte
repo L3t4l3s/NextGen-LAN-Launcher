@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { GameView, LaunchPlan } from "$lib/types";
+  import type { Extra, GameView, LaunchPlan } from "$lib/types";
   import { app } from "$lib/stores/app.svelte";
   import { api, confirmDialog, copyText, coverSrc } from "$lib/api";
   import { t, userText } from "$lib/i18n";
@@ -94,13 +94,37 @@
     await app.reloadGames();
   }
 
-  async function showPlan() {
-    try {
-      plan = await api.launchPlan(game.id, alternative ?? undefined);
-    } catch (e) {
-      app.toast("error", userText(e));
+  // The command line is shown as soon as the game is playable; no button
+  // needed. A plan that cannot be built (missing script) just stays empty.
+  const gameId = $derived(game.id);
+  let planRequest = 0;
+  $effect(() => {
+    const id = gameId;
+    const alt = alternative;
+    const token = ++planRequest;
+    if (!playable) {
+      plan = null;
+      return;
     }
+    // Only the newest request may set the plan; a slow answer for a game
+    // the user has already left is dropped.
+    api
+      .launchPlan(id, alt ?? undefined)
+      .then((p) => {
+        if (token === planRequest) plan = p;
+      })
+      .catch(() => {
+        if (token === planRequest) plan = null;
+      });
+  });
+
+  async function runExtra(extra: Extra) {
+    await run(extra, async () => {
+      const pid = await api.runExtra(game.id, extra);
+      app.toast("success", t("action.extra_started", { what: t(`action.${extra}`), pid }));
+    });
   }
+
 
   async function copyKey() {
     if (!shareKey) return;
@@ -170,6 +194,13 @@
         <button onclick={() => pause(true)} disabled={working || !busy}>{t("action.pause")}</button>
       {/if}
       <button onclick={openFolder} disabled={!game.shareDir}>📁 {t("action.open_folder")}</button>
+      <!-- ETI's keygen.exe and server_start.cmd are Windows programs. -->
+      {#if platform === "windows" && game.hasKeygen}
+        <button onclick={() => runExtra("keygen")} disabled={working || !playable || app.bootstrap?.demo}>🔑 {t("action.keygen")}</button>
+      {/if}
+      {#if platform === "windows" && game.hasServerScript}
+        <button onclick={() => runExtra("server")} disabled={working || !playable || app.bootstrap?.demo}>🖥 {t("action.server")}</button>
+      {/if}
       <button class="danger" onclick={uninstall} disabled={working || !status || status.phase === "not_installed"}>{t("action.uninstall")}</button>
     </div>
 
@@ -195,9 +226,7 @@
     {/if}
 
     <section class="launch-info">
-      {#if platform === "windows"}
-        <p class="hint">{t("detail.windows_script")}</p>
-      {:else if game.manifest}
+      {#if platform !== "windows" && game.manifest}
         <p class="hint">
           <strong>{t("detail.starts_with")}:</strong> {game.manifest.exe} {game.manifest.args.join(" ")}
           <br /><span>{t(`detail.manifest.${game.manifest.origin}`)}</span>
@@ -213,17 +242,17 @@
             {/each}
           </select>
         {/if}
-      {:else}
+      {:else if platform !== "windows"}
         <p class="hint">{t("detail.manifest.none", { platform })}</p>
       {/if}
-      {#if playable}
+      {#if playable && platform !== "windows"}
         <div class="row">
-          <button class="ghost" onclick={showPlan}>{t("detail.plan_title")}</button>
-          {#if platform !== "windows"}<button class="ghost" onclick={openExeChooser}>{t("action.choose_exe")}</button>{/if}
+          <button class="ghost" onclick={openExeChooser}>{t("action.choose_exe")}</button>
         </div>
-        {#if plan}
-          <pre class="plan">{plan.runner}\n{plan.program} {plan.args.join(" ")}\ncwd: {plan.cwd}</pre>
-        {/if}
+      {/if}
+      {#if plan}
+        <p class="hint small">{t("detail.plan_title")}</p>
+        <pre class="plan">{plan.runner}\n{plan.program} {plan.args.join(" ")}\ncwd: {plan.cwd}</pre>
       {/if}
     </section>
 
