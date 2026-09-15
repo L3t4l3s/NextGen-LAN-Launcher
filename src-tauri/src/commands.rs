@@ -397,6 +397,7 @@ pub async fn save_settings(
     }
     new.normalise_catalog_key();
     new.normalise_resilio_binary();
+    new.normalise_resilio_api_key();
     if let Some(k) = &new.catalog_key {
         if lanlauncher_core::catalog::ShareKey::parse(k).is_none() {
             return Err("err.invalid_catalog_key".into());
@@ -412,7 +413,9 @@ pub async fn save_settings(
     let old_root = current.library.default_root().map(|r| r.path.clone());
     let new_root = new.library.default_root().map(|r| r.path.clone());
     let catalog_changed = current.catalog_key != new.catalog_key || old_root != new_root;
-    let binary_changed = current.resilio_binary != new.resilio_binary;
+    // Binary and API key both go into the engine config: restart on change.
+    let binary_changed = current.resilio_binary != new.resilio_binary
+        || current.resilio_api_key != new.resilio_api_key;
     *current = new.clone();
     drop(current);
     if binary_changed && new.transport == TransportMode::Managed && !state.demo {

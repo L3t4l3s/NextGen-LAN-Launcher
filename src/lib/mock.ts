@@ -97,6 +97,7 @@ export function createMock() {
     syncPort: 0,
     catalogKey: null,
     resilioBinary: null,
+    resilioApiKey: null,
   };
   // pre-seeded states for a lively screenshot
   // A playable game with a leftover setup warning, as seen with adopted ETI installs.

@@ -33,11 +33,34 @@ pub const DEFAULT_LAN_PORT: u16 = 8889;
 /// engine (`pid_file`) and read by orphan cleanup.
 pub const PID_FILE: &str = "rslsync.pid";
 
-/// Resilio API key the ETI LAN Launcher ships in its `config.json` to every
-/// client (`%ProgramFiles%\eti\LAN Launcher\sync\config.json`). It enables
-/// the documented `/api` surface; the engine config mirrors ETI's file, which
-/// is known to start Resilio 2.8.1 on the same machines.
-pub const ETI_API_KEY: &str = "REDACTED-RESILIO-API-KEY";
+static API_KEY_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#""api_key"\s*:\s*"([A-Za-z0-9]{16,})""#).expect("valid regex")
+});
+
+/// `api_key` from a Resilio config file, e.g. the ETI client's
+/// `sync/config.json` (which has `//` comments, hence no strict JSON parse).
+/// Comment lines are skipped so a commented-out old key never wins.
+pub fn parse_api_key(config_text: &str) -> Option<String> {
+    config_text
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .find_map(|l| API_KEY_RE.captures(l).map(|c| c[1].to_string()))
+}
+
+/// The API key of an installed ETI LAN Launcher on this PC
+/// (`<Program Files>\eti\LAN Launcher\sync\config.json`), so a player who
+/// already has ETI's client need not type it. Returns the key and the file.
+pub fn eti_client_api_key(program_files: &[PathBuf]) -> Option<(String, PathBuf)> {
+    program_files.iter().find_map(|pf| {
+        let file = pf
+            .join("eti")
+            .join("LAN Launcher")
+            .join("sync")
+            .join("config.json");
+        let text = std::fs::read_to_string(&file).ok()?;
+        parse_api_key(&text).map(|k| (k, file))
+    })
+}
 /// Resilio process name per platform (used for orphan cleanup).
 pub fn process_names() -> &'static [&'static str] {
     if cfg!(target_os = "windows") {
@@ -83,7 +106,7 @@ impl ResilioConfig {
             listening_port: 0,
             login: "launcher".into(),
             password,
-            api_key: Some(ETI_API_KEY.into()),
+            api_key: None,
             lan_only: true,
             upload_limit_kbs: 0,
         }
@@ -971,13 +994,19 @@ pub struct WinEnv {
 
 impl WinEnv {
     /// Collect the search environment from the running process.
+    /// Only the Program Files folders, without the registry and profile
+    /// probing `from_process` does; cheap enough for the async threads.
+    pub fn program_files_from_env() -> Vec<PathBuf> {
+        ["ProgramFiles", "ProgramFiles(x86)"]
+            .iter()
+            .filter_map(|var| std::env::var_os(var).filter(|v| !v.is_empty()))
+            .map(PathBuf::from)
+            .collect()
+    }
+
     pub fn from_process() -> Self {
         let mut env = WinEnv::default();
-        for var in ["ProgramFiles", "ProgramFiles(x86)"] {
-            if let Some(v) = std::env::var_os(var).filter(|v| !v.is_empty()) {
-                env.program_files.push(PathBuf::from(v));
-            }
-        }
+        env.program_files = Self::program_files_from_env();
         env.local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
         env.roaming_app_data = std::env::var_os("APPDATA").map(PathBuf::from);
         if let Some(path) = std::env::var_os("PATH") {
@@ -1274,8 +1303,28 @@ mod tests {
     ];
 
     #[test]
+    fn api_key_is_read_from_eti_client_config() {
+        // ETI's file carries `//` comments and tabs; only the key matters.
+        let text = "{\n    // path\n   \"storage_path\" : \"C:\\\\x\",\n\t\"use_gui\": false,\n    \"webui\" : {\n       // \"api_key\" : \"OLDKEYOLDKEYOLDKEYOLDKEYOLDKEY\"\n       \"api_key\" : \"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567\"\n    }\n}";
+        assert_eq!(
+            parse_api_key(text).as_deref(),
+            Some("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
+        );
+        assert!(parse_api_key("{\"webui\": {\"listen\": \"127.0.0.1:1\"}}").is_none());
+        let dir = tempfile::tempdir().unwrap();
+        let sync = dir.path().join("eti").join("LAN Launcher").join("sync");
+        std::fs::create_dir_all(&sync).unwrap();
+        assert!(eti_client_api_key(&[dir.path().to_path_buf()]).is_none());
+        std::fs::write(sync.join("config.json"), text).unwrap();
+        let (key, file) = eti_client_api_key(&[dir.path().to_path_buf()]).unwrap();
+        assert_eq!(key, "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567");
+        assert_eq!(file, sync.join("config.json"));
+    }
+
+    #[test]
     fn config_uses_only_keys_eti_ships() {
-        let cfg = ResilioConfig::new(PathBuf::from("/bin/rslsync"), PathBuf::from("/tmp/st"));
+        let mut cfg = ResilioConfig::new(PathBuf::from("/bin/rslsync"), PathBuf::from("/tmp/st"));
+        cfg.api_key = Some("KEY".into());
         let json = cfg.to_json();
         for key in json.as_object().unwrap().keys() {
             assert!(
@@ -1283,8 +1332,8 @@ mod tests {
                 "unexpected key {key}"
             );
         }
-        // ETI's API key plus our own login: the API stays password-protected.
-        assert_eq!(json["webui"]["api_key"], ETI_API_KEY);
+        // An API key plus our own login: the API stays password-protected.
+        assert_eq!(json["webui"]["api_key"], "KEY");
         assert_eq!(json["webui"]["login"], "launcher");
         // Path separators differ per OS; compare the joined path, not a literal.
         assert_eq!(
@@ -1320,7 +1369,7 @@ mod tests {
             local_app_data: Some(PathBuf::from(r"C:\Users\admin\AppData\Local")),
             roaming_app_data: Some(PathBuf::from(r"C:\Users\admin\AppData\Roaming")),
             path: vec![PathBuf::from(r"C:\Tools"), PathBuf::from(r"C:\Tools")],
-            user_profiles: vec![PathBuf::from(r"C:\Users\schim")],
+            user_profiles: vec![PathBuf::from(r"C:\Users\player")],
             registry_install_dirs: vec![PathBuf::from(r"D:\Apps\Resilio Sync")],
         };
         // Path::join uses the host separator; compare separator-agnostic.
@@ -1336,12 +1385,12 @@ mod tests {
             "C:/Users/admin/AppData/Local/Resilio Sync/Resilio Sync.exe"
         ));
         assert!(has(
-            "C:/Users/schim/AppData/Roaming/Resilio Sync/Resilio Sync.exe"
+            "C:/Users/player/AppData/Roaming/Resilio Sync/Resilio Sync.exe"
         ));
         assert!(has("C:/Program Files/eti/lan launcher/btsync.exe"));
         assert!(has("C:/Tools/rslsync.exe"));
         assert!(has(
-            "C:/Users/schim/AppData/Local/Resilio Sync/Resilio Sync.exe"
+            "C:/Users/player/AppData/Local/Resilio Sync/Resilio Sync.exe"
         ));
         assert!(has("D:/Apps/Resilio Sync/Resilio Sync.exe"));
         // duplicate PATH entry is probed once
@@ -1362,10 +1411,10 @@ mod tests {
 
     #[test]
     fn parses_reg_query_output() {
-        let out = "\r\nHKEY_CURRENT_USER\\Software\\...\\Resilio Sync\r\n    InstallLocation    REG_SZ    C:\\Users\\schim\\AppData\\Local\\Resilio Sync\\\r\n\r\n";
+        let out = "\r\nHKEY_CURRENT_USER\\Software\\...\\Resilio Sync\r\n    InstallLocation    REG_SZ    C:\\Users\\player\\AppData\\Local\\Resilio Sync\\\r\n\r\n";
         assert_eq!(
             parse_reg_query_output(out),
-            Some(PathBuf::from(r"C:\Users\schim\AppData\Local\Resilio Sync"))
+            Some(PathBuf::from(r"C:\Users\player\AppData\Local\Resilio Sync"))
         );
         assert_eq!(
             parse_reg_query_output(

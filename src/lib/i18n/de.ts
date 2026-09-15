@@ -157,6 +157,9 @@ export const de: Messages = {
   "settings.resilio_binary.hint":
     "Nur nötig, wenn Resilio nicht gefunden wird. Der ETI-Launcher bringt es als „btsync.exe“ in C:\\Program Files\\eti\\lan launcher mit; beide Versionen funktionieren.",
   "action.browse": "Durchsuchen…",
+  "settings.resilio_api_key": "Resilio-API-Key",
+  "settings.resilio_api_key.placeholder": "leer = automatisch (ETI-Installation, LANPage)",
+  "settings.resilio_api_key.hint": "Schaltet Resilios dokumentierte API frei. Leer: Der Launcher liest den Key aus einer installierten ETI-Version (sync\\config.json) oder aus launcher.ini der LANPage (Schlüssel resilio_api_key); ohne Key nutzt er die Web-Oberfläche von Resilio.",
   "settings.catalog_key": "Key des Katalog-Ordners (eti_launcher)",
   "settings.catalog_key.hint":
     "Leer lassen, um den eingebauten Key zu verwenden. Nur ändern, wenn die Orga einen eigenen Sync-Server betreibt. Wird beim Speichern für den laufenden Sync-Dienst übernommen.",

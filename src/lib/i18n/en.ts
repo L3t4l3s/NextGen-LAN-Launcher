@@ -156,6 +156,9 @@ export const en: Messages = {
   "settings.resilio_binary.hint":
     "Only needed when Resilio is not found. The ETI launcher ships it as “btsync.exe” in C:\\Program Files\\eti\\lan launcher; both versions work.",
   "action.browse": "Browse…",
+  "settings.resilio_api_key": "Resilio API key",
+  "settings.resilio_api_key.placeholder": "empty = automatic (ETI installation, LANPage)",
+  "settings.resilio_api_key.hint": "Enables Resilio's documented API. Empty: the launcher reads the key from an installed ETI client (sync\\config.json) or from the LANPage's launcher.ini (key resilio_api_key); without a key it uses Resilio's web interface.",
   "settings.catalog_key": "Catalog share key (eti_launcher)",
   "settings.catalog_key.hint":
     "Leave empty to use the built-in key. Change it only if the organisers run their own sync server. Applied to the running sync service on save.",

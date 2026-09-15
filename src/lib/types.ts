@@ -110,6 +110,7 @@ export interface Settings {
   catalogKey: string | null;
   /** Explicit Resilio binary (e.g. the ETI launcher's btsync.exe). */
   resilioBinary: string | null;
+  resilioApiKey: string | null;
 }
 
 export interface Link {

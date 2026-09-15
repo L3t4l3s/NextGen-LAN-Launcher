@@ -56,6 +56,11 @@ pub struct Settings {
     /// Explicit Resilio Sync binary (e.g. the ETI launcher's `btsync.exe`)
     /// when the automatic search does not find one.
     pub resilio_binary: Option<PathBuf>,
+    /// Resilio API key for the documented `/api` surface. Empty = automatic:
+    /// the installed ETI client's `sync/config.json`, then `resilio_api_key`
+    /// from the LANPage's `launcher.ini`; without any key the web-UI
+    /// endpoints with login/password are used.
+    pub resilio_api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,6 +90,7 @@ impl Default for Settings {
             sync_port: 0,
             catalog_key: None,
             resilio_binary: None,
+            resilio_api_key: None,
         }
     }
 }
@@ -131,6 +137,17 @@ impl Settings {
         self.lanpage_host = "launcher.lan".into();
         self.normalise_catalog_key();
         self.normalise_resilio_binary();
+        self.normalise_resilio_api_key();
+    }
+
+    /// Trim the API key and turn an empty value into `None` (= automatic).
+    /// Shared by `migrate` and the settings command so both paths agree.
+    pub fn normalise_resilio_api_key(&mut self) {
+        self.resilio_api_key = self
+            .resilio_api_key
+            .take()
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty());
     }
 
     /// An empty or whitespace-only binary path means "search automatically".
@@ -193,7 +210,7 @@ mod tests {
         let p = dir.path().join("settings.json");
         std::fs::write(
             &p,
-            r#"{"version":0,"language":"","gameLanguage":"xx","lanpageHost":" ","catalogKey":"  "}"#,
+            r#"{"version":0,"language":"","gameLanguage":"xx","lanpageHost":" ","catalogKey":"  ","resilioApiKey":"  "}"#,
         )
         .unwrap();
         let s = Settings::load(&p).unwrap();
@@ -202,6 +219,7 @@ mod tests {
         assert_eq!(s.game_language, "en");
         assert_eq!(s.lanpage_host, "launcher.lan");
         assert_eq!(s.catalog_key, None);
+        assert_eq!(s.resilio_api_key, None);
     }
 
     #[test]

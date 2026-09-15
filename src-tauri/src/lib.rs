@@ -314,6 +314,40 @@ pub(crate) async fn register_catalog_share(state: &AppState) {
     }
 }
 
+/// Resilio API key in order of precedence: the setting, an installed ETI
+/// client's config on this PC, `resilio_api_key` from the LANPage's
+/// launcher.ini. `None` means the web-UI endpoints are used instead.
+async fn resolve_api_key(state: &AppState, setting: Option<String>) -> Option<String> {
+    if let Some(k) = setting {
+        log::info!("Resilio API key: from settings");
+        return Some(k);
+    }
+    let from_eti = tauri::async_runtime::spawn_blocking(|| {
+        resilio::eti_client_api_key(&resilio::WinEnv::program_files_from_env())
+    })
+    .await
+    .ok()
+    .flatten();
+    if let Some((k, file)) = from_eti {
+        log::info!("Resilio API key: from ETI client config {}", file.display());
+        return Some(k);
+    }
+    let from_page = state
+        .event
+        .read()
+        .await
+        .config
+        .as_ref()
+        .and_then(|c| c.extra.get("resilio_api_key").cloned())
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty());
+    match &from_page {
+        Some(_) => log::info!("Resilio API key: from launcher.ini"),
+        None => log::info!("Resilio API key: none; using the web-UI endpoints"),
+    }
+    from_page
+}
+
 pub(crate) async fn build_transport(state: &AppState) -> (Arc<dyn Transport>, Option<String>) {
     match state.effective_transport_mode().await {
         TransportMode::Demo => {
@@ -325,14 +359,16 @@ pub(crate) async fn build_transport(state: &AppState) -> (Arc<dyn Transport>, Op
         }
         TransportMode::Folder => (Arc::new(FolderTransport::new()), None),
         TransportMode::Managed => {
-            let (lan_only, port, override_path) = {
+            let (lan_only, port, override_path, key_setting) = {
                 let settings = state.settings.read().await;
                 (
                     settings.lan_mode,
                     settings.sync_port,
                     settings.resilio_binary.clone(),
+                    settings.resilio_api_key.clone(),
                 )
             };
+            let api_key = resolve_api_key(state, key_setting).await;
             // The search may run `reg query`; keep it off the async threads.
             let resource_dir = state.resource_dir.clone();
             let data_dir = state.dirs.data.clone();
@@ -363,6 +399,7 @@ pub(crate) async fn build_transport(state: &AppState) -> (Arc<dyn Transport>, Op
                     let mut cfg = ResilioConfig::new(binary, state.dirs.transport_dir());
                     cfg.lan_only = lan_only;
                     cfg.listening_port = port;
+                    cfg.api_key = api_key;
                     let t = ResilioTransport::new(cfg);
                     match t.start().await {
                         Ok(()) => (Arc::new(t), None),
@@ -552,6 +589,27 @@ pub fn run() {
         .expect("error while running NextGen LAN Launcher");
 }
 
+/// Fetch launcher.ini, launcher.css, logo.png (and theme.json) from the
+/// LANPage host into the shared state and tell the UI.
+async fn refresh_event(state: &AppState, app: &tauri::AppHandle) {
+    if state.demo {
+        return;
+    }
+    let host = state.settings.read().await.lanpage_host.clone();
+    let bundle = lanlauncher_core::lanpage::fetch_event(&host).await;
+    log::info!(
+        "lanpage {host}: fetched [{}]{}",
+        bundle.fetched.join(", "),
+        if bundle.errors.is_empty() {
+            String::new()
+        } else {
+            format!("; errors: {}", bundle.errors.join("; "))
+        }
+    );
+    *state.event.write().await = bundle.clone();
+    let _ = app.emit(EVENT_UPDATED, &bundle);
+}
+
 async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
     let library = state.library.clone();
     // The catalog is loaded while the sync engine starts (which may take up
@@ -588,6 +646,16 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
             catalog
         })
     };
+    // launcher.ini may carry the Resilio API key (`resilio_api_key`), so the
+    // LANPage is asked before the engine starts. The wait is bounded: a slow
+    // or absent page must not hold the engine back, the 5-minute loop
+    // fetches it later.
+    if tokio::time::timeout(Duration::from_secs(5), refresh_event(&state, &app))
+        .await
+        .is_err()
+    {
+        log::info!("lanpage not answered within 5 s; starting the sync engine without it");
+    }
     let (transport, error) = build_transport(&state).await;
     *state.transport_error.write().await = error;
     *state.transport.write().await = Some(transport.clone());
@@ -626,27 +694,14 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
         }
     });
 
-    // Event configuration from the LANPage host.
+    // Event configuration from the LANPage host, refreshed every 5 minutes
+    // (the first fetch happened before the transport start, see above).
     let st = state.clone();
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
         loop {
-            let host = st.settings.read().await.lanpage_host.clone();
-            if !st.demo {
-                let bundle = lanlauncher_core::lanpage::fetch_event(&host).await;
-                log::info!(
-                    "lanpage {host}: fetched [{}]{}",
-                    bundle.fetched.join(", "),
-                    if bundle.errors.is_empty() {
-                        String::new()
-                    } else {
-                        format!("; errors: {}", bundle.errors.join("; "))
-                    }
-                );
-                *st.event.write().await = bundle.clone();
-                let _ = app2.emit(EVENT_UPDATED, &bundle);
-            }
             tokio::time::sleep(Duration::from_secs(300)).await;
+            refresh_event(&st, &app2).await;
         }
     });
 

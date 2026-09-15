@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Der Resilio-API-Key steht nicht mehr im Quellcode. Der Launcher liest ihn aus den Einstellungen,
+  aus einer installierten ETI-Version oder aus `launcher.ini` der LANPage (`resilio_api_key`);
+  ohne Key nutzt er Resilios Web-Oberfläche. Die LANPage wird dafür vor dem Sync-Start abgefragt.
 - LANPage-Theme sichtbar: `launcher.css` färbte nur eine Ebene hinter dem deckenden Fenster;
   jetzt scheint der Hintergrund der LAN durch. Das Logo der LANPage (`logo.png`, wie beim
   ETI-Launcher) erscheint in der Kopfzeile. Das Log nennt, welche Dateien die LANPage lieferte.

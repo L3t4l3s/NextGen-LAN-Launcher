@@ -31,8 +31,11 @@ has been extracted into the cover cache, whose files take precedence per game id
 The ETI client runs `btsync.exe /config <file>` with a `config.json` whose keys are listed in
 `crates/lanlauncher-core/src/transport/resilio.rs` (`ETI_CONFIG_KEYS`). Resilio 2.8.1 exits with
 code 1 when the config contains keys it does not know, so the launcher emits exactly that key set
-with its own values (storage in the app data dir, random ports, LAN-only switches) and ETI's API
-key, which enables the documented `/api` surface without a web login.
+with its own values (storage in the app data dir, random ports, LAN-only switches). A Resilio API
+key (documented `/api` surface) is not part of the repository; the launcher takes it from the
+settings, from an installed ETI client (`<Program Files>\eti\LAN Launcher\sync\config.json`) or
+from a `resilio_api_key` block in `launcher.ini` (a NextGen extension; the ETI client ignores
+unknown blocks). Without a key the web-UI endpoints with login and password are used.
 
 ## Runtime package installer
 

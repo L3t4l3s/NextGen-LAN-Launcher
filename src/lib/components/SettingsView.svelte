@@ -197,6 +197,11 @@
               <p class="hint">{t("settings.resilio_binary.hint")}</p>
             </div>
             <div>
+              <label for="rkey">{t("settings.resilio_api_key")}</label>
+              <input id="rkey" bind:value={draft.resilioApiKey} spellcheck="false" autocomplete="off" placeholder={t("settings.resilio_api_key.placeholder")} />
+              <p class="hint">{t("settings.resilio_api_key.hint")}</p>
+            </div>
+            <div>
               <label for="ckey">{t("settings.catalog_key")}</label>
               <input id="ckey" bind:value={draft.catalogKey} maxlength="40" spellcheck="false" autocomplete="off" placeholder="B…" />
               <p class="hint">{t("settings.catalog_key.hint")}</p>
