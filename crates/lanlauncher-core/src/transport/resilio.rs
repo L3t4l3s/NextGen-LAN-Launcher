@@ -29,6 +29,15 @@ use std::time::Duration;
 use tokio::process::{Child, Command};
 
 pub const DEFAULT_LAN_PORT: u16 = 8889;
+/// Pid file inside the storage dir, named as in ETI's config; written by the
+/// engine (`pid_file`) and read by orphan cleanup.
+pub const PID_FILE: &str = "rslsync.pid";
+
+/// Resilio API key the ETI LAN Launcher ships in its `config.json` to every
+/// client (`%ProgramFiles%\eti\LAN Launcher\sync\config.json`). It enables
+/// the documented `/api` surface; the engine config mirrors ETI's file, which
+/// is known to start Resilio 2.8.1 on the same machines.
+pub const ETI_API_KEY: &str = "REDACTED-RESILIO-API-KEY";
 /// Resilio process name per platform (used for orphan cleanup).
 pub fn process_names() -> &'static [&'static str] {
     if cfg!(target_os = "windows") {
@@ -50,7 +59,6 @@ pub struct ResilioConfig {
     pub password: String,
     /// Optional official API key (enables `/api`).
     pub api_key: Option<String>,
-    pub device_name: String,
     pub lan_only: bool,
     pub upload_limit_kbs: u32,
 }
@@ -75,18 +83,21 @@ impl ResilioConfig {
             listening_port: 0,
             login: "launcher".into(),
             password,
-            api_key: None,
-            device_name: format!(
-                "nll-{}",
-                sysinfo::System::host_name().unwrap_or_else(|| "pc".into())
-            ),
+            api_key: Some(ETI_API_KEY.into()),
             lan_only: true,
             upload_limit_kbs: 0,
         }
     }
 
-    /// Resilio `config.json` contents.
+    /// Resilio `config.json` contents. The key set mirrors the ETI launcher's
+    /// config (proven to start Resilio 2.8.1 with `/config` on the LAN PCs);
+    /// only our own values (storage, ports, LAN-only switches, API access)
+    /// differ. Keys Resilio does not know can make the engine exit with
+    /// code 1 before its API is up, so nothing is added without need.
     pub fn to_json(&self) -> Value {
+        // Login and password protect the control API on 127.0.0.1 from other
+        // local processes; the API key additionally enables the documented
+        // /api surface. All three are keys Resilio knows.
         let mut webui = json!({
             "listen": format!("127.0.0.1:{}", self.api_port),
             "login": self.login,
@@ -95,37 +106,39 @@ impl ResilioConfig {
         if let Some(k) = &self.api_key {
             webui["api_key"] = json!(k);
         }
-        let mut v = json!({
-            "device_name": self.device_name,
+        let internet = !self.lan_only;
+        json!({
             "storage_path": self.storage_dir.to_string_lossy(),
-            "pid_file": self.storage_dir.join("sync.pid").to_string_lossy(),
-            "listening_port": self.listening_port,
-            "use_gui": false,
+            "pid_file": self.storage_dir.join(PID_FILE).to_string_lossy(),
             "check_for_updates": false,
+            "use_gui": false,
+            "listening_port": self.listening_port,
             "agree_to_EULA": "yes",
-            "use_upnp": !self.lan_only,
+            "use_upnp": internet,
             "download_limit": 0,
             "upload_limit": self.upload_limit_kbs,
             "rate_limit_local_peers": false,
+            "enable_warning_no_source": false,
             "lan_encrypt_data": false,
-            "lan_use_tcp": true,
             // 48h: a wrong clock must never silently stall a LAN sync.
             "sync_max_time_diff": 172800,
+            "folder_rescan_interval": 0,
+            "peer_expiration_days": 3,
+            "folder_defaults.use_relay": internet,
+            "folder_defaults.use_tracker": internet,
             "folder_defaults.lan_discovery_mode": 3,
-            "folder_defaults.use_lan_broadcast": true,
-            "folder_defaults.use_tracker": !self.lan_only,
-            "folder_defaults.use_relay": !self.lan_only,
-            "folder_defaults.use_dht": !self.lan_only,
-            "folder_defaults.delete_to_trash": false,
-            "folder_defaults.use_sync_trash": false,
-            "send_statistics": false,
+            "service_folders.use_relay": internet,
+            "service_folders.use_tracker": internet,
             "sync_trash_ttl": 1,
+            "send_statistics": false,
+            "overwrite_changes": true,
+            "prefer_utp2_lan": false,
+            "log_ttl": 1,
+            "log_size": 1,
+            "enable_file_system_notifications": false,
+            "sync_extended_attributes": false,
             "webui": webui,
-        });
-        if self.lan_only {
-            v["disable_tracker"] = json!(true);
-        }
-        v
+        })
     }
 
     pub fn write(&self, path: &Path) -> Result<()> {
@@ -561,7 +574,7 @@ impl ResilioTransport {
     /// This replaces the "Too many workers" failure mode of the old launcher.
     pub fn cleanup_orphans(&self) -> usize {
         let mut killed = 0;
-        let pid_file = self.config.storage_dir.join("sync.pid");
+        let pid_file = self.config.storage_dir.join(PID_FILE);
         let pid_from_file: Option<u32> = std::fs::read_to_string(&pid_file)
             .ok()
             .and_then(|s| s.trim().parse().ok());
@@ -605,9 +618,13 @@ impl ResilioTransport {
     async fn wait_for_api(&self, timeout: Duration) -> Result<()> {
         let start = std::time::Instant::now();
         loop {
-            if self.client.version().await.is_ok() {
-                return Ok(());
-            }
+            // The probe error goes into the timeout message: "connection
+            // refused" means the engine is not up, an HTTP 401 means it is up
+            // but rejects our API key or login.
+            let last_probe = match self.client.version().await {
+                Ok(_) => return Ok(()),
+                Err(e) => e.to_string(),
+            };
             // An engine that quit right away (another instance of the same
             // binary is running, bad config) is reported as such instead of
             // as a timeout.
@@ -646,6 +663,20 @@ impl ResilioTransport {
                             .join(", ")
                     )
                 };
+                // The engine's own words are the best hint; both files are
+                // tiny at this point.
+                for name in ["engine-output.log", "sync.log"] {
+                    let path = self.config.storage_dir.join(name);
+                    if let Ok(text) = std::fs::read_to_string(&path) {
+                        let tail: Vec<&str> = text.lines().rev().take(15).collect();
+                        if !tail.is_empty() {
+                            log::warn!(
+                                "{name} after early exit:\n{}",
+                                tail.into_iter().rev().collect::<Vec<_>>().join("\n")
+                            );
+                        }
+                    }
+                }
                 return Err(Error::Transport(format!(
                     "Resilio Sync exited with {status} before its API came up; {why} ({})",
                     self.startup_hint()
@@ -653,7 +684,7 @@ impl ResilioTransport {
             }
             if start.elapsed() > timeout {
                 return Err(Error::Transport(format!(
-                    "Resilio API did not become reachable within {}s ({})",
+                    "Resilio API did not become reachable within {}s; last probe: {last_probe} ({})",
                     timeout.as_secs(),
                     self.startup_hint()
                 )));
@@ -1207,6 +1238,59 @@ pub fn official_download_url() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Keys of the ETI launcher's config.json (known to start Resilio 2.8.1
+    /// with `/config`); ours must stay a subset plus `webui`.
+    const ETI_CONFIG_KEYS: &[&str] = &[
+        "storage_path",
+        "pid_file",
+        "check_for_updates",
+        "use_gui",
+        "listening_port",
+        "agree_to_EULA",
+        "use_upnp",
+        "download_limit",
+        "upload_limit",
+        "rate_limit_local_peers",
+        "enable_warning_no_source",
+        "lan_encrypt_data",
+        "sync_max_time_diff",
+        "folder_rescan_interval",
+        "peer_expiration_days",
+        "folder_defaults.use_relay",
+        "folder_defaults.use_tracker",
+        "folder_defaults.lan_discovery_mode",
+        "service_folders.use_relay",
+        "service_folders.use_tracker",
+        "sync_trash_ttl",
+        "send_statistics",
+        "overwrite_changes",
+        "prefer_utp2_lan",
+        "log_ttl",
+        "log_size",
+        "enable_file_system_notifications",
+        "sync_extended_attributes",
+        "webui",
+    ];
+
+    #[test]
+    fn config_uses_only_keys_eti_ships() {
+        let cfg = ResilioConfig::new(PathBuf::from("/bin/rslsync"), PathBuf::from("/tmp/st"));
+        let json = cfg.to_json();
+        for key in json.as_object().unwrap().keys() {
+            assert!(
+                ETI_CONFIG_KEYS.contains(&key.as_str()),
+                "unexpected key {key}"
+            );
+        }
+        // ETI's API key plus our own login: the API stays password-protected.
+        assert_eq!(json["webui"]["api_key"], ETI_API_KEY);
+        assert_eq!(json["webui"]["login"], "launcher");
+        assert_eq!(json["pid_file"], format!("/tmp/st/{PID_FILE}"));
+        let mut plain = cfg.clone();
+        plain.api_key = None;
+        assert!(plain.to_json()["webui"].get("api_key").is_none());
+    }
 
     #[test]
     fn foreign_instances_excludes_our_own_pid() {

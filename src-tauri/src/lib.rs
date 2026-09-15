@@ -163,6 +163,41 @@ pub(crate) fn load_catalog_from_library(
     let root = library.default_root()?;
     let db = root.path.join(lanlauncher_core::paths::CATALOG_RELATIVE);
     let catalog = Catalog::load(&db).ok()?;
+    // Both lists exist only in the LAN's catalog; log them so a report from a
+    // test PC shows what the share offers (the UI for tools is not built yet).
+    if !catalog.tools.is_empty() {
+        let tools: Vec<String> = catalog
+            .tools
+            .iter()
+            .map(|t| {
+                format!(
+                    "{} ({}{}{})",
+                    t.name,
+                    t.id,
+                    t.size
+                        .as_deref()
+                        .map(|s| format!(", {s}"))
+                        .unwrap_or_default(),
+                    if t.disabled { ", disabled" } else { "" }
+                )
+            })
+            .collect();
+        log::info!("catalog tools: {}", tools.join(" | "));
+    }
+    let video_dirs = lanlauncher_core::catalog::video_dirs(&root.path);
+    let videos: usize = video_dirs
+        .iter()
+        .filter_map(|d| std::fs::read_dir(d).ok())
+        .map(|rd| rd.flatten().count())
+        .sum();
+    log::info!(
+        "videos: {videos} files under {}",
+        video_dirs
+            .iter()
+            .map(|d| d.display().to_string())
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
     let assets = root.path.join(lanlauncher_core::paths::ASSETS_RELATIVE);
     if extract_covers && assets.is_file() {
         match lanlauncher_core::catalog::extract_covers(&assets, &dirs.covers_dir()) {
@@ -505,7 +540,6 @@ pub fn run() {
             commands::run_diagnostics,
             commands::apply_fix,
             commands::get_transport_health,
-            commands::refresh_event,
             commands::open_path,
             commands::open_url,
             commands::get_share_key,

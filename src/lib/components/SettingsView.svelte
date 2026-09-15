@@ -41,15 +41,9 @@
     if (!draft) return;
     saving = true;
     try {
-      const hostChanged = draft.lanpageHost !== app.settings?.lanpageHost;
       const saved = await app.saveSettings($state.snapshot(draft) as Settings);
       draft = structuredClone(saved);
       app.toast("success", t("settings.saved"));
-      if (hostChanged) {
-        await app.refreshEvent();
-        const fetched = app.event?.fetched?.length ?? 0;
-        app.toast(fetched ? "success" : "info", t(fetched ? "settings.lanpage_host.loaded" : "settings.lanpage_host.not_found", { host: saved.lanpageHost }));
-      }
     } catch (e) {
       app.toast("error", userText(e));
     } finally {
@@ -131,9 +125,7 @@
 
       <section class="card">
         <h2>{t("settings.lanpage")}</h2>
-        <label for="host">{t("settings.lanpage_host")}</label>
-        <input id="host" bind:value={draft.lanpageHost} />
-        <p class="hint">{t("settings.lanpage_host.hint")}</p>
+        <p class="hint">{t("settings.lanpage.hint")}</p>
         <label class="radio"><input type="checkbox" bind:checked={draft.sendStats} /> {t("settings.send_stats")}</label>
       </section>
 

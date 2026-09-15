@@ -81,6 +81,9 @@ Tags `v*` are built by `release.yml` instead.
   Windows hardware: that 2.8.1.1390 honours `/noinstall` and runs in place from the install
   folder instead of copying itself to `%APPDATA%`, that a bundled copy runs next to a user's own
   Resilio Sync, and launching scripts via `cmd.exe /S /C`.
+- **Engine config:** the generated `config.json` mirrors the ETI launcher's file (same keys, own
+  values, ETI's API key for the documented `/api`). The earlier key set made Resilio 2.8.1 exit
+  with code 1 on the test PC; whether the mirrored set starts it there is the next thing to test.
 - **Engine start diagnostics:** when the sync engine exits before its API answers, the error names
   other processes running the same executable and, failing that, every other running sync engine
   with pid and path (a user's own Resilio Sync or the ETI launcher's engine may block ours if

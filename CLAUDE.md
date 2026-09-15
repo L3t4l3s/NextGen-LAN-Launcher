@@ -105,6 +105,10 @@ WebKitGTK-Entwicklungspakete (siehe unten).
   Push-Läufe von `ci.yml` bauen keine Installer; volle Läufe und Releases enthalten Resilio. Das
   Resilio-CDN ist aus der Claude-Sandbox nicht erreichbar, Hashes lassen sich nur auf
   GitHub-Runnern ermitteln.
+- **Resilio-Konfiguration:** `ResilioConfig::to_json` spiegelt die `config.json` des ETI-Launchers
+  (gleiche Schlüssel, eigene Werte; Test `config_uses_only_keys_eti_ships`). Unbekannte Schlüssel
+  lassen Resilio 2.8.1 mit Exit-Code 1 abbrechen, bevor die API antwortet. Neue Schlüssel nur mit
+  Nachweis, dass Resilio sie akzeptiert. `ETI_API_KEY` ist der API-Schlüssel aus ETIs Client-Config.
 - **Katalog-Key:** `BUILTIN_CATALOG_KEY` in `crates/lanlauncher-core/src/catalog.rs` ist der
   öffentliche Read-only-Key von `eti_launcher` aus ETIs `sync_server.tar`
   (`/root/eti-config.conf`, `eti_call`). Er ist für alle ETI-Clients gleich. Override für LANs mit

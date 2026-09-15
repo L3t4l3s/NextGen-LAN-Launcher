@@ -26,6 +26,14 @@ The same covers are published in <https://github.com/eti-lan/LAN-Launcher> (`ass
 launcher bundles that set (`assets/covers/` in this repository) and shows it until `assets.eti`
 has been extracted into the cover cache, whose files take precedence per game id.
 
+## Sync engine configuration
+
+The ETI client runs `btsync.exe /config <file>` with a `config.json` whose keys are listed in
+`crates/lanlauncher-core/src/transport/resilio.rs` (`ETI_CONFIG_KEYS`). Resilio 2.8.1 exits with
+code 1 when the config contains keys it does not know, so the launcher emits exactly that key set
+with its own values (storage in the app data dir, random ports, LAN-only switches) and ETI's API
+key, which enables the documented `/api` surface without a web login.
+
 ## Game share `<root>/<game_id>/`
 
 | File | Meaning |

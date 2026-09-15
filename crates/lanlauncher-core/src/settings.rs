@@ -124,9 +124,10 @@ impl Settings {
         if !matches!(self.game_language.as_str(), "de" | "en" | "fr") {
             self.game_language = "en".into();
         }
-        if self.lanpage_host.trim().is_empty() {
-            self.lanpage_host = "launcher.lan".into();
-        }
+        // Not a setting any more (the ETI client has none either): the
+        // LANPage is expected at its fixed host. Old settings files may still
+        // carry another value.
+        self.lanpage_host = "launcher.lan".into();
         self.normalise_catalog_key();
         self.normalise_resilio_binary();
     }

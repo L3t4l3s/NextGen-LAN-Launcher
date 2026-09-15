@@ -606,17 +606,6 @@ pub async fn get_transport_health(state: State<'_, Arc<AppState>>) -> Cmd<Option
 }
 
 #[tauri::command]
-pub async fn refresh_event(state: State<'_, Arc<AppState>>) -> Cmd<EventBundle> {
-    if state.demo {
-        return Ok(state.event.read().await.clone());
-    }
-    let host = state.settings.read().await.lanpage_host.clone();
-    let bundle = lanlauncher_core::lanpage::fetch_event(&host).await;
-    *state.event.write().await = bundle.clone();
-    Ok(bundle)
-}
-
-#[tauri::command]
 pub async fn open_path(app: tauri::AppHandle, path: String) -> Cmd<()> {
     use tauri_plugin_opener::OpenerExt;
     let p = std::path::Path::new(&path);

@@ -251,7 +251,6 @@
         </div>
       {/if}
       {#if plan}
-        <p class="hint small">{t("detail.plan_title")}</p>
         <pre class="plan">{plan.runner}\n{plan.program} {plan.args.join(" ")}\ncwd: {plan.cwd}</pre>
       {/if}
     </section>

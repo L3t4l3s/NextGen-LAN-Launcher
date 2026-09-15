@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Resilio startete mit Exit-Code 1: Die erzeugte `config.json` enthielt Schlüssel, die Resilio
+  2.8.1 nicht kennt. Sie entspricht jetzt der Konfiguration des ETI-Launchers (gleiche Schlüssel,
+  eigene Werte) und nutzt wie dieser den API-Schlüssel statt eines Web-Logins. Bricht die Engine
+  weiterhin ab, stehen die letzten Zeilen ihrer Logs im Launcher-Log.
+- Videos in der Detailansicht waren durch die Content-Security-Policy blockiert (`media-src`).
+- Die LANPage-Adresse ist keine Einstellung mehr; wie beim ETI-Launcher gilt `launcher.lan`.
+- Detailseite: Beschriftung „Das wird ausgeführt“ entfernt, die Kommandozeile steht für sich.
+- Log nennt beim Katalog-Laden die `tools`-Tabelle (Paket-Installer des ETI-Launchers) und die
+  gefundenen Videos.
 - Detailseite: Buttons „Keygen“ und „Server starten“ erscheinen nur, wenn das Paket `keygen.exe`
   bzw. `server_start.cmd` mitbringt (ETI-Konvention), und starten sie direkt. Der Hinweis auf das
   Startskript ist weg, die Kommandozeile steht bei spielbereiten Spielen immer unten.

@@ -108,12 +108,6 @@ class AppStore {
     applyTheme({ ...theme, legacyCss: settings.theme === null ? (event?.legacy_css ?? null) : null });
   }
 
-  /** Re-read launcher.ini from the LANPage host (after the address changed). */
-  async refreshEvent() {
-    this.event = await api.refreshEvent();
-    if (this.settings) this.applyThemeFor(this.settings, this.event);
-  }
-
   async reloadGames() {
     this.games = await api.games();
     const next: Record<string, GameStatus> = { ...this.statuses };

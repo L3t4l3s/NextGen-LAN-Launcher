@@ -3,7 +3,6 @@
 
 import type {
   BootstrapInfo,
-  EventBundle,
   Extra,
   FixAction,
   GameStatus,
@@ -60,7 +59,6 @@ export const api = {
   diagnostics: () => invoke<Report>("run_diagnostics"),
   applyFix: (fix: FixAction) => invoke<string>("apply_fix", { fix }),
   health: () => invoke<TransportHealth | null>("get_transport_health"),
-  refreshEvent: () => invoke<EventBundle>("refresh_event"),
   openPath: (path: string) => invoke<void>("open_path", { path }),
   openUrl: (url: string) => invoke<void>("open_url", { url }),
   shareKey: (gameId: string) => invoke<string>("get_share_key", { gameId }),

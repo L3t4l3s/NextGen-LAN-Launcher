@@ -307,8 +307,6 @@ export function createMock() {
         return noServer
           ? { kind: "resilio", running: true, api_reachable: true, version: "2.8.1", peers: 1, catalog_peers: 0, server_found: false, lan_mode: true, detail: null }
           : { kind: "demo", running: true, api_reachable: true, version: "demo", peers: 3, catalog_peers: 3, server_found: true, lan_mode: true, detail: "simulated" };
-      case "refresh_event":
-        return bootstrap.event;
       case "open_path":
       case "open_url":
         console.info("open", args);
