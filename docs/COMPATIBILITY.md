@@ -22,6 +22,9 @@ tools(tool_id, db_id, tool_name, tool_key, tool_maintainer, tool_size, tool_read
 
 `assets.eti` next to it holds the covers as `assets/<game_id>.jpg|png`. Like every other `.eti` it
 is a RAR archive; the launcher sniffs the format and also accepts a plain or gzip-compressed tar.
+The same covers are published in <https://github.com/eti-lan/LAN-Launcher> (`assets/`); the
+launcher bundles that set (`assets/covers/` in this repository) and shows it until `assets.eti`
+has been extracted into the cover cache, whose files take precedence per game id.
 
 ## Game share `<root>/<game_id>/`
 

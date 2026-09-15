@@ -15,7 +15,7 @@ use lanlauncher_core::transport::folder::FolderTransport;
 use lanlauncher_core::transport::resilio::{self, ResilioConfig, ResilioTransport};
 use lanlauncher_core::transport::Transport;
 use state::AppState;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{Emitter, Manager};
@@ -131,6 +131,18 @@ pub(crate) fn update_media_scope(
             let _ = scope.allow_directory(&dir, false);
         }
     }
+}
+
+/// A folder shipped in `bundle.resources`. `tauri dev` runs from `src-tauri`
+/// without a bundle, so the repository folder is the fallback.
+fn bundled_dir(resource_dir: Option<&Path>, name: &str, dev_relative: &str) -> Option<PathBuf> {
+    resource_dir
+        .map(|r| r.join(name))
+        .filter(|p| p.is_dir())
+        .or_else(|| {
+            let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(dev_relative);
+            dev.is_dir().then_some(dev)
+        })
 }
 
 pub(crate) fn demo_catalog() -> Catalog {
@@ -423,17 +435,25 @@ pub fn run() {
                 }
                 settings.transport = TransportMode::Demo;
             }
-            let bundled_manifests = resource_dir
-                .as_ref()
-                .map(|r| r.join("manifests"))
-                .filter(|p| p.is_dir())
-                .or_else(|| {
-                    // `tauri dev` runs from src-tauri; fall back to the repository folder.
-                    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../manifests");
-                    dev.is_dir().then_some(dev)
-                });
+            let bundled_manifests =
+                bundled_dir(resource_dir.as_deref(), "manifests", "../manifests");
             let manifests =
                 ManifestStore::new(Some(dirs.data.join("manifests")), bundled_manifests);
+            let bundled_covers = bundled_dir(resource_dir.as_deref(), "covers", "../assets/covers");
+            match &bundled_covers {
+                Some(p) => {
+                    // Cover images are served through the asset protocol,
+                    // whose static scope only covers the app data dirs.
+                    match app.asset_protocol_scope().allow_directory(p, false) {
+                        Ok(()) => log::info!("bundled covers: {}", p.display()),
+                        Err(e) => log::warn!(
+                            "bundled covers at {} cannot be served (asset scope): {e}",
+                            p.display()
+                        ),
+                    }
+                }
+                None => log::warn!("bundled covers not found next to the app"),
+            }
             let library = Arc::new(std::sync::RwLock::new(settings.library.clone()));
             update_media_scope(app.handle(), &[], &settings.library);
             let state = Arc::new(AppState {
@@ -446,6 +466,7 @@ pub fn run() {
                 event: RwLock::new(Default::default()),
                 manifests,
                 resource_dir,
+                bundled_covers,
                 running: RwLock::new(Vec::new()),
                 transport_error: RwLock::new(None),
                 catalog_sig: std::sync::Mutex::new((None, None)),

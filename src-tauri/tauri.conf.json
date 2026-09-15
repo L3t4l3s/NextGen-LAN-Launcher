@@ -46,7 +46,8 @@
     "resources": {
       "resources/resilio/": "resilio/",
       "../manifests/": "manifests/",
-      "../themes/": "themes/"
+      "../themes/": "themes/",
+      "../assets/covers/": "covers/"
     },
     "category": "Game",
     "shortDescription": "Cross-platform LAN party game launcher",

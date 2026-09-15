@@ -30,6 +30,7 @@ Der Fortschrittswert des Sync-Engines ist reine Anzeige (`crates/lanlauncher-cor
 | `src-tauri/` | Tauri-2-Schale: Commands (`commands.rs`), Fix-Aktionen (`fixes.rs`), Dienst-Schleifen (`lib.rs`). |
 | `src/` | Svelte-5-Frontend (Runes). `src/lib/mock.ts` simuliert das Backend im Browser. |
 | `manifests/` | TOML-Startprofile für macOS/Linux, eines pro ETI-Game-ID. |
+| `assets/covers/` | Mitgelieferte Cover (`<id>.jpg`) aus dem öffentlichen Repo eti-lan/LAN-Launcher (Public Domain). Aktualisieren mit `tools/update-covers.sh`, Upstream-Commit steht in `UPSTREAM`. Zur Laufzeit gewinnt der Cover-Cache aus `assets.eti` (`AppState::cover_dirs`). |
 | `themes/`, `tools/dev-lanpage/` | Beispiel-Themes, lokale LANPage-Attrappe. |
 | `.github/workflows/` | `ci.yml` (jeder Push: Core-Tests Linux + Frontend; volle 3-OS-Matrix und Installer nur bei PR, Push auf `main`, manuellem Start oder `[full-ci]` in der Commit-Nachricht; Tags baut `release.yml`), `release.yml` (Installer bei Tag `v*`), `resilio-lock.yml` (Hashes/Version für `resilio.lock.json`, optional für einen festen Build). |
 
@@ -88,7 +89,10 @@ WebKitGTK-Entwicklungspakete (siehe unten).
   unbekannten Schlüssel (auch keine `_comment`).
 - **Tauri:** `tauri.conf.json` aktiviert das Asset-Protokoll (Cover-Bilder), daher braucht die
   `tauri`-Abhängigkeit das Feature `protocol-asset`. `bundle.resources` ist eine Map
-  (`../manifests/` → `manifests/`); ein Glob auf leere Ordner bricht den Build ab.
+  (`../manifests/` → `manifests/`, `../assets/covers/` → `covers/`); ein Glob auf leere Ordner
+  bricht den Build ab. Der Ordner mit den gebündelten Covern wird beim Start per
+  `asset_protocol_scope().allow_directory` freigegeben, die statische Scope umfasst nur die
+  App-Datenordner.
 - **Resilio-Binärdatei** liegt nie im Repo. `release.yml` lädt sie per `tools/fetch-resilio.mjs`
   nach `src-tauri/resources/resilio/`. Das Skript verweigert Downloads ohne SHA-256 in
   `resilio.lock.json`. Pin-Prozess: Workflow „Resilio lock“ manuell starten → Artefakt

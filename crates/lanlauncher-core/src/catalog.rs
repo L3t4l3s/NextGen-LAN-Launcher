@@ -634,12 +634,20 @@ pub fn video_dirs(library_root: &Path) -> Vec<std::path::PathBuf> {
         .collect()
 }
 
-/// Locate a cached cover for a game id.
-pub fn find_cover(covers_dir: &Path, game_id: &str) -> Option<std::path::PathBuf> {
-    ["jpg", "png", "jpeg"]
-        .iter()
-        .map(|ext| covers_dir.join(format!("{game_id}.{ext}")))
-        .find(|p| p.is_file())
+/// Locate a cover in the first directory that has one. The launcher passes
+/// the cover cache (filled from `assets.eti`) first and the covers bundled
+/// with the app second, so the LAN's artwork wins and the bundled set fills
+/// the gaps when no sync server has delivered `assets.eti` yet.
+pub fn find_cover_in(
+    dirs: impl IntoIterator<Item = impl AsRef<Path>>,
+    game_id: &str,
+) -> Option<std::path::PathBuf> {
+    dirs.into_iter().find_map(|dir| {
+        ["jpg", "png", "jpeg"]
+            .iter()
+            .map(|ext| dir.as_ref().join(format!("{game_id}.{ext}")))
+            .find(|p| p.is_file())
+    })
 }
 
 #[cfg(test)]
@@ -741,6 +749,29 @@ mod tests {
     }
 
     #[test]
+    fn find_cover_prefers_the_first_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache");
+        let bundled = dir.path().join("bundled");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::create_dir_all(&bundled).unwrap();
+        std::fs::write(bundled.join("quake3.jpg"), "bundled").unwrap();
+        std::fs::write(bundled.join("cod4.jpg"), "bundled").unwrap();
+        std::fs::write(cache.join("quake3.png"), "from assets.eti").unwrap();
+        let dirs = [&cache, &bundled];
+        assert_eq!(
+            find_cover_in(dirs, "quake3").unwrap(),
+            cache.join("quake3.png")
+        );
+        assert_eq!(
+            find_cover_in(dirs, "cod4").unwrap(),
+            bundled.join("cod4.jpg")
+        );
+        assert!(find_cover_in(dirs, "missing").is_none());
+        assert!(find_cover_in([&cache], "cod4").is_none());
+    }
+
+    #[test]
     fn extracts_covers_from_tar() {
         let dir = tempfile::tempdir().unwrap();
         let tar_path = dir.path().join("assets.eti");
@@ -769,7 +800,7 @@ mod tests {
         std::fs::write(out.join("quake3.jpg"), "old direct").unwrap();
         std::fs::write(out.join("evil.jpg"), "old nested").unwrap();
         assert_eq!(extract_covers(&tar_path, &out).unwrap(), 2);
-        assert!(find_cover(&out, "quake3").is_some());
+        assert!(find_cover_in([&out], "quake3").is_some());
         assert!(out.join("evil.jpg").is_file(), "kept inside the cover dir");
         assert_eq!(std::fs::read(out.join("evil.jpg")).unwrap(), b"abc");
         assert!(std::fs::read(out.join("quake3.jpg"))
@@ -797,7 +828,7 @@ mod tests {
         }
         let out2 = dir.path().join("covers2");
         assert_eq!(extract_covers(&gz_path, &out2).unwrap(), 2);
-        assert!(find_cover(&out2, "quake3").is_some());
+        assert!(find_cover_in([&out2], "quake3").is_some());
 
         // Not an archive at all → error, not silent success.
         let bogus = dir.path().join("bogus.eti");
@@ -816,8 +847,8 @@ mod tests {
         let rar = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/assets_covers.rar");
         // assets/quake3.jpg, assets/nested/amongus.png, assets/readme.txt
         assert_eq!(extract_covers(&rar, &out).unwrap(), 2);
-        assert!(find_cover(&out, "quake3").is_some());
-        assert!(find_cover(&out, "amongus").is_some());
+        assert!(find_cover_in([&out], "quake3").is_some());
+        assert!(find_cover_in([&out], "amongus").is_some());
         assert!(!out.join("readme.txt").exists());
     }
 

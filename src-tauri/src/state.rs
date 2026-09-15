@@ -23,6 +23,9 @@ pub struct AppState {
     pub event: RwLock<EventBundle>,
     pub manifests: ManifestStore,
     pub resource_dir: Option<PathBuf>,
+    /// Covers shipped with the app (`assets/covers` in the repository,
+    /// `covers/` in the bundle); consulted after the cover cache.
+    pub bundled_covers: Option<PathBuf>,
     /// Games currently running (game_id → pid), for the stats beacon.
     pub running: RwLock<Vec<(String, u32)>>,
     pub transport_error: RwLock<Option<String>>,
@@ -34,6 +37,13 @@ pub struct AppState {
 impl AppState {
     pub fn settings_path(&self) -> PathBuf {
         self.dirs.settings_file()
+    }
+
+    /// Cover directories in lookup order: cache first, bundled set second.
+    pub fn cover_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs = vec![self.dirs.covers_dir()];
+        dirs.extend(self.bundled_covers.clone());
+        dirs
     }
 
     pub async fn effective_transport_mode(&self) -> TransportMode {

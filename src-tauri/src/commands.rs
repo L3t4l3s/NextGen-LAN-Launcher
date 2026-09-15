@@ -162,7 +162,7 @@ pub async fn get_games(state: State<'_, Arc<AppState>>) -> Cmd<Vec<GameView>> {
     let settings = state.settings.read().await.clone();
     let event = state.event.read().await.clone();
     let lang = settings.language.clone();
-    let covers = state.dirs.covers_dir();
+    let covers = state.cover_dirs();
     let mut out = Vec::with_capacity(catalog.games.len());
     for g in &catalog.games {
         let paths = settings.library.game_paths(&g.id);
@@ -184,7 +184,7 @@ pub async fn get_games(state: State<'_, Arc<AppState>>) -> Cmd<Vec<GameView>> {
                 .or_else(|| g.readme.get("en"))
                 .or_else(|| g.readme.values().next())
                 .cloned(),
-            cover: lanlauncher_core::catalog::find_cover(&covers, &g.id)
+            cover: lanlauncher_core::catalog::find_cover_in(&covers, &g.id)
                 .map(|p| p.to_string_lossy().to_string()),
             video: settings
                 .library

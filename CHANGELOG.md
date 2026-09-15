@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Die Cover aller Katalogspiele werden mit dem Launcher ausgeliefert (Quelle: öffentliches Repo
+  eti-lan/LAN-Launcher) und erscheinen sofort, auch ohne Sync-Server oder `assets.eti`. Cover aus
+  `assets.eti` ersetzen sie, sobald der Katalog-Share da ist.
 - Cover: `assets.eti` wird wie jede andere `.eti`-Datei als RAR gelesen (Tar und gzip-Tar weiterhin
   möglich); das Layout der Member ist toleranter, fehlende Treffer stehen mit Beispielnamen im Log.
   Nach dem Speichern des Spiele-Ordners im Wizard lädt der Katalog sofort, nicht erst nach 10 s.

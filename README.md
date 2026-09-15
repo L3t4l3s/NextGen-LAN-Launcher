@@ -34,6 +34,7 @@ crates/lanlauncher-core/   Rust library without GUI: catalog, launcher.ini, tran
 src-tauri/                 Tauri 2 app (commands, events, sidecar, demo mode)
 src/                       Svelte 5 frontend (German/English, theme engine, browser mock for development)
 manifests/                 Launch profiles for macOS/Linux (initially: amongus, rocket, goldsrc, wc3, quake3, l4d2)
+assets/covers/             Cover images bundled with the app (from eti-lan/LAN-Launcher, public domain)
 themes/                    Example themes
 tools/dev-lanpage/         Minimal LANPage stand-in for local testing (launcher.ini, launcher.css, stats.php)
 docs/                      Architecture, compatibility, troubleshooting, theming, licensing
@@ -92,8 +93,11 @@ Tags `v*` are built by `release.yml` instead.
   archive listing with `local/`, and `game_setup.cmd` now receives the four-argument contract
   through the raw command line. Both untested on Windows hardware, as is the broadened Resilio
   search (ETI `btsync.exe`, PATH, other profiles, registry).
-- **Covers and videos** come from the `eti_launcher` share at the LAN (`update/assets.eti`,
-  `video/<id>.mp4`). Demo mode intentionally ships no game artwork.
+- **Covers and videos:** the installer ships the covers from the public
+  [eti-lan/LAN-Launcher](https://github.com/eti-lan/LAN-Launcher) repository (`assets/covers/`,
+  refreshed with `tools/update-covers.sh`), so the library shows artwork without a sync server.
+  Covers from the LAN's `eti_launcher/update/assets.eti` replace them; videos still come only
+  from the share (`video/<id>.mp4`).
 - **macOS/Linux launch profiles:** six games have curated profiles; every other game gets a profile
   derived from `game_start.cmd` (91 of 158 ETI scripts start exactly one executable) or the user
   picks the executable on first launch.
