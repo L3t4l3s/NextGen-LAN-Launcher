@@ -3,10 +3,18 @@ name: Resilio lock
 # Computes the SHA-256 hashes and version numbers of the official Resilio Sync
 # downloads so they can be pinned in resilio.lock.json. Run it manually, then
 # copy the artifact `resilio.lock.proposed.json` over resilio.lock.json and
-# commit. The release workflow refuses to build without pinned hashes.
+# commit. The release workflow refuses to build without pinned hashes. Pass a
+# build number as `version` to pin an older release instead of the current stable
+# one (e.g. 2.8.1.1390, the last build that runs without a Resilio account).
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Resilio build to pin (e.g. 2.8.1.1390). Empty = current stable release."
+        required: false
+        default: ""
+        type: string
 
 jobs:
   hashes:
@@ -35,21 +43,30 @@ jobs:
       - name: Download and hash
         id: fetch
         shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           # tee keeps the per-URL status lines visible even when every candidate fails
-          node tools/fetch-resilio.mjs "${{ matrix.platform }}" out --allow-unpinned | tee fetch.log
+          node tools/fetch-resilio.mjs "${{ matrix.platform }}" out --allow-unpinned ${VERSION:+"--version=$VERSION"} | tee fetch.log
           grep '^::lock:: ' fetch.log | sed 's/^::lock:: //' > lock-entry.json
       - name: Read version (Linux)
         if: startsWith(matrix.platform, 'linux')
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ matrix.platform }}" = "linux-x64" ]; then
-            ver=$(./out/rslsync --help 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)
-          else
-            ver=$(strings out/rslsync | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$' | head -1 || true)
+          if [ "${{ matrix.platform }}" != "linux-x64" ]; then
+            # Foreign architecture: run the binary through qemu-user (binfmt is registered by the package).
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq qemu-user-static || echo "::warning::qemu-user-static not installed; falling back to strings"
           fi
+          ver=$(./out/rslsync --help 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)
+          if [ -z "$ver" ]; then
+            # Fall back to embedded strings. IP addresses such as 127.0.0.1 also look like
+            # dotted versions, so require the four-part form with a build number.
+            ver=$(strings out/rslsync | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]{3,5}$' | head -1 || true)
+          fi
+          echo "detected version: ${ver:-<none>}"
           echo "version=$ver" >> lock-version.txt
       - name: Read version (Windows)
         if: matrix.platform == 'windows'

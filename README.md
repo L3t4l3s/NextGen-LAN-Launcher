@@ -60,6 +60,11 @@ node tools/dev-lanpage/server.mjs       # local LANPage stand-in on port 8080
 
 In the browser, `http://localhost:1420/?wizard` shows the first-run wizard.
 
+CI runs the Linux core tests and the frontend checks on every push. The full three-OS matrix and
+the installer builds (artifacts `bundles-<os>` on the run page) only run for pull requests, pushes
+to `main`, a manual run of the *CI* workflow, or a commit whose message contains `[full-ci]`.
+Tags `v*` are built by `release.yml` instead.
+
 ## Open items
 
 - **Real Resilio operation:** the client speaks the documented Sync API (`/api`, with an API key)
@@ -67,7 +72,9 @@ In the browser, `http://localhost:1420/?wizard` shows the first-run wizard.
   The install logic deliberately does not depend on either.
 - **Windows installer with Resilio:** CI artifacts contain no Resilio. `release.yml` bundles the
   official binary pinned by version and SHA-256 in `resilio.lock.json`; the pins are produced by
-  the manual "Resilio lock" workflow and are still to be filled in before the first tag. The
+  the manual "Resilio lock" workflow and are still to be filled in before the first tag. Which
+  version to pin is open: Resilio 3.x requires a Resilio account for its free licence, while
+  2.8.1.1390 (the build the ETI sync server runs) does not; both versions sync with each other. The
   silent installer run on first start (`install_bundled_windows`) and launching scripts via
   `cmd.exe /S /C` are untested.
 - **Covers and videos** come from the `eti_launcher` share at the LAN (`update/assets.eti`,

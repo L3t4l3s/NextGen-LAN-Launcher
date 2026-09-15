@@ -1,7 +1,11 @@
 // Downloads the official Resilio Sync binary for a platform into a folder and
 // verifies it against resilio.lock.json.
 //
-//   node tools/fetch-resilio.mjs <windows|osx|linux-x64|linux-arm64> <dest-dir> [--allow-unpinned]
+//   node tools/fetch-resilio.mjs <windows|osx|linux-x64|linux-arm64> <dest-dir> [--allow-unpinned] [--version=<x.y.z.build>]
+//
+// `--version` (lock workflow only) downloads a fixed build instead of the
+// current `stable` release: Resilio serves old builds under the same path
+// layout, e.g. https://download-cdn.resilio.com/2.8.1.1390/linux/x64/0/…
 //
 // Release builds must be reproducible: without a pinned SHA-256 the script
 // refuses to continue and a hash mismatch is fatal. `--allow-unpinned` exists
@@ -14,9 +18,18 @@ import path from "node:path";
 
 const args = process.argv.slice(2);
 const allowUnpinned = args.includes("--allow-unpinned");
+const version = args.find((a) => a.startsWith("--version="))?.slice("--version=".length) ?? "";
 const [platform, dest] = args.filter((a) => !a.startsWith("--"));
 if (!platform || !dest) {
-  console.error("usage: fetch-resilio.mjs <platform> <dest-dir> [--allow-unpinned]");
+  console.error("usage: fetch-resilio.mjs <platform> <dest-dir> [--allow-unpinned] [--version=<x.y.z.build>]");
+  process.exit(2);
+}
+if (version && !allowUnpinned) {
+  console.error("--version only makes sense together with --allow-unpinned; release builds use the pinned url from resilio.lock.json");
+  process.exit(2);
+}
+if (version && !/^[0-9]+(\.[0-9]+){1,3}$/.test(version)) {
+  console.error(`--version must look like 2.8.1.1390, got ${JSON.stringify(version)}`);
   process.exit(2);
 }
 const lock = JSON.parse(readFileSync(new URL("../resilio.lock.json", import.meta.url), "utf8"));
@@ -39,7 +52,16 @@ mkdirSync(dest, { recursive: true });
 // major versions, so send a browser-like UA and try candidates in order while
 // no URL is pinned.
 const headers = { "user-agent": "Mozilla/5.0 (X11; Linux x86_64) NextGen-LAN-Launcher-release/1.0", accept: "*/*" };
-const urls = artifact.url ? [artifact.url] : (artifact.candidates ?? []);
+let urls = artifact.url ? [artifact.url] : (artifact.candidates ?? []);
+if (allowUnpinned) {
+  // Re-locking: try the pinned url and every candidate with the release segment
+  // (`stable` or an old build number) swapped for the requested build. URLs
+  // without such a segment are dropped so a request for an old build can never
+  // silently fall back to the current release.
+  const segment = /\/(stable|[0-9]+(?:\.[0-9]+){1,3})\//;
+  const target = version || "stable";
+  urls = [...new Set([artifact.url, ...(artifact.candidates ?? [])].filter((u) => u && segment.test(u)).map((u) => u.replace(segment, `/${target}/`)))];
+}
 if (urls.length === 0) {
   console.error(`no url or candidates for ${platform} in resilio.lock.json`);
   process.exit(2);
@@ -68,7 +90,10 @@ if (artifact.sha256 && artifact.sha256 !== sha) {
     console.error(`checksum mismatch: expected ${artifact.sha256}, got ${sha}`);
     process.exit(1);
   }
-  console.warn(`warning: pinned sha256 ${artifact.sha256} differs from download; Resilio published a new build`);
+  console.warn(
+    `warning: pinned sha256 ${artifact.sha256} differs from download; ` +
+      (version ? `a different build (${version}) was requested` : "Resilio published a new build"),
+  );
 }
 const file = path.join(dest, path.basename(new URL(artifact.url).pathname));
 writeFileSync(file, buf);
@@ -78,7 +103,11 @@ if (platform.startsWith("linux")) {
   execSync(`tar ${flags} "${file}" -C "${dest}" rslsync`, { stdio: "inherit" });
   execSync(`chmod +x "${path.join(dest, "rslsync")}"`);
 } else if (platform === "osx") {
-  const mount = execSync(`hdiutil attach -nobrowse -readonly "${file}" | tail -1 | awk '{print $NF}'`).toString().trim();
+  // The volume is called "Resilio Sync" (with a space), so take the whole
+  // mount-point column instead of the last whitespace-separated token.
+  const attach = execSync(`hdiutil attach -nobrowse -readonly "${file}"`).toString();
+  const mount = attach.split("\n").map((l) => l.match(/(\/Volumes\/.*)$/)?.[1]?.trim()).find(Boolean);
+  if (!mount) throw new Error(`could not determine DMG mount point:\n${attach}`);
   execSync(`cp -R "${mount}/Resilio Sync.app" "${dest}/"`, { stdio: "inherit" });
   execSync(`hdiutil detach "${mount}"`);
 } else {

@@ -1,9 +1,23 @@
 name: CI
 
+# Every push runs the cheap checks (core tests on Linux, frontend). The full
+# three-OS matrix and the installer builds are expensive (about 3x3 runners), so
+# they run only for pull requests, pushes to `main` (the future release branch;
+# the current development branch deliberately gets the light set), manual runs,
+# or when the commit message contains "[full-ci]". Tags are handled by
+# release.yml. Keep the `FULL` expressions below in sync; GitHub offers no
+# workflow-level variable for them.
 on:
   push:
     branches: ["**"]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # A newer push to the same branch cancels the still-running builds of the old
+  # one, except on main where every commit must keep its checks and artifacts.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,7 +29,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-latest, macos-latest]
+        # FULL: all three platforms; otherwise Linux only.
+        os: ${{ fromJSON((github.event_name != 'push' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[full-ci]')) && '["ubuntu-22.04", "windows-latest", "macos-latest"]' || '["ubuntu-22.04"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.98.1
@@ -48,6 +63,8 @@ jobs:
   app:
     name: Build app (${{ matrix.os }})
     needs: [core, frontend]
+    # FULL: same condition as the core matrix above.
+    if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[full-ci]') }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

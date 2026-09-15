@@ -31,7 +31,7 @@ Der Fortschrittswert des Sync-Engines ist reine Anzeige (`crates/lanlauncher-cor
 | `src/` | Svelte-5-Frontend (Runes). `src/lib/mock.ts` simuliert das Backend im Browser. |
 | `manifests/` | TOML-Startprofile für macOS/Linux, eines pro ETI-Game-ID. |
 | `themes/`, `tools/dev-lanpage/` | Beispiel-Themes, lokale LANPage-Attrappe. |
-| `.github/workflows/` | `ci.yml` (Tests + Builds für Win/macOS/Linux), `release.yml` (Installer bei Tag `v*`). |
+| `.github/workflows/` | `ci.yml` (jeder Push: Core-Tests Linux + Frontend; volle 3-OS-Matrix und Installer nur bei PR, Push auf `main`, manuellem Start oder `[full-ci]` in der Commit-Nachricht; Tags baut `release.yml`), `release.yml` (Installer bei Tag `v*`), `resilio-lock.yml` (Hashes/Version für `resilio.lock.json`, optional für einen festen Build). |
 
 Sprachen: Code, Kommentare, `README.md` und `docs/` Englisch; UI-Texte in `src/lib/i18n/{de,en}.ts`
 (Deutsch ist Standard); `CHANGELOG.md` Deutsch.
@@ -84,7 +84,9 @@ WebKitGTK-Entwicklungspakete (siehe unten).
 - **Resilio-Binärdatei** liegt nie im Repo. `release.yml` lädt sie per `tools/fetch-resilio.mjs`
   nach `src-tauri/resources/resilio/`. Das Skript verweigert Downloads ohne SHA-256 in
   `resilio.lock.json`. Pin-Prozess: Workflow „Resilio lock“ manuell starten → Artefakt
-  `resilio.lock.proposed.json` prüfen → über `resilio.lock.json` kopieren → committen. CI-Builds
+  `resilio.lock.proposed.json` prüfen → über `resilio.lock.json` kopieren → committen. Der Workflow
+  nimmt optional einen Build (`version`, z. B. `2.8.1.1390`) statt `stable`; ab 3.0 verlangt die
+  kostenlose Lizenz ein Resilio-Konto, der ETI-Sync-Server läuft mit 2.8.1.1390. CI-Builds
   (`ci.yml`) enthalten kein Resilio; nur Release-Builds (Tag `v*`) tun das. Das Resilio-CDN ist aus
   der Claude-Sandbox nicht erreichbar, Hashes lassen sich nur auf GitHub-Runnern ermitteln.
 - **Test-Fixtures:** `sample_game.rar`, `truncated_game.rar` und `demo_amongus.rar` wurden mit
