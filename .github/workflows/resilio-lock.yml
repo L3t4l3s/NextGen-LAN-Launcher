@@ -37,9 +37,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          out=$(node tools/fetch-resilio.mjs "${{ matrix.platform }}" out --allow-unpinned)
-          echo "$out"
-          echo "$out" | grep '^::lock:: ' | sed 's/^::lock:: //' > lock-entry.json
+          # tee keeps the per-URL status lines visible even when every candidate fails
+          node tools/fetch-resilio.mjs "${{ matrix.platform }}" out --allow-unpinned | tee fetch.log
+          grep '^::lock:: ' fetch.log | sed 's/^::lock:: //' > lock-entry.json
       - name: Read version (Linux)
         if: startsWith(matrix.platform, 'linux')
         shell: bash

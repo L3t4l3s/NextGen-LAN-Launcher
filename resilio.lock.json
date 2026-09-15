@@ -5,8 +5,12 @@
     "windows": {
       "url": null,
       "candidates": [
+        "https://download-cdn.resilio.com/stable/windows/64/0/Resilio-Sync_x64.exe",
+        "https://download-cdn.resilio.com/stable/windows/x64/0/Resilio-Sync_x64.exe",
+        "https://download-cdn.resilio.com/stable/windows/x64/Resilio-Sync_x64.exe",
         "https://download-cdn.resilio.com/stable/windows64/Resilio-Sync_x64.exe",
-        "https://download-cdn.resilio.com/stable/windows/Resilio-Sync_x64.exe"
+        "https://download-cdn.resilio.com/stable/windows/Resilio-Sync_x64.exe",
+        "https://download-cdn.resilio.com/stable/windows/x64/0/Resilio-Sync_x64.msi"
       ],
       "version": null,
       "sha256": null,
@@ -15,31 +19,33 @@
     "osx": {
       "url": null,
       "candidates": [
-        "https://download-cdn.resilio.com/stable/osx/Resilio-Sync.dmg",
-        "https://download-cdn.resilio.com/stable/mac/Resilio-Sync.dmg",
-        "https://download-cdn.resilio.com/stable/macos/Resilio-Sync.dmg"
+        "https://download-cdn.resilio.com/stable/mac/osx/0/Resilio-Sync.dmg",
+        "https://download-cdn.resilio.com/stable/mac/osx/Resilio-Sync.dmg",
+        "https://download-cdn.resilio.com/stable/osx/Resilio-Sync.dmg"
       ],
       "version": null,
       "sha256": null,
       "install": "Resilio Sync.app"
     },
     "linux-x64": {
-      "url": null,
+      "url": "https://download-cdn.resilio.com/stable/linux/x64/resilio-sync_x64.tar.gz",
       "candidates": [
-        "https://download-cdn.resilio.com/stable/linux-x64/resilio-sync_x64.tar.gz",
         "https://download-cdn.resilio.com/stable/linux/x64/resilio-sync_x64.tar.gz",
-        "https://download-cdn.resilio.com/stable/linux-x64/resilio-sync_x64.tar"
+        "https://download-cdn.resilio.com/stable/linux-x64/resilio-sync_x64.tar.gz"
       ],
-      "version": null,
-      "sha256": null,
-      "install": "rslsync"
+      "version": "3.1.2",
+      "sha256": "3cfedd41b3d21e2ae5fae58ca2114704d1ea4e4bab896796323c4a15c570f0f0",
+      "install": "rslsync",
+      "bytes": 15535020,
+      "retrieved_at": "2026-09-15T11:44:35.693Z"
     },
     "linux-arm64": {
       "url": null,
       "candidates": [
+        "https://download-cdn.resilio.com/stable/linux/arm64/resilio-sync_arm64.tar.gz",
+        "https://download-cdn.resilio.com/stable/linux/aarch64/resilio-sync_aarch64.tar.gz",
         "https://download-cdn.resilio.com/stable/linux-arm64/resilio-sync_arm64.tar.gz",
-        "https://download-cdn.resilio.com/stable/linux-aarch64/resilio-sync_aarch64.tar.gz",
-        "https://download-cdn.resilio.com/stable/linux-armhf/resilio-sync_armhf.tar.gz"
+        "https://download-cdn.resilio.com/stable/linux/armhf/resilio-sync_armhf.tar.gz"
       ],
       "version": null,
       "sha256": null,
