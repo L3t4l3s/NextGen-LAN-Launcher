@@ -13,7 +13,8 @@
 // only for the resilio-lock workflow that (re)computes the hashes; there a
 // mismatch is reported as a warning so a new Resilio build can be re-pinned.
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import { execSync } from "node:child_process";
 import path from "node:path";
 
@@ -96,41 +97,54 @@ if (artifact.sha256 && artifact.sha256 !== sha) {
       (version ? `a different build (${version}) was requested` : "Resilio published a new build"),
   );
 }
-let file = path.join(dest, path.basename(new URL(artifact.url).pathname));
-writeFileSync(file, buf);
-
-if (platform.startsWith("linux")) {
-  const flags = file.endsWith(".gz") ? "-xzf" : "-xf";
-  execSync(`tar ${flags} "${file}" -C "${dest}" rslsync`, { stdio: "inherit" });
-  execSync(`chmod +x "${path.join(dest, "rslsync")}"`);
-} else if (platform === "osx") {
-  // The volume is called "Resilio Sync" (with a space), so take the whole
-  // mount-point column instead of the last whitespace-separated token.
-  const attach = execSync(`hdiutil attach -nobrowse -readonly "${file}"`).toString();
-  const mount = attach.split("\n").map((l) => l.match(/(\/Volumes\/.*)$/)?.[1]?.trim()).find(Boolean);
-  if (!mount) throw new Error(`could not determine DMG mount point:\n${attach}`);
-  execSync(`cp -R "${mount}/Resilio Sync.app" "${dest}/"`, { stdio: "inherit" });
-  execSync(`hdiutil detach "${mount}"`);
-} else {
-  // Windows: the download is the program itself, not an installer (Resilio
-  // documents `/noinstall` for running it in place). Give it the name the
-  // launcher probes first so the bundled copy wins over system installs.
-  // `install` in resilio.lock.json is the name the launcher probes first
-  // (transport::resilio::bundled_install_name reads the same field).
-  if (path.extname(file).toLowerCase() !== ".exe") {
-    console.error(`windows artifact must be the .exe program, got ${path.basename(file)} (an .msi cannot run in place)`);
-    process.exit(1);
-  }
-  if (!artifact.install) {
-    console.error("resilio.lock.json: artifacts.windows.install is missing");
-    process.exit(1);
-  }
-  const target = path.join(dest, artifact.install);
-  if (target !== file) {
-    renameSync(file, target);
-    file = target;
-  }
+// The download lands in a temp dir; `dest` is shipped as a whole by
+// bundle.resources, so only the runnable binary, named as `install` in
+// resilio.lock.json (the field transport::resilio::bundled_install_name reads
+// too), may ever appear there.
+if (!artifact.install) {
+  console.error(`resilio.lock.json: artifacts.${platform}.install is missing`);
+  process.exit(1);
 }
+const installed = path.join(dest, artifact.install);
+const tmp = mkdtempSync(path.join(os.tmpdir(), "resilio-fetch-"));
+const download = path.join(tmp, path.basename(new URL(artifact.url).pathname));
+writeFileSync(download, buf);
+try {
+  // Leftovers from earlier layouts (the archive next to the binary) or an
+  // older pin would ship with the bundle too; only README.md may stay.
+  for (const entry of readdirSync(dest)) {
+    if (entry === "README.md") continue;
+    console.log(`removing stale ${path.join(dest, entry)}`);
+    rmSync(path.join(dest, entry), { recursive: true, force: true });
+  }
+  if (platform.startsWith("linux")) {
+    const flags = download.endsWith(".gz") ? "-xzf" : "-xf";
+    execSync(`tar ${flags} "${download}" -C "${tmp}" rslsync`, { stdio: "inherit" });
+    copyFileSync(path.join(tmp, "rslsync"), installed);
+    chmodSync(installed, 0o755);
+  } else if (platform === "osx") {
+    // The volume is called "Resilio Sync" (with a space), so take the whole
+    // mount-point column instead of the last whitespace-separated token.
+    const attach = execSync(`hdiutil attach -nobrowse -readonly "${download}"`).toString();
+    const mount = attach.split("\n").map((l) => l.match(/(\/Volumes\/.*)$/)?.[1]?.trim()).find(Boolean);
+    if (!mount) throw new Error(`could not determine DMG mount point:\n${attach}`);
+    try {
+      execSync(`cp -R "${mount}/Resilio Sync.app" "${installed}"`, { stdio: "inherit" });
+    } finally {
+      execSync(`hdiutil detach "${mount}"`);
+    }
+  } else {
+    // Windows: the download is the program itself, not an installer (Resilio
+    // documents `/noinstall` for running it in place).
+    if (path.extname(download).toLowerCase() !== ".exe") {
+      throw new Error(`windows artifact must be the .exe program, got ${path.basename(download)} (an .msi cannot run in place)`);
+    }
+    copyFileSync(download, installed);
+  }
+} finally {
+  rmSync(tmp, { recursive: true, force: true });
+}
+const file = installed;
 // Machine-readable summary for the lock workflow.
 console.log(`::lock:: ${JSON.stringify({ platform, url: artifact.url, sha256: sha, bytes: buf.length, file })}`);
 console.log(`done -> ${dest}`);

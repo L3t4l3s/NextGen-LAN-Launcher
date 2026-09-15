@@ -4,7 +4,8 @@
 
 - Resilio Sync 2.8.1.1390 liegt jedem Installer aus der vollen CI und aus Releases bei. Der
   Launcher bevorzugt diese Kopie vor einer auf dem System installierten Resilio-Version und
-  startet sie ohne Installation (`/noinstall`); der bisherige Silent-Install-Pfad entfällt.
+  startet sie ohne Installation (`/noinstall`); der bisherige Silent-Install-Pfad entfällt. Die
+  Linux- und macOS-Pakete enthalten nur das entpackte Programm, nicht zusätzlich das Download-Archiv.
 - Bibliothekskacheln und das Detailbild sind Querformat (7:5) wie ETIs 140×100-Cover; bisher wurden
   die Bilder stark beschnitten. Läuft ein Vorschauvideo, ist das Detailbild 16:9.
 - Beendet sich die Sync-Engine sofort, nennt die Meldung die PID eines bereits laufenden Resilio
