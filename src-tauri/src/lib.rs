@@ -35,8 +35,11 @@ fn is_demo() -> bool {
 }
 
 /// Platform post-extraction hook: Windows runs `game_setup.cmd`, everyone
-/// applies manifest steps.
-struct AppSetupHook;
+/// applies manifest steps. Holds the state weakly because the state owns the
+/// manager that owns this hook.
+struct AppSetupHook {
+    state: std::sync::Weak<AppState>,
+}
 
 #[async_trait::async_trait]
 impl SetupHook for AppSetupHook {
@@ -46,27 +49,56 @@ impl SetupHook for AppSetupHook {
         manifest: Option<&Manifest>,
     ) -> lanlauncher_core::Result<()> {
         ManifestSetupHook.run_setup(paths, manifest).await?;
-        if cfg!(target_os = "windows") {
-            if let Some(plan) = lanlauncher_core::launch::windows::setup_plan(
-                paths,
-                paths
-                    .share_dir
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(""),
-            ) {
-                let status = tokio::process::Command::new(&plan.program)
-                    .args(&plan.args)
-                    .current_dir(&plan.cwd)
-                    .status()
-                    .await
-                    .map_err(|e| lanlauncher_core::Error::Launch(format!("game_setup.cmd: {e}")))?;
-                if !status.success() {
-                    return Err(lanlauncher_core::Error::Launch(format!(
-                        "game_setup.cmd exited with {status}"
-                    )));
-                }
+        if !cfg!(target_os = "windows") {
+            return Ok(());
+        }
+        let (lang, player) = match self.state.upgrade() {
+            Some(state) => {
+                let s = state.settings.read().await;
+                (s.game_language.clone(), s.safe_player_name())
             }
+            None => ("de".to_string(), String::new()),
+        };
+        let game_id = paths
+            .share_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        let Some(plan) =
+            lanlauncher_core::launch::windows::setup_plan(paths, game_id, &lang, &player)
+        else {
+            return Ok(());
+        };
+        // The script runs through cmd.exe with its own quoting rules, so the
+        // command line is passed verbatim (see LaunchPlan::raw_command_line).
+        let mut cmd = tokio::process::Command::new(&plan.program);
+        lanlauncher_core::launch::apply_args(&mut cmd, &plan);
+        let output = cmd
+            .current_dir(&plan.cwd)
+            .output()
+            .await
+            .map_err(|e| lanlauncher_core::Error::Launch(format!("game_setup.cmd: {e}")))?;
+        if !output.status.success() {
+            let tail = |b: &[u8]| {
+                let s = String::from_utf8_lossy(b);
+                s.chars()
+                    .rev()
+                    .take(4096)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<String>()
+            };
+            log::warn!(
+                "game_setup.cmd for {game_id} exited with {}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+                output.status,
+                tail(&output.stdout),
+                tail(&output.stderr)
+            );
+            return Err(lanlauncher_core::Error::Launch(format!(
+                "game_setup.cmd exited with {}",
+                output.status
+            )));
         }
         Ok(())
     }
@@ -115,7 +147,12 @@ pub(crate) fn load_catalog_from_library(
     let catalog = Catalog::load(&db).ok()?;
     let assets = root.path.join(lanlauncher_core::paths::ASSETS_RELATIVE);
     if extract_covers && assets.is_file() {
-        let _ = lanlauncher_core::catalog::extract_covers(&assets, &dirs.covers_dir());
+        match lanlauncher_core::catalog::extract_covers(&assets, &dirs.covers_dir()) {
+            Ok(n) => log::info!("covers: {n} extracted from {}", assets.display()),
+            Err(e) => log::warn!("covers: cannot extract {}: {e}", assets.display()),
+        }
+    } else if extract_covers {
+        log::info!("covers: {} not present yet", assets.display());
     }
     Some(catalog)
 }
@@ -193,12 +230,40 @@ pub(crate) async fn build_transport(state: &AppState) -> (Arc<dyn Transport>, Op
         }
         TransportMode::Folder => (Arc::new(FolderTransport::new()), None),
         TransportMode::Managed => {
-            let (lan_only, port) = {
+            let (lan_only, port, override_path) = {
                 let settings = state.settings.read().await;
-                (settings.lan_mode, settings.sync_port)
+                (
+                    settings.lan_mode,
+                    settings.sync_port,
+                    settings.resilio_binary.clone(),
+                )
             };
-            let mut binary =
-                resilio::locate_binary(state.resource_dir.as_deref(), &state.dirs.data);
+            // The search may run `reg query`; keep it off the async threads.
+            let resource_dir = state.resource_dir.clone();
+            let data_dir = state.dirs.data.clone();
+            let located = tauri::async_runtime::spawn_blocking(move || {
+                resilio::locate_binary_detailed(
+                    override_path.as_deref(),
+                    resource_dir.as_deref(),
+                    &data_dir,
+                )
+            })
+            .await
+            .unwrap_or_default();
+            match &located.found {
+                Some(b) => log::info!("Resilio binary: {}", b.display()),
+                None => log::warn!(
+                    "Resilio binary not found; probed {} paths: {}",
+                    located.probed.len(),
+                    located
+                        .probed
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                ),
+            }
+            let mut binary = located.found.clone();
             if binary.is_none() {
                 match resilio::install_bundled_windows(
                     state.resource_dir.as_deref(),
@@ -226,7 +291,7 @@ pub(crate) async fn build_transport(state: &AppState) -> (Arc<dyn Transport>, Op
                 }
                 None => (
                     Arc::new(FolderTransport::new()),
-                    Some("err.resilio_not_found".into()),
+                    Some(format!("err.resilio_not_found|{}", located.probed.len())),
                 ),
             }
         }
@@ -247,7 +312,7 @@ fn demo_archive_path(state: &AppState) -> PathBuf {
 }
 
 pub(crate) fn build_manager(
-    state: &AppState,
+    state: &Arc<AppState>,
     transport: Arc<dyn Transport>,
     catalog: Catalog,
     library: Arc<std::sync::RwLock<Library>>,
@@ -272,7 +337,9 @@ pub(crate) fn build_manager(
                     lanlauncher_core::script_probe::ScriptProbe::analyse(&s).to_manifest(&game.id)
                 }),
         },
-        Arc::new(AppSetupHook),
+        Arc::new(AppSetupHook {
+            state: Arc::downgrade(state),
+        }),
     );
     manager.lan_only = lan_only;
     Arc::new(manager)

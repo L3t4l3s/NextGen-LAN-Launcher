@@ -393,17 +393,28 @@ fn parse_game(row: &rusqlite::Row<'_>, raw_id: &str) -> std::result::Result<Game
     })
 }
 
-/// Extract cover images from `assets.eti` (a tar archive with members
-/// `assets/<game_id>.jpg|png`) into `dest_dir/<game_id>.<ext>`. Returns the
-/// number of covers written. Members with unexpected names are ignored.
+/// Extract cover images from `assets.eti` (a tar archive, optionally
+/// gzip-compressed, with members `assets/<game_id>.jpg|png`) into
+/// `dest_dir/<game_id>.<ext>`. Returns the number of covers written. Members
+/// with unexpected names are ignored.
 pub fn extract_covers(assets_tar: &Path, dest_dir: &Path) -> Result<usize> {
     static MEMBER_RE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"^(?:\./)?assets/([a-z0-9][a-z0-9_-]{0,63})\.(jpg|jpeg|png)$")
             .expect("valid regex")
     });
     std::fs::create_dir_all(dest_dir).map_err(|e| Error::io(dest_dir, e))?;
-    let file = std::fs::File::open(assets_tar).map_err(|e| Error::io(assets_tar, e))?;
-    let mut archive = tar::Archive::new(file);
+    let mut file = std::fs::File::open(assets_tar).map_err(|e| Error::io(assets_tar, e))?;
+    // gzip magic 1f 8b: `tar -tf` accepts both, so do we.
+    let mut magic = [0u8; 2];
+    let gzipped = std::io::Read::read_exact(&mut file, &mut magic).is_ok() && magic == [0x1f, 0x8b];
+    std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(0))
+        .map_err(|e| Error::io(assets_tar, e))?;
+    let reader: Box<dyn std::io::Read> = if gzipped {
+        Box::new(flate2::read::GzDecoder::new(file))
+    } else {
+        Box::new(file)
+    };
+    let mut archive = tar::Archive::new(reader);
     let mut written = 0;
     for entry in archive
         .entries()
@@ -584,5 +595,24 @@ mod tests {
         assert_eq!(extract_covers(&tar_path, &out).unwrap(), 1);
         assert!(find_cover(&out, "quake3").is_some());
         assert!(find_cover(&out, "evil").is_none());
+
+        // The same archive gzip-compressed yields the same covers.
+        let gz_path = dir.path().join("assets.gz.eti");
+        {
+            let mut enc = flate2::write::GzEncoder::new(
+                std::fs::File::create(&gz_path).unwrap(),
+                flate2::Compression::fast(),
+            );
+            std::io::copy(&mut std::fs::File::open(&tar_path).unwrap(), &mut enc).unwrap();
+            enc.finish().unwrap();
+        }
+        let out2 = dir.path().join("covers2");
+        assert_eq!(extract_covers(&gz_path, &out2).unwrap(), 1);
+        assert!(find_cover(&out2, "quake3").is_some());
+
+        // Not an archive at all → error, not silent success.
+        let bogus = dir.path().join("bogus.eti");
+        std::fs::write(&bogus, "Rar!\x1a\x07\x01\x00 definitely not tar").unwrap();
+        assert!(extract_covers(&bogus, &out2).is_err());
     }
 }

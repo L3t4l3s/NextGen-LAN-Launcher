@@ -94,9 +94,24 @@ export function createMock() {
     runnerPaths: { wine: null, crossoverApp: null, proton: null },
     syncPort: 0,
     catalogKey: null,
+    resilioBinary: null,
   };
   // pre-seeded states for a lively screenshot
-  sims.set("quake3", { phase: "ready", started: 0, duration: 1, stuck: false, paused: false, pausedAt: 0, problem: null });
+  // A playable game with a leftover setup warning, as seen with adopted ETI installs.
+  sims.set("quake3", {
+    phase: "ready",
+    started: 0,
+    duration: 1,
+    stuck: false,
+    paused: false,
+    pausedAt: 0,
+    problem: {
+      code: "install.setup_failed",
+      severity: "warning",
+      params: { detail: "launch error: game_setup.cmd exited with exit code: 1" },
+      steps: [],
+    },
+  });
   sims.set("wc3", { phase: "update_available", started: 0, duration: 1, stuck: false, paused: false, pausedAt: 0, problem: null });
   sims.set("cod4", { phase: "syncing", started: Date.now() - 20_000, duration: 90_000, stuck: true, paused: false, pausedAt: 0, problem: null });
   sims.set("l4d2", { phase: "syncing", started: Date.now() - 5_000, duration: 400_000, stuck: false, paused: false, pausedAt: 0, problem: null });

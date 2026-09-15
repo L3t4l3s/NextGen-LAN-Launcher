@@ -115,7 +115,15 @@ WebKitGTK-Entwicklungspakete (siehe unten).
   einer laufenden Prüfung). Beim Ändern der Job-Logik diese Zuordnung beibehalten.
 - **Windows-Skriptstart:** `cmd.exe /S /C "<script> …"` wird als *eine* rohe Zeichenkette übergeben
   (`LaunchPlan::raw_command_line`), weil die Argument-Escapes der Standardbibliothek die
-  cmd-Quoting-Regeln brechen.
+  cmd-Quoting-Regeln brechen. Das gilt auch für `game_setup.cmd` (Setup-Hook in
+  `src-tauri/src/lib.rs`), das denselben Vier-Argumente-Vertrag wie `game_start.cmd` bekommt.
+- **Bestand übernehmen:** `adopt_existing` darf vorhandene Installationen nie neu entpacken
+  (`local/` enthält Spielstände). Mit Receipt → `Queued` → Ready; ohne Receipt vergleicht
+  `Action::Adopt` die Archivliste mit `local/` (`extract::matches_extracted`) und schreibt ein
+  Receipt mit `adopted: true`. Nur „Reparieren“ prüft per CRC und entpackt neu.
+- **Resilio-Suche:** `locate_binary_detailed` liefert alle geprüften Pfade; `build_transport` loggt
+  sie. Windows-Kandidaten sind in `windows_candidates(WinEnv)` testbar, inklusive ETI-`btsync.exe`,
+  PATH, anderen Profilen und Registry (`reg query`). Override: `settings.resilioBinary`.
 
 ## Linux-Build-Abhängigkeiten
 

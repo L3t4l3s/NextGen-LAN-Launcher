@@ -29,7 +29,7 @@ tools(tool_id, db_id, tool_name, tool_key, tool_maintainer, tool_size, tool_read
 | `<id>.eti` | RAR archive of the game (large dictionary; UnRAR 7 handles it). Resilio writes `<id>.eti.!sync` while downloading. |
 | `version.ini` | Single line = package revision (equals `game_version`). |
 | `game_start.cmd` | Windows launch script, called as `"<game_path>" <id> <lang> "<player>"`. |
-| `game_setup.cmd` | Optional one-time setup: `"<game_path>" <id>`. |
+| `game_setup.cmd` | Optional one-time setup, called with the same four arguments as `game_start.cmd` (`"<game_path>" <id> <lang> "<player>"`; a quarter of the official scripts read `%3`/`%4`). |
 | `server_start.cmd`, `game_uninst.cmd` | Optional. |
 | `.SyncIgnore` | Usually `local/*`. |
 | `local/` | Extraction target. Scripts `cd local`. |

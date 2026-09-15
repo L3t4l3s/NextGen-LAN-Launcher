@@ -56,7 +56,10 @@ case and is used by `--demo` / `LANLAUNCHER_DEMO=1`.
 
 * Windows: `cmd.exe /C "game_start.cmd" "<game_path>" <id> <lang> "<player>"`, elevated via
   the application manifest (the scripts use `netsh advfirewall` and `reg add HKLM`).
-  `game_setup.cmd "<game_path>" <id>` runs once after extraction.
+  `game_setup.cmd "<game_path>" <id> <lang> "<player>"` runs once after extraction, through
+  the same raw `cmd.exe /S /C` command line as `game_start.cmd`. Installations found on disk
+  (made by the ETI launcher) are adopted by comparing the archive listing with `local/`
+  (`extract::matches_extracted`) instead of being re-extracted.
 * macOS/Linux: `launch::unix::plan` resolves exe/args from the manifest (user override →
   organiser overlay `nll-manifest.toml` in the share → bundled → derived from the script),
   picks CrossOver / Proton / Wine and uses one prefix per game (`<share>/.nll-prefix`).

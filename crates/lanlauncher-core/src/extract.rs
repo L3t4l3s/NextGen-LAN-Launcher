@@ -73,6 +73,53 @@ pub fn summarise(archive: &Path) -> Result<ArchiveSummary> {
     Ok(summary)
 }
 
+/// Files at least this large must match the archive's unpacked size when an
+/// installation is adopted. Smaller files (configs, ini, cfg) are legitimately
+/// rewritten by setup scripts and the games themselves, so for them presence
+/// is enough.
+pub const ADOPT_SIZE_CHECK_MIN_BYTES: u64 = 1024 * 1024;
+
+/// Compare the archive listing with an already extracted `local/` directory
+/// without reading archive data: every regular entry must exist, and entries
+/// of at least [`ADOPT_SIZE_CHECK_MIN_BYTES`] must have their unpacked size.
+/// `Ok(Some(files))` when everything matches, `Ok(None)` when a file is
+/// missing, a large file differs in size, or the archive has no files; `Err`
+/// when the archive cannot be listed. Used to adopt installations made by the
+/// original ETI launcher without re-extracting them.
+pub fn matches_extracted(archive: &Path, local_dir: &Path) -> Result<Option<u64>> {
+    matches_extracted_with(archive, local_dir, ADOPT_SIZE_CHECK_MIN_BYTES)
+}
+
+/// [`matches_extracted`] with an explicit size-check threshold.
+pub fn matches_extracted_with(
+    archive: &Path,
+    local_dir: &Path,
+    size_check_min: u64,
+) -> Result<Option<u64>> {
+    let list = Archive::new(archive).open_for_listing().map_err(map_err)?;
+    let mut files = 0u64;
+    for entry in list {
+        let entry = entry.map_err(map_err)?;
+        let name = entry.filename.to_string_lossy().to_string();
+        if !is_safe_relative(&name) {
+            return Ok(None);
+        }
+        if entry.is_directory() {
+            continue;
+        }
+        match std::fs::metadata(local_dir.join(&entry.filename)) {
+            Ok(m)
+                if m.is_file()
+                    && (entry.unpacked_size < size_check_min || m.len() == entry.unpacked_size) =>
+            {
+                files += 1
+            }
+            _ => return Ok(None),
+        }
+    }
+    Ok((files > 0).then_some(files))
+}
+
 /// Test every entry of the archive (CRC check). Never writes to disk.
 pub fn verify(
     archive: &Path,
@@ -276,6 +323,28 @@ mod tests {
         let v = verify(&p, None, None).unwrap();
         assert!(matches!(v, Verification::NotAnArchive { .. }));
         assert!(!is_rar(&p));
+    }
+
+    #[test]
+    fn matches_extracted_detects_complete_and_incomplete_installs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let local = tmp.path().join("local");
+        let archive = fixture("sample_game.rar");
+        assert_eq!(matches_extracted(&archive, &local).unwrap(), None);
+        extract_atomically(&archive, &local, None, None).unwrap();
+        assert_eq!(matches_extracted(&archive, &local).unwrap(), Some(3));
+        // A rewritten small file (config edited by a setup script) is fine…
+        std::fs::write(local.join("game.exe"), "x").unwrap();
+        assert_eq!(matches_extracted(&archive, &local).unwrap(), Some(3));
+        // …but a size mismatch on a file above the threshold is not.
+        assert_eq!(matches_extracted_with(&archive, &local, 0).unwrap(), None);
+        std::fs::remove_file(local.join("game.exe")).unwrap();
+        assert_eq!(matches_extracted(&archive, &local).unwrap(), None);
+        assert!(matches_extracted(
+            &fixture("truncated_game.rar").with_extension("missing"),
+            &local
+        )
+        .is_err());
     }
 
     #[test]

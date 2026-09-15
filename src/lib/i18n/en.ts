@@ -97,6 +97,8 @@ export const en: Messages = {
   "downloads.empty": "Nothing is downloading. Pick a game in the library and click “Install”.",
   "downloads.hint":
     "The launcher verifies every archive itself. As soon as the file is complete on disk it gets extracted – even if the sync still shows 99 %.",
+  "downloads.hints.title": "Hints",
+  "downloads.hints.text": "These games are playable but reported something during setup.",
 
   "lan.title": "This LAN",
   "lan.no_event.title": "No LAN configuration found",
@@ -160,6 +162,11 @@ export const en: Messages = {
   "settings.theme.beispiel": "Example LAN Orange",
   "settings.advanced": "Advanced",
   "settings.sync_port": "Sync port (0 = automatic)",
+  "settings.resilio_binary": "Resilio executable",
+  "settings.resilio_binary.placeholder": "empty = search automatically",
+  "settings.resilio_binary.hint":
+    "Only needed when Resilio is not found. The ETI launcher ships it as “btsync.exe” in C:\\Program Files\\eti\\lan launcher; both versions work.",
+  "action.browse": "Browse…",
   "settings.catalog_key": "Catalog share key (eti_launcher)",
   "settings.catalog_key.hint":
     "Leave empty to use the built-in key. Change it only if the organisers run their own sync server. Applied to the running sync service on save.",
@@ -217,7 +224,7 @@ export const en: Messages = {
   "err.key_folder_mode_only": "The key is only shown in folder mode.",
   "err.powershell": "PowerShell could not be started: {detail}",
   "err.windows_only": "This action exists on Windows only.",
-  "err.resilio_not_found": "Resilio Sync was not found (neither bundled nor installed). Folder mode is active.",
+  "err.resilio_not_found": "Resilio Sync was not found ({detail} paths probed, list in the log). Folder mode is active.",
   "err.resilio_start_failed": "Resilio Sync could not be started: {detail}",
   "err.no_executable": "No executable is known for this game – pick one via “Choose executable”.",
   "err.start_script_missing": "game_start.cmd is missing in the game folder.",
@@ -303,6 +310,9 @@ export const en: Messages = {
   "problem.catalog.key_missing.cause":
     "No valid key for eti_launcher is available – neither built in nor in the settings. Without it neither the game list nor covers arrive.",
   "problem.catalog.key_missing.step.settings": "Settings → Advanced → enter the catalog share key (from the organisers).",
+  "problem.catalog.covers_missing.title": "No covers loaded",
+  "problem.catalog.covers_missing.cause": "{path} exists, but no images were extracted from it. Details are in the log.",
+  "problem.catalog.covers_missing.step.refresh": "Click “Refresh catalog”; if it stays empty, open the log folder and report the covers entry.",
   "problem.transport.folder_mode.title": "Folder mode active",
   "problem.transport.folder_mode.cause": "You operate Resilio Sync yourself. The launcher shows you the keys to paste.",
   "problem.transport.folder_mode.step.resilio": "Start Resilio Sync and add the shown key for each game.",
@@ -314,6 +324,7 @@ export const en: Messages = {
   "problem.transport.start_failed.title": "Resilio Sync unavailable",
   "problem.transport.start_failed.cause": "{detail}",
   "problem.transport.start_failed.step.install": "Install Resilio Sync (link via “Fix now”) and restart the launcher.",
+  "problem.transport.start_failed.step.pick_binary": "Or Settings → Advanced → pick the Resilio executable, e.g. the ETI launcher's “btsync.exe”.",
   "problem.transport.start_failed.step.folder_mode": "Until then folder mode is active: paste keys into Resilio manually.",
 
   "problem.lanpage.unreachable.title": "LANPage not reachable ({host})",

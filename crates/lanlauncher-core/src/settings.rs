@@ -52,6 +52,9 @@ pub struct Settings {
     /// Overrides the built-in read-only key of the catalog share
     /// (`eti_launcher`, see `catalog::BUILTIN_CATALOG_KEY`).
     pub catalog_key: Option<String>,
+    /// Explicit Resilio Sync binary (e.g. the ETI launcher's `btsync.exe`)
+    /// when the automatic search does not find one.
+    pub resilio_binary: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,6 +83,7 @@ impl Default for Settings {
             runner_paths: RunnerPaths::default(),
             sync_port: 0,
             catalog_key: None,
+            resilio_binary: None,
         }
     }
 }
@@ -124,6 +128,16 @@ impl Settings {
             self.lanpage_host = "launcher.lan".into();
         }
         self.normalise_catalog_key();
+        self.normalise_resilio_binary();
+    }
+
+    /// An empty or whitespace-only binary path means "search automatically".
+    pub fn normalise_resilio_binary(&mut self) {
+        self.resilio_binary = self
+            .resilio_binary
+            .take()
+            .map(|p| PathBuf::from(p.to_string_lossy().trim()))
+            .filter(|p| !p.as_os_str().is_empty());
     }
 
     /// Trim the catalog key override and turn an empty value into `None`.

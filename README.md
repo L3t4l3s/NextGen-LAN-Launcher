@@ -88,6 +88,10 @@ Tags `v*` are built by `release.yml` instead.
   Registration and peer-based detection are untested against a real sync server. Resilio cannot
   tell a server from another client that already holds the catalog, so a second player with a
   complete `eti_launcher` also counts as "server found".
+- **ETI installs and setup scripts:** existing installations are adopted by comparing the
+  archive listing with `local/`, and `game_setup.cmd` now receives the four-argument contract
+  through the raw command line. Both untested on Windows hardware, as is the broadened Resilio
+  search (ETI `btsync.exe`, PATH, other profiles, registry).
 - **Covers and videos** come from the `eti_launcher` share at the LAN (`update/assets.eti`,
   `video/<id>.mp4`). Demo mode intentionally ships no game artwork.
 - **macOS/Linux launch profiles:** six games have curated profiles; every other game gets a profile

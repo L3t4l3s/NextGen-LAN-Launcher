@@ -67,17 +67,19 @@ pub fn script_command_line(
     )
 }
 
-/// Plan for the one-time `game_setup.cmd "<game_path>" <id>`.
-pub fn setup_plan(paths: &crate::paths::GamePaths, game_id: &str) -> Option<LaunchPlan> {
+/// Plan for the one-time `game_setup.cmd`. ETI calls it with the same four
+/// arguments as `game_start.cmd` (`"<game_path>" <id> <lang> "<player>"`);
+/// a quarter of the official setup scripts read `%3`/`%4`.
+pub fn setup_plan(
+    paths: &crate::paths::GamePaths,
+    game_id: &str,
+    lang: &str,
+    player: &str,
+) -> Option<LaunchPlan> {
     if !paths.setup_script.is_file() {
         return None;
     }
-    let raw = format!(
-        "\"{} {} {}\"",
-        quote(&paths.setup_script.to_string_lossy()),
-        quote(&paths.share_dir.to_string_lossy()),
-        game_id
-    );
+    let raw = script_command_line(&paths.setup_script, &paths.share_dir, game_id, lang, player);
     Some(LaunchPlan {
         program: PathBuf::from(comspec()),
         args: vec!["/S".into(), "/C".into(), raw.clone()],
@@ -107,5 +109,23 @@ mod tests {
             r#"""D:\LAN Party\quake3\game_start.cmd" "D:\LAN Party\quake3" quake3 de "Player One"""#
         );
         assert_eq!(quote("Ev\"il"), "\"Evil\"");
+    }
+
+    #[test]
+    fn setup_plan_uses_the_full_contract_and_raw_command_line() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = crate::paths::GamePaths::new(tmp.path(), "cnctw");
+        assert!(setup_plan(&paths, "cnctw", "de", "Player").is_none());
+        std::fs::create_dir_all(&paths.share_dir).unwrap();
+        std::fs::write(&paths.setup_script, "echo setup").unwrap();
+        let plan = setup_plan(&paths, "cnctw", "de", "Player One").unwrap();
+        let expected = format!(
+            "/S /C \"\"{}\" \"{}\" cnctw de \"Player One\"\"",
+            paths.setup_script.display(),
+            paths.share_dir.display()
+        );
+        assert_eq!(plan.raw_command_line.as_deref(), Some(expected.as_str()));
+        assert_eq!(plan.cwd, paths.share_dir);
+        assert!(plan.needs_elevation);
     }
 }

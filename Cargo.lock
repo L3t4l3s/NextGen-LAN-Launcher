@@ -2358,6 +2358,7 @@ dependencies = [
  "chrono",
  "directories",
  "encoding_rs",
+ "flate2",
  "futures",
  "hex",
  "log",

@@ -793,12 +793,141 @@ impl Transport for ResilioTransport {
     }
 }
 
-/// Where to find the Resilio Sync binary: bundled resource, previous
-/// download, or a system-wide installation.
-pub fn locate_binary(resource_dir: Option<&Path>, data_dir: &Path) -> Option<PathBuf> {
+/// Binary names accepted on Windows. `btsync.exe` is the renamed engine the
+/// original ETI launcher ships; it speaks the same API.
+pub const WINDOWS_BINARY_NAMES: &[&str] = &["Resilio Sync.exe", "rslsync.exe", "btsync.exe"];
+
+/// Environment for the Windows binary search, injectable for tests.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WinEnv {
+    /// `%ProgramFiles%`, `%ProgramFiles(x86)%`.
+    pub program_files: Vec<PathBuf>,
+    /// `%LOCALAPPDATA%` of the current (possibly elevated) account.
+    pub local_app_data: Option<PathBuf>,
+    /// Entries of `%PATH%`.
+    pub path: Vec<PathBuf>,
+    /// Profile directories under `C:\Users`, for a per-user Resilio installed
+    /// by another account than the elevated one running the launcher.
+    pub user_profiles: Vec<PathBuf>,
+    /// `InstallLocation` values from the uninstall registry keys.
+    pub registry_install_dirs: Vec<PathBuf>,
+}
+
+impl WinEnv {
+    /// Collect the search environment from the running process.
+    pub fn from_process() -> Self {
+        let mut env = WinEnv::default();
+        for var in ["ProgramFiles", "ProgramFiles(x86)"] {
+            if let Some(v) = std::env::var_os(var).filter(|v| !v.is_empty()) {
+                env.program_files.push(PathBuf::from(v));
+            }
+        }
+        env.local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+        if let Some(path) = std::env::var_os("PATH") {
+            env.path = std::env::split_paths(&path)
+                .filter(|p| !p.as_os_str().is_empty())
+                .collect();
+        }
+        let users_root = std::env::var_os("USERPROFILE")
+            .map(PathBuf::from)
+            .and_then(|p| p.parent().map(Path::to_path_buf));
+        if let Some(root) = users_root {
+            if let Ok(rd) = std::fs::read_dir(root) {
+                env.user_profiles = rd.flatten().map(|e| e.path()).collect();
+            }
+        }
+        if cfg!(target_os = "windows") {
+            env.registry_install_dirs = registry_install_dirs();
+        }
+        env
+    }
+}
+
+/// Ordered Windows candidates: a regular Resilio install, the ETI launcher's
+/// bundled engine, PATH, other user profiles, registry. Pure, no IO.
+pub fn windows_candidates(env: &WinEnv) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(local) = &env.local_app_data {
+        out.push(local.join("Resilio Sync").join("Resilio Sync.exe"));
+    }
+    for pf in &env.program_files {
+        out.push(pf.join("Resilio Sync").join("Resilio Sync.exe"));
+    }
+    for pf in &env.program_files {
+        let eti = pf.join("eti").join("lan launcher");
+        out.extend(WINDOWS_BINARY_NAMES.iter().map(|n| eti.join(n)));
+    }
+    for dir in &env.path {
+        out.extend(WINDOWS_BINARY_NAMES.iter().map(|n| dir.join(n)));
+    }
+    for profile in &env.user_profiles {
+        out.push(
+            profile
+                .join("AppData")
+                .join("Local")
+                .join("Resilio Sync")
+                .join("Resilio Sync.exe"),
+        );
+    }
+    for dir in &env.registry_install_dirs {
+        out.extend(WINDOWS_BINARY_NAMES.iter().map(|n| dir.join(n)));
+    }
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|p| seen.insert(super::normalise_dir(p)));
+    out
+}
+
+/// `InstallLocation` of the Resilio Sync uninstall entries (per user and
+/// machine-wide), read with `reg query` so no registry crate is needed.
+fn registry_install_dirs() -> Vec<PathBuf> {
+    const KEYS: &[&str] = &[
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Resilio Sync",
+        r"HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\Resilio Sync",
+        r"HKLM\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Resilio Sync",
+    ];
+    KEYS.iter()
+        .filter_map(|key| {
+            std::process::Command::new("reg")
+                .args(["query", key, "/v", "InstallLocation"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| parse_reg_query_output(&String::from_utf8_lossy(&o.stdout)))
+        })
+        .collect()
+}
+
+/// Extract the value from `reg query … /v X` output
+/// (`    X    REG_SZ    C:\dir`).
+pub fn parse_reg_query_output(out: &str) -> Option<PathBuf> {
+    out.lines().find_map(|line| {
+        let (_, value) = line.split_once("REG_SZ")?;
+        let value = value.trim().trim_end_matches(['\\', '/']);
+        (!value.is_empty()).then(|| PathBuf::from(value))
+    })
+}
+
+/// Outcome of the binary search, including every path that was probed so a
+/// failed search can be explained in the log.
+#[derive(Debug, Clone, Default)]
+pub struct LocateResult {
+    pub found: Option<PathBuf>,
+    pub probed: Vec<PathBuf>,
+}
+
+/// Where to find the Resilio Sync binary: a user-configured path, bundled
+/// resource, previous download, or an installation on the system.
+pub fn locate_binary_detailed(
+    override_path: Option<&Path>,
+    resource_dir: Option<&Path>,
+    data_dir: &Path,
+) -> LocateResult {
     let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(p) = override_path {
+        candidates.push(p.to_path_buf());
+    }
     let names: &[&str] = if cfg!(target_os = "windows") {
-        &["Resilio Sync.exe", "rslsync.exe"]
+        WINDOWS_BINARY_NAMES
     } else if cfg!(target_os = "macos") {
         &[
             "Resilio Sync.app/Contents/MacOS/Resilio Sync",
@@ -820,18 +949,7 @@ pub fn locate_binary(resource_dir: Option<&Path>, data_dir: &Path) -> Option<Pat
         }
     }
     if cfg!(target_os = "windows") {
-        if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            candidates.push(
-                Path::new(&local)
-                    .join("Resilio Sync")
-                    .join("Resilio Sync.exe"),
-            );
-        }
-        for var in ["ProgramFiles", "ProgramFiles(x86)"] {
-            if let Ok(pf) = std::env::var(var) {
-                candidates.push(Path::new(&pf).join("Resilio Sync").join("Resilio Sync.exe"));
-            }
-        }
+        candidates.extend(windows_candidates(&WinEnv::from_process()));
     } else if cfg!(target_os = "macos") {
         candidates.push(PathBuf::from(
             "/Applications/Resilio Sync.app/Contents/MacOS/Resilio Sync",
@@ -844,8 +962,20 @@ pub fn locate_binary(resource_dir: Option<&Path>, data_dir: &Path) -> Option<Pat
     } else {
         candidates.push(PathBuf::from("/usr/bin/rslsync"));
         candidates.push(PathBuf::from("/usr/local/bin/rslsync"));
+        if let Some(path) = std::env::var_os("PATH") {
+            candidates.extend(std::env::split_paths(&path).map(|d| d.join("rslsync")));
+        }
     }
-    candidates.into_iter().find(|p| p.is_file())
+    let found = candidates.iter().find(|p| p.is_file()).cloned();
+    LocateResult {
+        found,
+        probed: candidates,
+    }
+}
+
+/// Convenience wrapper without override; see [`locate_binary_detailed`].
+pub fn locate_binary(resource_dir: Option<&Path>, data_dir: &Path) -> Option<PathBuf> {
+    locate_binary_detailed(None, resource_dir, data_dir).found
 }
 
 /// Windows only: the release bundles Resilio's installer
@@ -927,6 +1057,76 @@ pub fn official_download_url() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_candidates_cover_eti_path_and_other_profiles() {
+        let env = WinEnv {
+            program_files: vec![
+                PathBuf::from(r"C:\Program Files"),
+                PathBuf::from(r"C:\Program Files (x86)"),
+            ],
+            local_app_data: Some(PathBuf::from(r"C:\Users\admin\AppData\Local")),
+            path: vec![PathBuf::from(r"C:\Tools"), PathBuf::from(r"C:\Tools")],
+            user_profiles: vec![PathBuf::from(r"C:\Users\schim")],
+            registry_install_dirs: vec![PathBuf::from(r"D:\Apps\Resilio Sync")],
+        };
+        // Path::join uses the host separator; compare separator-agnostic.
+        let s: Vec<String> = windows_candidates(&env)
+            .iter()
+            .map(|p| super::super::normalise_dir(p))
+            .collect();
+        let has = |x: &str| s.iter().any(|c| c.eq_ignore_ascii_case(x));
+        assert!(
+            s[0].eq_ignore_ascii_case("C:/Users/admin/AppData/Local/Resilio Sync/Resilio Sync.exe")
+        );
+        assert!(has("C:/Program Files/eti/lan launcher/btsync.exe"));
+        assert!(has("C:/Tools/rslsync.exe"));
+        assert!(has(
+            "C:/Users/schim/AppData/Local/Resilio Sync/Resilio Sync.exe"
+        ));
+        assert!(has("D:/Apps/Resilio Sync/Resilio Sync.exe"));
+        // duplicate PATH entry is probed once
+        assert_eq!(
+            s.iter()
+                .filter(|x| x.eq_ignore_ascii_case("C:/Tools/btsync.exe"))
+                .count(),
+            1
+        );
+        // regular install beats the ETI copy
+        let eti = s.iter().position(|x| x.contains("lan launcher")).unwrap();
+        let pf = s
+            .iter()
+            .position(|x| x.eq_ignore_ascii_case("C:/Program Files/Resilio Sync/Resilio Sync.exe"))
+            .unwrap();
+        assert!(pf < eti);
+    }
+
+    #[test]
+    fn parses_reg_query_output() {
+        let out = "\r\nHKEY_CURRENT_USER\\Software\\...\\Resilio Sync\r\n    InstallLocation    REG_SZ    C:\\Users\\schim\\AppData\\Local\\Resilio Sync\\\r\n\r\n";
+        assert_eq!(
+            parse_reg_query_output(out),
+            Some(PathBuf::from(r"C:\Users\schim\AppData\Local\Resilio Sync"))
+        );
+        assert_eq!(
+            parse_reg_query_output(
+                "ERROR: The system was unable to find the specified registry key or value."
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn locate_binary_prefers_the_override() {
+        let tmp = tempfile::tempdir().unwrap();
+        let custom = tmp.path().join("btsync.exe");
+        std::fs::write(&custom, "x").unwrap();
+        let r = locate_binary_detailed(Some(&custom), None, tmp.path());
+        assert_eq!(r.found.as_deref(), Some(custom.as_path()));
+        assert_eq!(r.probed[0], custom);
+        let r = locate_binary_detailed(Some(&tmp.path().join("missing.exe")), None, tmp.path());
+        assert!(r.probed.len() > 1);
+    }
 
     #[test]
     fn download_url_comes_from_the_lock_file() {

@@ -72,12 +72,18 @@ pub async fn apply(
             Ok("msg.profile_private".into())
         }
         FixAction::AddFirewallRules => {
-            let binary = lanlauncher_core::transport::resilio::locate_binary(
+            let (override_path, port) = {
+                let s = state.settings.read().await;
+                (s.resilio_binary.clone(), s.sync_port)
+            };
+            let located = lanlauncher_core::transport::resilio::locate_binary_detailed(
+                override_path.as_deref(),
                 state.resource_dir.as_deref(),
                 &state.dirs.data,
-            )
-            .ok_or("err.resilio_not_found")?;
-            let port = state.settings.read().await.sync_port;
+            );
+            let binary = located
+                .found
+                .ok_or_else(|| format!("err.resilio_not_found|{}", located.probed.len()))?;
             for rule in diagnostics::firewall_rules(&binary, port) {
                 netsh(&rule).await?;
             }

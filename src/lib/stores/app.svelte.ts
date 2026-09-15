@@ -44,6 +44,14 @@ class AppStore {
     });
   }
 
+  /** Playable games that still carry a hint (e.g. a setup-script warning). */
+  get hintGames(): GameView[] {
+    return this.games.filter((g) => {
+      const s = this.statusOf(g.id);
+      return !!s?.problem && (s.phase === "ready" || s.phase === "update_available");
+    });
+  }
+
   get eventTitle(): string {
     return this.event?.config?.title ?? "";
   }

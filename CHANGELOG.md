@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Vorhandene Installationen des ETI-Launchers werden übernommen statt bei jedem Start neu
+  geprüft, entpackt und eingerichtet (Spielstände in `local/` bleiben erhalten). „Reparieren“
+  erzwingt weiterhin die volle Prüfung.
+- `game_setup.cmd` wird wie `game_start.cmd` mit vier Argumenten und roher Kommandozeile
+  gestartet; Skriptausgabe landet bei Fehlern im Log.
+- Resilio-Suche findet auch die `btsync.exe` des ETI-Launchers, Installationen in PATH, anderen
+  Benutzerprofilen und der Registry; geprüfte Pfade stehen im Log, der Pfad lässt sich in den
+  Einstellungen vorgeben.
+- Downloads zeigt einen Abschnitt „Hinweise“ für spielbare Spiele mit Warnung; der Zähler in der
+  Statusleiste führt dorthin.
+- Cover: gzip-komprimiertes `assets.eti` wird gelesen, Fehler stehen im Log, Diagnose meldet
+  fehlende Cover.
 - Statusleiste und LAN-Ansicht zeigen, ob ein Sync-Server gefunden wurde (mindestens ein Peer
   am Katalog-Ordner `eti_launcher`). „Alle Spiele“ zeigt weiterhin den kompletten Katalog.
 - Der Launcher fügt den Katalog-Ordner `eti_launcher` im verwalteten Modus selbst zu Resilio hinzu.

@@ -97,6 +97,8 @@ export const de: Messages = {
   "downloads.empty": "Gerade wird nichts geladen. Wähle in der Bibliothek ein Spiel und klicke „Installieren“.",
   "downloads.hint":
     "Der Launcher prüft jedes Archiv selbst. Sobald die Datei vollständig auf der Platte liegt, wird sie entpackt – auch wenn der Sync noch 99 % anzeigt.",
+  "downloads.hints.title": "Hinweise",
+  "downloads.hints.text": "Diese Spiele sind spielbar, haben aber beim Einrichten etwas gemeldet.",
 
   "lan.title": "Diese LAN",
   "lan.no_event.title": "Keine LAN-Konfiguration gefunden",
@@ -161,6 +163,11 @@ export const de: Messages = {
   "settings.theme.beispiel": "Beispiel-LAN Orange",
   "settings.advanced": "Erweitert",
   "settings.sync_port": "Sync-Port (0 = automatisch)",
+  "settings.resilio_binary": "Resilio-Programmdatei",
+  "settings.resilio_binary.placeholder": "leer = automatisch suchen",
+  "settings.resilio_binary.hint":
+    "Nur nötig, wenn Resilio nicht gefunden wird. Der ETI-Launcher bringt es als „btsync.exe“ in C:\\Program Files\\eti\\lan launcher mit; beide Versionen funktionieren.",
+  "action.browse": "Durchsuchen…",
   "settings.catalog_key": "Key des Katalog-Ordners (eti_launcher)",
   "settings.catalog_key.hint":
     "Leer lassen, um den eingebauten Key zu verwenden. Nur ändern, wenn die Orga einen eigenen Sync-Server betreibt. Wird beim Speichern für den laufenden Sync-Dienst übernommen.",
@@ -218,7 +225,7 @@ export const de: Messages = {
   "err.key_folder_mode_only": "Der Key wird nur im Ordner-Modus angezeigt.",
   "err.powershell": "PowerShell konnte nicht gestartet werden: {detail}",
   "err.windows_only": "Diese Aktion gibt es nur unter Windows.",
-  "err.resilio_not_found": "Resilio Sync wurde nicht gefunden (weder mitgeliefert noch installiert). Ordner-Modus aktiv.",
+  "err.resilio_not_found": "Resilio Sync wurde nicht gefunden ({detail} Pfade geprüft, Liste im Log). Ordner-Modus aktiv.",
   "err.resilio_start_failed": "Resilio Sync konnte nicht gestartet werden: {detail}",
   "err.no_executable": "Für dieses Spiel ist keine Startdatei bekannt – bitte über „Startdatei wählen“ festlegen.",
   "err.start_script_missing": "Im Spielordner fehlt game_start.cmd.",
@@ -306,6 +313,9 @@ export const de: Messages = {
   "problem.catalog.key_missing.cause":
     "Es ist kein gültiger Key für eti_launcher hinterlegt – weder eingebaut noch in den Einstellungen. Ohne ihn kommen weder Spieleliste noch Cover an.",
   "problem.catalog.key_missing.step.settings": "Einstellungen → Erweitert → Key des Katalog-Ordners eintragen (von der Orga).",
+  "problem.catalog.covers_missing.title": "Keine Cover geladen",
+  "problem.catalog.covers_missing.cause": "{path} ist da, aber es wurden keine Bilder daraus entpackt. Details stehen im Log.",
+  "problem.catalog.covers_missing.step.refresh": "„Katalog aktualisieren“ klicken; bleibt es leer, Log-Ordner öffnen und den Cover-Eintrag melden.",
   "problem.transport.folder_mode.title": "Ordner-Modus aktiv",
   "problem.transport.folder_mode.cause": "Du bedienst Resilio Sync selbst. Der Launcher zeigt dir die Keys zum Einfügen.",
   "problem.transport.folder_mode.step.resilio": "Resilio Sync starten und pro Spiel den angezeigten Key hinzufügen.",
@@ -317,6 +327,7 @@ export const de: Messages = {
   "problem.transport.start_failed.title": "Resilio Sync nicht verfügbar",
   "problem.transport.start_failed.cause": "{detail}",
   "problem.transport.start_failed.step.install": "Resilio Sync installieren (Link über „Jetzt beheben“) und den Launcher neu starten.",
+  "problem.transport.start_failed.step.pick_binary": "Oder Einstellungen → Erweitert → Resilio-Programmdatei wählen, z. B. „btsync.exe“ des ETI-Launchers.",
   "problem.transport.start_failed.step.folder_mode": "Bis dahin läuft der Ordner-Modus: Keys manuell in Resilio einfügen.",
 
   "problem.lanpage.unreachable.title": "LANPage nicht erreichbar ({host})",

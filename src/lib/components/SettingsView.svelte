@@ -1,6 +1,6 @@
 <script lang="ts">
   import { app } from "$lib/stores/app.svelte";
-  import { api, pickFolder } from "$lib/api";
+  import { api, pickFolder, pickFile } from "$lib/api";
   import { languages, t, userText } from "$lib/i18n";
   import { formatBytes } from "$lib/format";
   import type { LibrarySpace, Settings } from "$lib/types";
@@ -147,6 +147,14 @@
             <div>
               <label for="port">{t("settings.sync_port")}</label>
               <input id="port" type="number" min="0" max="65535" bind:value={draft.syncPort} />
+            </div>
+            <div>
+              <label for="rbin">{t("settings.resilio_binary")}</label>
+              <div class="row">
+                <input id="rbin" class="grow" bind:value={draft.resilioBinary} spellcheck="false" placeholder={t("settings.resilio_binary.placeholder")} />
+                <button class="ghost" onclick={async () => { const f = await pickFile(app.bootstrap?.platform === "windows" ? ["exe"] : undefined); if (f && draft) draft.resilioBinary = f; }}>{t("action.browse")}</button>
+              </div>
+              <p class="hint">{t("settings.resilio_binary.hint")}</p>
             </div>
             <div>
               <label for="ckey">{t("settings.catalog_key")}</label>

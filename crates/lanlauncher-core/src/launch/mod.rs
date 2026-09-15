@@ -135,8 +135,10 @@ pub async fn spawn(plan: &LaunchPlan) -> Result<u32> {
     Ok(pid)
 }
 
+/// Apply a plan's arguments: on Windows the verbatim command line when set
+/// (cmd.exe quoting rules), otherwise the argument vector.
 #[cfg(windows)]
-fn apply_args(cmd: &mut tokio::process::Command, plan: &LaunchPlan) {
+pub fn apply_args(cmd: &mut tokio::process::Command, plan: &LaunchPlan) {
     match &plan.raw_command_line {
         Some(raw) => {
             cmd.raw_arg(raw);
@@ -147,8 +149,10 @@ fn apply_args(cmd: &mut tokio::process::Command, plan: &LaunchPlan) {
     }
 }
 
+/// Apply a plan's arguments: on Windows the verbatim command line when set
+/// (cmd.exe quoting rules), otherwise the argument vector.
 #[cfg(not(windows))]
-fn apply_args(cmd: &mut tokio::process::Command, plan: &LaunchPlan) {
+pub fn apply_args(cmd: &mut tokio::process::Command, plan: &LaunchPlan) {
     cmd.args(&plan.args);
 }
 

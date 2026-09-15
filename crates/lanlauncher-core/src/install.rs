@@ -80,6 +80,11 @@ pub struct Receipt {
     /// User-chosen executable when the manifest could not decide.
     #[serde(default)]
     pub exe_override: Option<String>,
+    /// Installation was made by another launcher (the original ETI client) and
+    /// adopted by comparing the archive listing with `local/`; no CRC test ran.
+    /// "Repair" verifies and re-extracts it.
+    #[serde(default)]
+    pub adopted: bool,
 }
 
 impl Receipt {
@@ -188,6 +193,9 @@ pub enum Action {
     Extract,
     Setup,
     Ready,
+    /// Compare an installation made by another launcher with its archive
+    /// instead of re-extracting it.
+    Adopt,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -227,6 +235,9 @@ pub struct Tracker {
     pub problem: Option<Problem>,
     pub work_progress: f64,
     pub work_started_at: Option<Instant>,
+    /// Archive and `local/` were found on disk without a receipt (an ETI
+    /// install): try to adopt before falling back to verify + extract.
+    pub adopt_candidate: bool,
 }
 
 impl Tracker {
@@ -235,6 +246,7 @@ impl Tracker {
             game_id: game_id.to_string(),
             phase: Phase::NotInstalled,
             wanted: false,
+            adopt_candidate: false,
             last_archive_len: None,
             archive_stable_since: None,
             last_bytes: 0,
@@ -249,6 +261,7 @@ impl Tracker {
 
     pub fn request_install(&mut self) {
         self.wanted = true;
+        self.adopt_candidate = false;
         if !self.phase.is_busy() && !self.phase.is_playable() {
             self.phase = Phase::Queued;
         }
@@ -260,6 +273,8 @@ impl Tracker {
     /// whatever is on disk. Works from any phase, including Ready.
     pub fn request_repair(&mut self) {
         self.wanted = true;
+        // Repair means "verify and re-extract", never the listing-only adoption.
+        self.adopt_candidate = false;
         self.phase = Phase::Syncing;
         self.problem = None;
         self.verify_failed_at = None;
@@ -307,6 +322,7 @@ impl Tracker {
 
     pub fn fail(&mut self, problem: Problem) {
         self.phase = Phase::Failed;
+        self.adopt_candidate = false;
         self.problem = Some(problem);
     }
 
@@ -371,6 +387,19 @@ impl Tracker {
 
         match self.phase {
             Phase::Queued => {
+                if self.adopt_candidate
+                    && obs.archive_len.is_some()
+                    && obs.partial_len.is_none()
+                    && obs.local_present
+                {
+                    // Listing comparison only; the phase reads as "verifying"
+                    // in the UI, which is what happens.
+                    self.phase = Phase::Verifying;
+                    self.work_progress = 0.0;
+                    self.work_started_at = Some(now);
+                    return Action::Adopt;
+                }
+                self.adopt_candidate = false;
                 self.phase = Phase::Syncing;
                 Action::None
             }
@@ -615,6 +644,14 @@ enum WorkResult {
         generation: u64,
         result: Result<()>,
     },
+    Adopted {
+        game_id: String,
+        generation: u64,
+        /// `Ok(Some(files))` when `local/` matches the archive listing.
+        result: Result<Option<u64>>,
+        archive_len: u64,
+        revision: String,
+    },
 }
 
 impl WorkResult {
@@ -631,6 +668,11 @@ impl WorkResult {
                 ..
             }
             | WorkResult::SetupDone {
+                game_id,
+                generation,
+                ..
+            }
+            | WorkResult::Adopted {
                 game_id,
                 generation,
                 ..
@@ -771,6 +813,16 @@ impl InstallManager {
         }
     }
 
+    /// Stop every running job. Called before this manager is replaced so an
+    /// orphaned extraction cannot race the successor's.
+    pub async fn cancel_all(&self) {
+        let mut work = self.work.lock().await;
+        for (_, w) in work.drain() {
+            w.cancel.store(true, Ordering::Relaxed);
+            w.handle.abort();
+        }
+    }
+
     /// Discover games that already have files on disk (previous runs).
     pub async fn adopt_existing(&self) {
         let catalog = self.catalog.read().await.clone();
@@ -786,7 +838,21 @@ impl InstallManager {
                     || paths.receipt.exists();
                 if has_data {
                     t.wanted = true;
-                    t.phase = Phase::Syncing;
+                    // Start in Queued so the first step can take the receipt
+                    // shortcut (Ready) or the adoption path; only a download in
+                    // progress goes straight to Syncing. Never re-extract an
+                    // installation that is already on disk.
+                    let installed_elsewhere = paths.archive.exists()
+                        && paths.version_file.is_file()
+                        && std::fs::read_dir(&paths.local_dir)
+                            .map(|mut d| d.next().is_some())
+                            .unwrap_or(false);
+                    if paths.receipt.exists() || installed_elsewhere {
+                        t.adopt_candidate = !paths.receipt.exists();
+                        t.phase = Phase::Queued;
+                    } else {
+                        t.phase = Phase::Syncing;
+                    }
                     let _ = self
                         .transport
                         .add_share(
@@ -893,6 +959,7 @@ impl InstallManager {
                                             files,
                                             setup_done: false,
                                             exe_override: None,
+                                            adopted: false,
                                         };
                                         if let Err(e) = receipt.save(&paths.receipt) {
                                             t.fail(
@@ -923,6 +990,58 @@ impl InstallManager {
                                             game_id: game_id.clone(),
                                         }),
                                 );
+                            }
+                        }
+                    }
+                }
+                WorkResult::Adopted {
+                    game_id,
+                    result,
+                    archive_len,
+                    revision,
+                    ..
+                } => {
+                    self.work.lock().await.remove(&game_id);
+                    if let Some(t) = trackers.get_mut(&game_id) {
+                        t.adopt_candidate = false;
+                        match result {
+                            Ok(Some(files)) => {
+                                let receipt = Receipt {
+                                    version: 1,
+                                    game_id: game_id.clone(),
+                                    revision,
+                                    installed_at: Utc::now(),
+                                    archive_bytes: archive_len,
+                                    files,
+                                    // The other launcher ran its setup already.
+                                    setup_done: true,
+                                    exe_override: None,
+                                    adopted: true,
+                                };
+                                let saved = catalog
+                                    .game(&game_id)
+                                    .and_then(|g| (self.resolve_paths)(g))
+                                    .map(|p| receipt.save(&p.receipt));
+                                match saved {
+                                    Some(Ok(())) => {
+                                        log::info!("adopt: {game_id} matches its archive ({files} files); marked ready");
+                                        t.phase = Phase::Ready;
+                                        t.problem = None;
+                                    }
+                                    Some(Err(e)) => t.fail(
+                                        Problem::new("install.receipt_error", Severity::Error)
+                                            .param("detail", e.to_string()),
+                                    ),
+                                    None => t.phase = Phase::Syncing,
+                                }
+                            }
+                            Ok(None) => {
+                                log::info!("adopt: {game_id} differs from its archive; verifying and extracting");
+                                t.phase = Phase::Syncing;
+                            }
+                            Err(e) => {
+                                log::warn!("adopt: {game_id} listing failed ({e}); verifying and extracting");
+                                t.phase = Phase::Syncing;
                             }
                         }
                     }
@@ -1003,6 +1122,14 @@ impl InstallManager {
                             .await
                     }
                     Action::Setup => self.spawn_setup(&id, &paths, manifest.clone()).await,
+                    Action::Adopt => {
+                        let revision = obs
+                            .version_ini
+                            .clone()
+                            .unwrap_or_else(|| game.revision.clone());
+                        self.spawn_adopt(&id, &paths, obs.archive_len.unwrap_or(0), revision)
+                            .await
+                    }
                     Action::Ready | Action::None => {}
                 }
             }
@@ -1023,6 +1150,35 @@ impl InstallManager {
         }
         out.sort_by(|a, b| a.game_id.cmp(&b.game_id));
         out
+    }
+
+    async fn spawn_adopt(&self, id: &str, paths: &GamePaths, archive_len: u64, revision: String) {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let archive = paths.archive.clone();
+        let local = paths.local_dir.clone();
+        let results = self.results.clone();
+        let game_id = id.to_string();
+        let generation = self.next_generation();
+        let handle = tokio::task::spawn_blocking(move || {
+            let result = extract::matches_extracted(&archive, &local);
+            if let Ok(mut r) = results.lock() {
+                r.push(WorkResult::Adopted {
+                    game_id,
+                    generation,
+                    result,
+                    archive_len,
+                    revision,
+                });
+            }
+        });
+        self.work.lock().await.insert(
+            id.to_string(),
+            ActiveWork {
+                cancel,
+                handle,
+                generation,
+            },
+        );
     }
 
     async fn spawn_verify(&self, id: &str, paths: &GamePaths, archive_len: Option<u64>) {
@@ -1285,6 +1441,7 @@ mod tests {
             files: 3,
             setup_done: true,
             exe_override: None,
+            adopted: false,
         });
         o.local_present = true;
         o.required_files_ok = true;
@@ -1345,6 +1502,158 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures")
             .join(name)
+    }
+
+    /// Setup hook that counts invocations, to prove adoption skips setup.
+    struct CountingHook(Arc<std::sync::atomic::AtomicUsize>);
+
+    #[async_trait::async_trait]
+    impl SetupHook for CountingHook {
+        async fn run_setup(&self, _: &GamePaths, _: Option<&Manifest>) -> Result<()> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn test_game(id: &str) -> Game {
+        Game {
+            id: id.into(),
+            order: 1,
+            title: id.into(),
+            key: ShareKey::parse("BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
+            revision: "20250308".into(),
+            size_bytes: 4096,
+            release_year: None,
+            publisher: None,
+            max_players: None,
+            needs_master_server: false,
+            genre_id: None,
+            readme: Default::default(),
+        }
+    }
+
+    /// Manager over a passive folder transport with an on-disk ETI-style
+    /// install of `sample_game.rar` (archive, version.ini, extracted local/).
+    fn eti_install(root: &Path, id: &str) -> GamePaths {
+        let paths = GamePaths::new(root, id);
+        std::fs::create_dir_all(&paths.share_dir).unwrap();
+        std::fs::copy(fixture("sample_game.rar"), &paths.archive).unwrap();
+        std::fs::write(&paths.version_file, "20250308\n").unwrap();
+        extract::extract_atomically(&paths.archive, &paths.local_dir, None, None).unwrap();
+        paths
+    }
+
+    fn adopt_manager(
+        root: &Path,
+        id: &str,
+        setups: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> InstallManager {
+        let mut catalog = Catalog::default();
+        catalog.games.push(test_game(id));
+        let r2 = root.to_path_buf();
+        let mut manager = InstallManager::new(
+            Arc::new(crate::transport::folder::FolderTransport::new()),
+            catalog,
+            move |g| Some(GamePaths::new(&r2, &g.id)),
+            |_, _| None,
+            Arc::new(CountingHook(setups)),
+        );
+        manager.policy.stable_for = Duration::from_millis(200);
+        manager
+    }
+
+    async fn tick_until_ready(manager: &InstallManager) -> Vec<Phase> {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let mut seen = Vec::new();
+        while Instant::now() < deadline {
+            let statuses = manager.tick().await;
+            if let Some(s) = statuses.first() {
+                if seen.last() != Some(&s.phase) {
+                    seen.push(s.phase);
+                }
+                if s.phase.is_playable() {
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+        seen
+    }
+
+    #[tokio::test]
+    async fn adopted_eti_install_becomes_ready_without_extracting_or_setup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = eti_install(tmp.path(), "amongus");
+        std::fs::write(paths.local_dir.join("savegame.dat"), "keep me").unwrap();
+        let setups = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let manager = adopt_manager(tmp.path(), "amongus", setups.clone());
+        manager.adopt_existing().await;
+        assert_eq!(manager.tracker_phase("amongus").await, Some(Phase::Queued));
+
+        let seen = tick_until_ready(&manager).await;
+        assert_eq!(seen.last(), Some(&Phase::Ready), "phases: {seen:?}");
+        assert!(!seen.contains(&Phase::Extracting), "phases: {seen:?}");
+        assert_eq!(
+            setups.load(Ordering::SeqCst),
+            0,
+            "setup must not run for adopted installs"
+        );
+        // Files the other launcher left in local/ survive.
+        assert_eq!(
+            std::fs::read_to_string(paths.local_dir.join("savegame.dat")).unwrap(),
+            "keep me"
+        );
+        let receipt = Receipt::load(&paths.receipt).expect("receipt written");
+        assert!(receipt.adopted);
+        assert!(receipt.setup_done);
+        assert_eq!(receipt.revision, "20250308");
+        assert_eq!(receipt.files, 3);
+    }
+
+    #[tokio::test]
+    async fn incomplete_eti_install_falls_back_to_verify_and_extract() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = eti_install(tmp.path(), "amongus");
+        std::fs::remove_file(paths.local_dir.join("game.exe")).unwrap();
+        let setups = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let manager = adopt_manager(tmp.path(), "amongus", setups.clone());
+        manager.adopt_existing().await;
+
+        let seen = tick_until_ready(&manager).await;
+        assert_eq!(seen.last(), Some(&Phase::Ready), "phases: {seen:?}");
+        assert!(seen.contains(&Phase::Extracting), "phases: {seen:?}");
+        assert_eq!(setups.load(Ordering::SeqCst), 1);
+        assert!(paths.local_dir.join("game.exe").is_file());
+        assert!(!Receipt::load(&paths.receipt).unwrap().adopted);
+    }
+
+    #[tokio::test]
+    async fn existing_receipt_is_ready_on_first_tick() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = eti_install(tmp.path(), "amongus");
+        Receipt {
+            version: 1,
+            game_id: "amongus".into(),
+            revision: "20250308".into(),
+            installed_at: Utc::now(),
+            archive_bytes: 0,
+            files: 3,
+            setup_done: true,
+            exe_override: None,
+            adopted: false,
+        }
+        .save(&paths.receipt)
+        .unwrap();
+        let setups = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let manager = adopt_manager(tmp.path(), "amongus", setups.clone());
+        manager.adopt_existing().await;
+        let first = manager.tick().await;
+        assert_eq!(first[0].phase, Phase::Ready);
+        assert!(
+            manager.work.lock().await.is_empty(),
+            "no job may be started"
+        );
+        assert_eq!(setups.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

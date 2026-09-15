@@ -104,6 +104,8 @@ export interface Settings {
   syncPort: number;
   /** Overrides the built-in key of the catalog share (eti_launcher). */
   catalogKey: string | null;
+  /** Explicit Resilio binary (e.g. the ETI launcher's btsync.exe). */
+  resilioBinary: string | null;
 }
 
 export interface Link {

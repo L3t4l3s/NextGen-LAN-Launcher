@@ -24,11 +24,13 @@
   <h1>{t("downloads.title")}</h1>
   <p class="hint">{t("downloads.hint")}</p>
 
-  {#if items.length === 0}
+  {#if items.length === 0 && app.hintGames.length === 0}
     <div class="card empty">
       <p class="muted">{t("downloads.empty")}</p>
       <button class="primary" onclick={() => (app.view = "library")}>{t("nav.library")}</button>
     </div>
+  {:else if items.length === 0}
+    <p class="muted">{t("downloads.empty")}</p>
   {:else}
     <div class="stack">
       {#each items as { game, status } (game.id)}
@@ -58,6 +60,26 @@
             {#if status.problem}
               <ProblemCard problem={status.problem} compact />
             {/if}
+          </div>
+        {/if}
+      {/each}
+    </div>
+  {/if}
+
+  {#if app.hintGames.length > 0}
+    <h2>{t("downloads.hints.title")}</h2>
+    <p class="hint">{t("downloads.hints.text")}</p>
+    <div class="stack">
+      {#each app.hintGames as game (game.id)}
+        {@const status = app.statusOf(game.id)}
+        {#if status?.problem}
+          <div class="card item">
+            <div class="row">
+              <strong class="grow">{game.title}</strong>
+              <span class="badge ready">{t(`phase.${status.phase}`)}</span>
+              <button class="ghost" onclick={() => { app.selectedId = game.id; app.view = "library"; }}>{t("action.open")}</button>
+            </div>
+            <ProblemCard problem={status.problem} />
           </div>
         {/if}
       {/each}

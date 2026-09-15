@@ -348,6 +348,7 @@ pub async fn save_settings(state: State<'_, Arc<AppState>>, settings: Settings) 
         new.setup_complete = true;
     }
     new.normalise_catalog_key();
+    new.normalise_resilio_binary();
     if let Some(k) = &new.catalog_key {
         if lanlauncher_core::catalog::ShareKey::parse(k).is_none() {
             return Err("err.invalid_catalog_key".into());
@@ -363,8 +364,14 @@ pub async fn save_settings(state: State<'_, Arc<AppState>>, settings: Settings) 
     let old_root = current.library.default_root().map(|r| r.path.clone());
     let new_root = new.library.default_root().map(|r| r.path.clone());
     let catalog_changed = current.catalog_key != new.catalog_key || old_root != new_root;
+    let binary_changed = current.resilio_binary != new.resilio_binary;
     *current = new.clone();
     drop(current);
+    if binary_changed && new.transport == TransportMode::Managed && !state.demo {
+        // A different engine binary only takes effect with a fresh transport;
+        // the error, if any, is shown by the next diagnostics run.
+        let _ = restart_transport_inner(&state).await;
+    }
     if catalog_changed && !state.demo {
         // The wizard saves a root without restarting the transport, so the
         // catalog share is (re-)registered right here. The old registration
@@ -417,6 +424,24 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
         let health = t.health().await;
         problems.extend(diagnostics::check_transport(&health));
     }
+    checks.push("covers".into());
+    if let Some(root) = state.default_root_path().await {
+        let assets = root.join(lanlauncher_core::paths::ASSETS_RELATIVE);
+        let covers = std::fs::read_dir(state.dirs.covers_dir())
+            .map(|d| d.flatten().count())
+            .unwrap_or(0);
+        if assets.is_file() && covers == 0 {
+            problems.push(
+                lanlauncher_core::problem::Problem::new(
+                    "catalog.covers_missing",
+                    lanlauncher_core::problem::Severity::Info,
+                )
+                .param("path", assets.display().to_string())
+                .step("catalog.covers_missing.step.refresh"),
+            );
+        }
+    }
+
     // Only the managed Resilio registers the catalog share, so only there a
     // missing key matters (a fallback to folder mode is reported above).
     checks.push("catalog_key".into());
@@ -442,6 +467,7 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
             )
             .param("detail", e)
             .step("transport.start_failed.step.install")
+            .step("transport.start_failed.step.pick_binary")
             .step("transport.start_failed.step.folder_mode")
             .with_fix(FixAction::OpenUrl {
                 url: lanlauncher_core::transport::resilio::official_download_url(),
@@ -603,6 +629,11 @@ pub async fn get_library_space(state: State<'_, Arc<AppState>>) -> Cmd<Vec<Libra
 }
 
 pub async fn restart_transport_inner(state: &Arc<AppState>) -> Cmd<()> {
+    // Jobs of the old manager must not race the successor's on the same
+    // staging directories.
+    if let Some(m) = state.manager.read().await.clone() {
+        m.cancel_all().await;
+    }
     if let Some(t) = state.transport.read().await.clone() {
         let _ = t.stop().await;
     }

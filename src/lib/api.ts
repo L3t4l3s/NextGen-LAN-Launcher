@@ -75,6 +75,20 @@ export async function pickFolder(): Promise<string | null> {
   return typeof res === "string" ? res : null;
 }
 
+/** File picker; `extensions` (e.g. ["exe"]) is only meaningful on Windows, elsewhere any file may be chosen. */
+export async function pickFile(extensions?: string[]): Promise<string | null> {
+  if (!inTauri) {
+    return window.prompt("Datei (Demo im Browser):", "C:\\Program Files\\eti\\lan launcher\\btsync.exe") ?? null;
+  }
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const res = await open({
+    directory: false,
+    multiple: false,
+    ...(extensions?.length ? { filters: [{ name: "Programm", extensions }] } : {}),
+  });
+  return typeof res === "string" ? res : null;
+}
+
 export async function confirmDialog(message: string): Promise<boolean> {
   if (!inTauri) return window.confirm(message);
   const { ask } = await import("@tauri-apps/plugin-dialog");
