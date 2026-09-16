@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from "$lib/stores/app.svelte";
+  import { formatRate } from "$lib/format";
   import { t, userText } from "$lib/i18n";
 
   const level = $derived.by(() => {
@@ -43,6 +44,12 @@
   {#if app.health}
     <span class="sep">·</span>
     <span>{t("status.peers", { count: app.health.peers })}</span>
+    {#if app.health.kind !== "folder"}
+      <!-- Folder mode: somebody else's sync client moves the bytes, so a
+           reassuring "0 B/s" would be a lie rather than an answer. -->
+      <span class="sep">·</span>
+      <span title={t("status.rates")}>↓ {formatRate(app.health.download_bps ?? 0)} ↑ {formatRate(app.health.upload_bps ?? 0)}</span>
+    {/if}
     {#if app.health.lan_mode}<span class="sep">·</span><span>{t("lan.transport.lan_mode")}</span>{/if}
   {/if}
   {#if app.bootstrap?.transportError}

@@ -140,15 +140,12 @@
         </ul>
       </section>
 
+      <!-- No sync mode to pick: the launcher runs its own engine, and
+           whether anyone is out there is something it finds out by itself. -->
       <section class="card">
         <h2>{t("settings.transport")}</h2>
-        <div class="stack radios">
-          <label class="radio"><input type="radio" bind:group={draft.transport} value="managed" disabled={app.bootstrap?.demo} /> {t("settings.transport.managed")}</label>
-          <label class="radio"><input type="radio" bind:group={draft.transport} value="folder" disabled={app.bootstrap?.demo} /> {t("settings.transport.folder")}</label>
-          {#if app.bootstrap?.demo}<label class="radio"><input type="radio" bind:group={draft.transport} value="demo" checked disabled /> {t("settings.transport.demo")}</label>{/if}
-        </div>
-        <p class="hint">{t("settings.transport.restart_hint")}</p>
         <label class="radio"><input type="checkbox" bind:checked={draft.lanMode} /> {t("settings.lan_mode")}</label>
+        <p class="hint">{t("settings.lan_mode.hint")}</p>
       </section>
 
       {#if app.bootstrap?.platform === "windows"}
@@ -278,9 +275,6 @@
     display: flex;
     gap: 0.5rem;
     align-items: center;
-  }
-  .radios {
-    gap: 0.4rem;
   }
   .end {
     justify-content: flex-end;

@@ -130,15 +130,42 @@ impl Library {
         self.roots.iter().find(|r| r.path.join(game_id).is_dir())
     }
 
-    /// Root to use for a new install: an existing location wins, then the
-    /// root with the most free space that fits `needed_bytes`, then default.
+    /// Root to use for a new install: where the game already is, else the
+    /// default root when `needed_bytes` fit there, else the root with the
+    /// most free space that fits, else the default root anyway.
     pub fn choose_root_for(&self, game_id: &str, needed_bytes: u64) -> Option<&LibraryRoot> {
+        // A game that is already somewhere needs no volume enumeration at
+        // all; only a new one pays for the snapshot, and then once for every
+        // root rather than once per root.
         if let Some(r) = self.locate_game(game_id) {
+            return Some(r);
+        }
+        let disks = DiskTable::refresh();
+        self.choose_root_with(game_id, needed_bytes, |p| disks.free_for(p))
+    }
+
+    /// [`Library::choose_root_for`] with the free space injected, so the rule
+    /// can be tested without two real volumes.
+    pub fn choose_root_with(
+        &self,
+        game_id: &str,
+        needed_bytes: u64,
+        free_for: impl Fn(&Path) -> Option<u64>,
+    ) -> Option<&LibraryRoot> {
+        if let Some(r) = self.locate_game(game_id) {
+            return Some(r);
+        }
+        // The root the user marked as the default is a choice, not a
+        // suggestion: free space only decides when that one has no room.
+        if let Some(r) = self
+            .default_root()
+            .filter(|r| free_for(&r.path).is_some_and(|free| free >= needed_bytes))
+        {
             return Some(r);
         }
         let mut best: Option<(&LibraryRoot, u64)> = None;
         for r in &self.roots {
-            if let Some((free, _)) = disk_space(&r.path) {
+            if let Some(free) = free_for(&r.path) {
                 if free >= needed_bytes && best.map(|(_, f)| free > f).unwrap_or(true) {
                     best = Some((r, free));
                 }
@@ -147,15 +174,65 @@ impl Library {
         best.map(|(r, _)| r).or_else(|| self.default_root())
     }
 
+    /// Where a game is, or would go by default. For a *new* install prefer
+    /// [`Library::game_paths_for`]: it is what puts a game on the disk with
+    /// room for it.
     pub fn game_paths(&self, game_id: &str) -> Option<GamePaths> {
         self.locate_game(game_id)
             .or_else(|| self.default_root())
+            .map(|r| GamePaths::new(&r.path, game_id))
+    }
+
+    /// Paths for a game of known size, choosing the root as
+    /// [`Library::choose_root_for`] describes.
+    pub fn game_paths_for(&self, game_id: &str, needed_bytes: u64) -> Option<GamePaths> {
+        self.choose_root_for(game_id, needed_bytes)
             .map(|r| GamePaths::new(&r.path, game_id))
     }
 }
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_new_game_goes_where_it_fits() {
+        // Two roots, the first one too small: the settings promise the game
+        // lands where there is room, and until now it always took the first.
+        let dir = tempfile::tempdir().unwrap();
+        let small = dir.path().join("small");
+        let big = dir.path().join("big");
+        std::fs::create_dir_all(&small).unwrap();
+        std::fs::create_dir_all(&big).unwrap();
+        let mut lib = Library::default();
+        lib.add_root(LibraryRoot::new(&small));
+        lib.add_root(LibraryRoot::new(&big));
+
+        // An install that already exists stays where it is, whatever the
+        // free space says.
+        std::fs::create_dir_all(small.join("quake3")).unwrap();
+        let paths = lib.game_paths_for("quake3", u64::MAX).unwrap();
+        assert_eq!(paths.share_dir, small.join("quake3"));
+
+        // A game nobody has yet goes to the root with room for it, not to
+        // the first one in the list.
+        let free = |p: &Path| Some(if p == small { 10 } else { 900 });
+        let chosen = lib.choose_root_with("unknown", 500, free).unwrap();
+        assert_eq!(chosen.path, big);
+
+        // An existing install is never moved, however little room is left.
+        let chosen = lib.choose_root_with("quake3", 500, free).unwrap();
+        assert_eq!(chosen.path, small);
+
+        // The default root has room: it stays the choice, even though the
+        // other one is larger. Picking a folder is the user's decision.
+        let chosen = lib.choose_root_with("unknown", 5, free).unwrap();
+        assert_eq!(chosen.path, small);
+
+        // Nothing fits anywhere: the default root is still where it goes, and
+        // the disk check says the rest.
+        let chosen = lib.choose_root_with("unknown", u64::MAX, free).unwrap();
+        assert_eq!(chosen.path, small);
+    }
     use super::*;
 
     #[test]

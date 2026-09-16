@@ -523,20 +523,42 @@ pub fn parse_gui_token(html: &str) -> Option<String> {
     (!token.is_empty()).then(|| token.to_string())
 }
 
-/// `get_folders` entry: `{dir, secret, size, type, files, error, indexing}`.
-/// The documented API gives no per-folder progress, so `bytes_done` is only
-/// known when `error == 0 && !indexing` and no peers report pending data; we
-/// report `Complete` only when the engine has no error and nothing is indexing.
+/// `get_folders` entry, as 2.8 answers it:
+/// `{dir, secret, size, total_size, files, total_files, down_speed, up_speed,
+/// error, indexing, paused, type}`.
+///
+/// `size` is what this PC already holds and `total_size` what the share
+/// contains — reading `size` as the total is how a download of many gigabytes
+/// came to read "0 B of 782 B" while it was still being indexed.
 pub fn parse_api_folder(f: &Value, peers: u32) -> ShareStatus {
-    let size = f.get("size").and_then(Value::as_u64).unwrap_or(0);
-    let files = f.get("files").and_then(Value::as_u64).unwrap_or(0);
+    let number = |key: &str| f.get(key).and_then(as_u64_lenient).unwrap_or(0);
+    let done = number("size");
+    // Without `total_size` (an older engine) there is no way to tell a
+    // finished share from one that has just started; saying "complete" then
+    // would send a half-downloaded archive to the CRC check.
+    let announced = f.get("total_size").and_then(as_u64_lenient);
+    let total = announced.unwrap_or(done).max(done);
+    let files = number("total_files").max(number("files"));
     let error = f.get("error").and_then(Value::as_i64).unwrap_or(0);
     let indexing = f.get("indexing").and_then(Value::as_i64).unwrap_or(0) != 0;
+    let paused = f.get("paused").and_then(Value::as_i64).unwrap_or(0) != 0
+        || f.get("paused").and_then(Value::as_bool).unwrap_or(false);
     let state = if error != 0 {
         ShareState::Error
+    } else if paused {
+        ShareState::Paused
     } else if indexing {
         ShareState::Indexing
-    } else if size == 0 {
+    } else if announced.is_some_and(|t| t > 0 && done >= t)
+        && number("total_files") > 0
+        && number("files") >= number("total_files")
+    {
+        // Bytes and files both: while the engine is still learning what the
+        // share contains, the few files it knows about can look complete on
+        // their own, and the CRC check would then fail on a partial archive.
+        ShareState::Complete
+    } else if total == 0 {
+        // The share is registered but no peer has announced its contents yet.
         ShareState::Pending
     } else {
         ShareState::Downloading
@@ -548,12 +570,12 @@ pub fn parse_api_folder(f: &Value, peers: u32) -> ShareStatus {
             f.get("dir").and_then(Value::as_str).unwrap_or(""),
         )),
         state,
-        bytes_done: 0,
-        bytes_total: size,
+        bytes_done: done,
+        bytes_total: total,
         files_total: files,
         peers,
-        download_bps: 0,
-        upload_bps: 0,
+        download_bps: number("down_speed"),
+        upload_bps: number("up_speed"),
         error: (error != 0).then(|| format!("resilio error {error}")),
     }
 }
@@ -1184,6 +1206,8 @@ impl Transport for ResilioTransport {
             peer_details: self.client.has_api_key(),
             lan_mode: *self.lan_only.lock().unwrap_or_else(|e| e.into_inner()),
             detail: Some(detail),
+            download_bps: summary.map(|s| s.download_bps).unwrap_or(0),
+            upload_bps: summary.map(|s| s.upload_bps).unwrap_or(0),
             web_ui,
         }
     }
@@ -1884,7 +1908,9 @@ mod tests {
             {"name":"/lan/eti_launcher","size":"1","files":1,"status":"Synced","peers":[{}]}
         ]});
         let s = super::super::peer_summary(parse_gui_folders(&v).values());
-        assert_eq!((s.total, s.catalog), (3, Some(1)));
+        // Two peers on one share and one on the other: at most two PCs, never
+        // three. Summing is what turned one sync server into "28 participants".
+        assert_eq!((s.total, s.catalog), (2, Some(1)));
     }
 
     #[test]
@@ -2056,6 +2082,52 @@ mod tests {
         assert_eq!(c.version().await.unwrap(), "?");
         let f = c.folders().await.unwrap();
         assert_eq!(f[Path::new("/lan/a")].state, ShareState::Complete);
+    }
+
+    #[test]
+    fn the_api_folder_entry_is_read_the_way_the_engine_writes_it() {
+        // Verbatim shape from a 2.8.1 engine's own log.
+        let catalog: Value = serde_json::from_str(
+            r#"{"dir":"\\\\?\\E:\\LAN\\eti_launcher","down_speed":2500000,"error":0,
+                 "files":169,"indexing":0,"paused":0,"secret":"[secret]","size":1213071231,
+                 "total_files":170,"total_size":1262951709,"type":"read_only","up_speed":0}"#,
+        )
+        .unwrap();
+        let s = parse_api_folder(&catalog, 1);
+        assert_eq!(s.bytes_done, 1_213_071_231);
+        assert_eq!(s.bytes_total, 1_262_951_709);
+        assert_eq!(s.files_total, 170);
+        assert_eq!(s.download_bps, 2_500_000);
+        assert_eq!(s.state, ShareState::Downloading);
+        assert_eq!(s.dir, PathBuf::from(r"E:\LAN\eti_launcher"));
+
+        // A share nobody has announced anything for: not "complete", and not
+        // a total of zero bytes to divide by either.
+        let empty: Value = serde_json::from_str(
+            r#"{"dir":"E:\\LAN\\bfbc2","files":0,"size":0,"total_files":0,"total_size":0,
+                 "error":0,"indexing":0}"#,
+        )
+        .unwrap();
+        assert_eq!(parse_api_folder(&empty, 0).state, ShareState::Pending);
+
+        // Fully synced.
+        let done: Value = serde_json::from_str(
+            r#"{"dir":"E:\\LAN\\cnc4","files":4,"size":8617278764,"total_files":4,
+                 "total_size":8617278764,"error":0,"indexing":0}"#,
+        )
+        .unwrap();
+        let s = parse_api_folder(&done, 2);
+        assert_eq!(s.state, ShareState::Complete);
+        assert_eq!(s.bytes_done, s.bytes_total);
+
+        // Every byte of the files it knows, but not every file of the share:
+        // that is "still downloading", not "done".
+        let partial: Value = serde_json::from_str(
+            r#"{"dir":"E:\\LAN\\cnc4","files":1,"size":500,"total_files":4,
+                 "total_size":500,"error":0,"indexing":0}"#,
+        )
+        .unwrap();
+        assert_eq!(parse_api_folder(&partial, 1).state, ShareState::Downloading);
     }
 
     #[test]

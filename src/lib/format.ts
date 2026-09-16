@@ -29,6 +29,12 @@ export function formatSpeed(bps: number): string {
   return `${formatBytes(bps)}/s`;
 }
 
+/// Like `formatSpeed`, but a standing zero is an answer too: the status bar
+/// shows "0 B/s" rather than an empty gap when nothing is moving.
+export function formatRate(bps: number): string {
+  return `${formatBytes(bps || 0)}/s`;
+}
+
 export function formatPercent(fraction: number): string {
   return `${percentValue(fraction)} %`;
 }

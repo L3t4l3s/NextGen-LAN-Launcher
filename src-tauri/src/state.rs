@@ -28,6 +28,10 @@ pub struct AppState {
     pub bundled_covers: Option<PathBuf>,
     /// Games currently running (game_id → pid), for the stats beacon.
     pub running: RwLock<Vec<(String, u32)>>,
+    /// The last thing the launcher tried to start, for the diagnostics page.
+    /// "A cmd window opens and nothing happens" is only answerable when the
+    /// command line and the exit code are visible somewhere.
+    pub last_launch: RwLock<Option<LaunchAttempt>>,
     pub transport_error: RwLock<Option<String>>,
     /// Size/mtime of `game.db` and `assets.eti` at the last successful catalog
     /// load, so the file watcher does not redo a load another path just did.
@@ -41,7 +45,103 @@ pub struct AppState {
     pub startup_catalog: RwLock<Option<Catalog>>,
 }
 
+/// What the launcher started (or failed to start) last, as shown on the
+/// diagnostics page.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchAttempt {
+    pub game_id: String,
+    /// Catalog title when known, otherwise the id.
+    pub title: String,
+    /// What was started: the game itself or an extra (`keygen.exe`, server).
+    pub what: String,
+    /// Milliseconds since the epoch, formatted by the frontend.
+    pub at: u64,
+    /// `game_start.cmd`, `Wine 9.0`, …
+    pub runner: String,
+    pub program: String,
+    /// The command line as it was passed on (raw string on Windows, otherwise
+    /// the arguments joined for reading).
+    pub command_line: String,
+    pub cwd: String,
+    /// The plan asked for administrator rights.
+    pub elevated: bool,
+    pub pid: Option<u32>,
+    /// Error code (`err.…`) when the start itself failed.
+    pub error: Option<String>,
+    /// Exit code once the process ended; `None` while it still runs or when
+    /// the system did not report one.
+    pub exit_code: Option<i32>,
+    /// The process has ended (with or without a code).
+    pub ended: bool,
+}
+
+impl LaunchAttempt {
+    /// Record the intent before spawning: everything but the outcome.
+    pub fn new(
+        game_id: &str,
+        title: &str,
+        what: &str,
+        plan: &lanlauncher_core::launch::LaunchPlan,
+    ) -> Self {
+        let command_line = plan
+            .raw_command_line
+            .clone()
+            .unwrap_or_else(|| plan.args.join(" "));
+        Self {
+            game_id: game_id.to_string(),
+            title: title.to_string(),
+            what: what.to_string(),
+            at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0),
+            runner: plan.runner.clone(),
+            program: plan.program.display().to_string(),
+            command_line,
+            cwd: plan.cwd.display().to_string(),
+            elevated: plan.needs_elevation,
+            pid: None,
+            error: None,
+            exit_code: None,
+            ended: false,
+        }
+    }
+}
+
 impl AppState {
+    /// Remember a launch attempt and, once the process ends, its exit code.
+    /// The watcher only writes back while the record is still the current one.
+    pub async fn record_launch(
+        self: &std::sync::Arc<Self>,
+        mut attempt: LaunchAttempt,
+        outcome: lanlauncher_core::error::Result<(u32, lanlauncher_core::launch::ExitWatch)>,
+    ) -> lanlauncher_core::error::Result<u32> {
+        let stamp = attempt.at;
+        match outcome {
+            Ok((pid, watch)) => {
+                attempt.pid = Some(pid);
+                *self.last_launch.write().await = Some(attempt);
+                let st = self.clone();
+                tauri::async_runtime::spawn(async move {
+                    let code = watch.await.ok().flatten();
+                    let mut slot = st.last_launch.write().await;
+                    if let Some(rec) = slot.as_mut().filter(|r| r.at == stamp) {
+                        rec.exit_code = code;
+                        rec.ended = true;
+                    }
+                });
+                Ok(pid)
+            }
+            Err(e) => {
+                attempt.error = Some(e.to_string());
+                attempt.ended = true;
+                *self.last_launch.write().await = Some(attempt);
+                Err(e)
+            }
+        }
+    }
+
     pub fn settings_path(&self) -> PathBuf {
         self.dirs.settings_file()
     }

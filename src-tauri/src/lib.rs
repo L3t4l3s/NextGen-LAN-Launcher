@@ -26,6 +26,11 @@ pub const HEALTH_EVENT: &str = "transport-health";
 pub const EVENT_UPDATED: &str = "event-updated";
 /// Emitted with the new game count after `game.db` changed on disk.
 pub const CATALOG_EVENT: &str = "catalog-updated";
+/// How often the catalog watcher looks at `game.db`/`assets.eti`.
+const CATALOG_POLL: u64 = 10;
+/// Reload every five minutes even when the files look unchanged. The launcher
+/// has no "refresh" button, so this loop is the only path to a fresh list.
+const CATALOG_BLIND_RELOAD_TICKS: u32 = (5 * 60) / CATALOG_POLL as u32;
 
 /// `<semver> (<commit>)`, shown in the status bar and the first log line so
 /// installers of the same version can be told apart.
@@ -240,7 +245,15 @@ pub(crate) fn catalog_signature(root: Option<&std::path::Path>) -> CatalogSig {
 /// Re-read the catalog from the default library root and hand it to the
 /// install manager. `None` when no readable `game.db` exists (yet). On
 /// success the file signature is recorded so the watcher stays quiet.
-pub(crate) async fn reload_catalog(state: &AppState, extract_covers: bool) -> Option<usize> {
+/// `adopt` runs the install manager's `adopt_existing()` afterwards; the
+/// periodic reload passes `false`, because re-adopting without a changed
+/// catalog can resurrect a download the user just cancelled (the tracker is
+/// gone, a leftover archive is not).
+pub(crate) async fn reload_catalog(
+    state: &AppState,
+    extract_covers: bool,
+    adopt: bool,
+) -> Option<usize> {
     // One reload at a time; a caller that queued behind another one still
     // runs (an explicit refresh must not be swallowed).
     let _serial = state.catalog_reload.lock().await;
@@ -275,7 +288,9 @@ pub(crate) async fn reload_catalog(state: &AppState, extract_covers: bool) -> Op
     let n = catalog.games.len();
     if let Some(m) = state.manager.read().await.as_ref() {
         m.set_catalog(catalog).await;
-        m.adopt_existing().await;
+        if adopt {
+            m.adopt_existing().await;
+        }
     }
     Some(n)
 }
@@ -561,6 +576,7 @@ pub fn run() {
                 resource_dir,
                 bundled_covers,
                 running: RwLock::new(Vec::new()),
+                last_launch: RwLock::new(None),
                 transport_error: RwLock::new(None),
                 catalog_sig: std::sync::Mutex::new((None, None)),
                 catalog_reload: tokio::sync::Mutex::new(()),
@@ -591,7 +607,7 @@ pub fn run() {
             commands::set_exe_override,
             commands::get_settings,
             commands::save_settings,
-            commands::refresh_catalog,
+            commands::get_last_launch,
             commands::run_diagnostics,
             commands::set_problem_ignored,
             commands::apply_fix,
@@ -776,6 +792,10 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
     // Catalog reload: `game.db` and `assets.eti` arrive through the catalog
     // share minutes after start at a LAN; a size/mtime change of either
     // triggers a reload (covers are re-extracted when assets.eti changed).
+    // There is no button for this: the loop is the only way the list is
+    // refreshed, so it also reloads every few minutes without a visible
+    // change — a rewrite within the same second and mtimes a file system
+    // rounds off are otherwise invisible.
     let st = state.clone();
     let app5 = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -785,8 +805,10 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
         // Signature of the last attempt made by this loop; a changed but
         // unloadable catalog is tried once per change, not every 10 s.
         let mut tried: CatalogSig = (None, None);
+        // Ticks since the last load of any kind, for the blind reload.
+        let mut idle_ticks = 0u32;
         loop {
-            tokio::time::sleep(Duration::from_secs(10)).await;
+            tokio::time::sleep(Duration::from_secs(CATALOG_POLL)).await;
             let root = st.default_root_path().await;
             let now = catalog_signature(root.as_deref());
             // `last` is the signature of the last successful load, wherever it
@@ -797,12 +819,22 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
             let last = st.catalog_sig.lock().map(|s| *s).unwrap_or((None, None));
             let ever_loaded = last.0.is_some();
             let changed = now != last && (now != tried || !ever_loaded);
-            if now.0.is_some() && (changed || !ever_loaded) {
+            idle_ticks += 1;
+            let due = idle_ticks >= CATALOG_BLIND_RELOAD_TICKS;
+            if now.0.is_some() && (changed || due || !ever_loaded) {
+                idle_ticks = 0;
                 tried = now;
                 let assets_changed = now.1 != last.1 || !ever_loaded;
-                match reload_catalog(&st, assets_changed).await {
+                // A reload nobody asked for is not worth a log line every five
+                // minutes; only a real change is.
+                let blind = !changed && ever_loaded;
+                match reload_catalog(&st, assets_changed, !blind).await {
                     Some(n) => {
-                        log::info!("catalog reloaded: {n} games");
+                        if blind {
+                            log::debug!("catalog reloaded on schedule: {n} games");
+                        } else {
+                            log::info!("catalog reloaded: {n} games");
+                        }
                         let _ = app5.emit(CATALOG_EVENT, n);
                     }
                     None if ever_loaded => {

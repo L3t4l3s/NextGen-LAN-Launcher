@@ -88,6 +88,12 @@ pub struct TransportHealth {
     #[serde(default)]
     pub peer_details: bool,
     pub detail: Option<String>,
+    /// Current rates over all shares, for the status bar. Shown even at zero:
+    /// "nothing is moving" is an answer too.
+    #[serde(default)]
+    pub download_bps: u64,
+    #[serde(default)]
+    pub upload_bps: u64,
     /// Address of the engine's web interface, credentials included, for
     /// "open in browser". The password is the random one from the engine
     /// config: it goes to the browser, never into the log.
@@ -98,9 +104,15 @@ pub struct TransportHealth {
 /// Peer counts split into "everything" and "the catalog share".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PeerSummary {
+    /// The most peers any one share reports: the same PC appears on every
+    /// share it holds, so adding them up counts it many times over.
     pub total: u32,
     /// `None` when no catalog share is registered at all.
     pub catalog: Option<u32>,
+    /// Rates over all shares. These *do* add up: each share transfers its own
+    /// bytes.
+    pub download_bps: u64,
+    pub upload_bps: u64,
 }
 
 /// Is `dir` the catalog share (`<root>/eti_launcher`)? Trailing separators are
@@ -116,14 +128,20 @@ pub fn is_catalog_share(dir: &Path) -> bool {
     }
 }
 
-/// Sum peers over all shares and, separately, over the catalog share.
+/// How many other PCs are around, plus the count on the catalog share.
+///
+/// The engine counts peers per share, and the same PC sits on many of them —
+/// summing turned one sync server into "28 participants". Without peer ids
+/// per share the most any single share sees is the honest figure.
 pub fn peer_summary<'a>(shares: impl IntoIterator<Item = &'a ShareStatus>) -> PeerSummary {
     let mut out = PeerSummary::default();
     for s in shares {
-        out.total += s.peers;
+        out.total = out.total.max(s.peers);
         if is_catalog_share(&s.dir) {
-            out.catalog = Some(out.catalog.unwrap_or(0) + s.peers);
+            out.catalog = Some(out.catalog.unwrap_or(0).max(s.peers));
         }
+        out.download_bps += s.download_bps;
+        out.upload_bps += s.upload_bps;
     }
     out
 }
@@ -224,6 +242,10 @@ mod tests {
     use super::*;
 
     fn share(dir: &str, peers: u32) -> ShareStatus {
+        rated_share(dir, peers, 0, 0)
+    }
+
+    fn rated_share(dir: &str, peers: u32, down: u64, up: u64) -> ShareStatus {
         ShareStatus {
             dir: PathBuf::from(dir),
             state: ShareState::Downloading,
@@ -231,8 +253,8 @@ mod tests {
             bytes_total: 0,
             files_total: 0,
             peers,
-            download_bps: 0,
-            upload_bps: 0,
+            download_bps: down,
+            upload_bps: up,
             error: None,
         }
     }
@@ -250,30 +272,38 @@ mod tests {
     fn peer_summary_separates_catalog_peers() {
         let shares = [share("/lan/quake3", 2), share("/lan/eti_launcher", 1)];
         let s = peer_summary(shares.iter());
-        assert_eq!(
-            s,
-            PeerSummary {
-                total: 3,
-                catalog: Some(1)
-            }
-        );
+        assert_eq!(s.total, 2);
+        assert_eq!(s.catalog, Some(1));
 
         let s = peer_summary([share("/lan/quake3", 2)].iter());
-        assert_eq!(
-            s,
-            PeerSummary {
-                total: 2,
-                catalog: None
-            }
-        );
+        assert_eq!(s.total, 2);
+        assert_eq!(s.catalog, None);
 
         let s = peer_summary([share("/lan/eti_launcher", 0)].iter());
-        assert_eq!(
-            s,
-            PeerSummary {
-                total: 0,
-                catalog: Some(0)
-            }
-        );
+        assert_eq!(s.total, 0);
+        assert_eq!(s.catalog, Some(0));
+    }
+
+    #[test]
+    fn peer_summary_does_not_add_the_same_pc_up_once_per_share() {
+        // One sync server, registered on 28 shares, is one participant — not
+        // 28. Without peer ids the largest share count is the honest answer.
+        let shares: Vec<_> = (0..28)
+            .map(|i| share(&format!("/lan/game{i}"), 1))
+            .collect();
+        assert_eq!(peer_summary(shares.iter()).total, 1);
+    }
+
+    #[test]
+    fn peer_summary_adds_the_rates_up() {
+        // Rates are per share and do not overlap: each share moves its own
+        // bytes, so the status bar wants the sum.
+        let shares = [
+            rated_share("/lan/quake3", 1, 1_000, 10),
+            rated_share("/lan/eti_launcher", 1, 500, 0),
+        ];
+        let s = peer_summary(shares.iter());
+        assert_eq!(s.download_bps, 1_500);
+        assert_eq!(s.upload_bps, 10);
     }
 }

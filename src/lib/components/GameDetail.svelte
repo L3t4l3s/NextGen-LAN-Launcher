@@ -15,7 +15,10 @@
   const playable = $derived(isPlayable(status));
   const lang = $derived(app.settings?.language ?? "de");
   const platform = $derived(app.bootstrap?.platform ?? "windows");
-  const folderMode = $derived(app.bootstrap?.transportMode === "folder");
+  // What is running, not what is configured: the launcher falls back to
+  // folder mode by itself when no engine starts, and that is when the key
+  // has to be readable.
+  const folderMode = $derived(app.health ? app.health.kind === "folder" : !!app.bootstrap?.transportError);
 
   let working = $state(false);
   let showExeChooser = $state(false);

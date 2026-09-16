@@ -213,12 +213,40 @@ pub fn expand_args(args: &[String], ctx: &LaunchContext<'_>) -> Vec<String> {
         .collect()
 }
 
+/// Receives the exit code of a started process once it ends (`None` when the
+/// system did not report one). The diagnostics page uses it to tell "the game
+/// is running" apart from "the window closed straight away".
+pub type ExitWatch = tokio::sync::oneshot::Receiver<Option<i32>>;
+
+/// Detach a child: reap it in the background and report its exit code.
+fn watch(child: tokio::process::Child) -> (u32, ExitWatch) {
+    let pid = child.id().unwrap_or(0);
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let mut child = child;
+        let code = child.wait().await.ok().and_then(|s| s.code());
+        let _ = tx.send(code);
+    });
+    (pid, rx)
+}
+
 /// Spawn the plan as a detached child process. Returns the PID.
 /// Start a plan as the user, elevating only when the plan needs it and the
 /// launcher is not already elevated (Windows; `allow` is the user's setting).
 /// A program whose own manifest demands administrator rights (Windows error
 /// 740) is retried the same way. `run_dir` receives the batch files.
 pub async fn spawn_for_user(plan: &LaunchPlan, run_dir: &Path, allow: bool) -> Result<u32> {
+    spawn_for_user_watched(plan, run_dir, allow)
+        .await
+        .map(|(pid, _)| pid)
+}
+
+/// Like [`spawn_for_user`], plus a handle that reports the exit code.
+pub async fn spawn_for_user_watched(
+    plan: &LaunchPlan,
+    run_dir: &Path,
+    allow: bool,
+) -> Result<(u32, ExitWatch)> {
     let not_elevated = elevate::running_elevated() == Some(false);
     if plan.needs_elevation && not_elevated {
         if !allow {
@@ -247,7 +275,7 @@ pub async fn spawn_for_user(plan: &LaunchPlan, run_dir: &Path, allow: bool) -> R
 /// for the batch, so its pid stays alive as long as the game runs; a prompt
 /// the user declines ends PowerShell within moments with a non-zero code,
 /// which is reported as `err.elevation_denied`.
-pub async fn spawn_elevated(plan: &LaunchPlan, run_dir: &Path) -> Result<u32> {
+pub async fn spawn_elevated(plan: &LaunchPlan, run_dir: &Path) -> Result<(u32, ExitWatch)> {
     let stem = plan.runner.trim_end_matches(".cmd").replace(' ', "-");
     let batch = elevate::write_batch(run_dir, &stem, &[elevate::batch_line(plan).into()])?;
     log::info!("starting {} elevated via {}", plan.runner, batch.display());
@@ -272,17 +300,23 @@ pub async fn spawn_elevated(plan: &LaunchPlan, run_dir: &Path) -> Result<u32> {
             );
             Err(Error::Code("err.elevation_denied".into()))
         }
-        Ok(_) => Ok(pid),
-        Err(_) => {
-            tokio::spawn(async move {
-                let _ = child.wait().await;
-            });
-            Ok(pid)
+        // Ended within the three seconds and succeeded: the code is already
+        // known, so the watch is handed a closed channel's counterpart.
+        Ok(Ok(status)) => {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let _ = tx.send(status.code());
+            Ok((pid, rx))
         }
+        Ok(Err(_)) => {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let _ = tx.send(None);
+            Ok((pid, rx))
+        }
+        Err(_) => Ok(watch(child)),
     }
 }
 
-pub async fn spawn(plan: &LaunchPlan) -> Result<u32> {
+pub async fn spawn(plan: &LaunchPlan) -> Result<(u32, ExitWatch)> {
     let mut cmd = tokio::process::Command::new(&plan.program);
     cmd.current_dir(&plan.cwd).envs(&plan.env);
     apply_args(&mut cmd, plan);
@@ -292,12 +326,7 @@ pub async fn spawn(plan: &LaunchPlan) -> Result<u32> {
     let child = cmd
         .spawn()
         .map_err(|e| Error::Launch(format!("cannot start {}: {e}", plan.program.display())))?;
-    let pid = child.id().unwrap_or(0);
-    tokio::spawn(async move {
-        let mut child = child;
-        let _ = child.wait().await;
-    });
-    Ok(pid)
+    Ok(watch(child))
 }
 
 /// Apply a plan's arguments: on Windows the verbatim command line when set

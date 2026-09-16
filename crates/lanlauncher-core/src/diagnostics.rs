@@ -549,6 +549,8 @@ mod tests {
             lan_mode: true,
             peer_details: false,
             detail: None,
+            download_bps: 0,
+            upload_bps: 0,
             web_ui: None,
         };
         let codes = |h: &TransportHealth| -> Vec<String> {
@@ -573,6 +575,8 @@ mod tests {
             lan_mode: true,
             peer_details: false,
             detail: Some("E:\\LAN\\eti_launcher: 0 peers, Indexing".into()),
+            download_bps: 0,
+            upload_bps: 0,
             web_ui: Some("http://launcher:s3cr3t@127.0.0.1:8888/gui/".into()),
         };
         let problems = check_transport(&health);

@@ -133,17 +133,32 @@ impl Observation {
     /// `<id>.eti` and its `.!sync` twin showed nothing while gigabytes were
     /// landing next to them.
     pub fn bytes_on_disk(&self) -> u64 {
-        // Whichever is larger. The engine's figure can be the better one, but
-        // in the web-UI path it is derived from the same folder size that
-        // reads as a few hundred bytes while indexing — and a small non-zero
-        // number would otherwise outrank what is demonstrably on the disk.
-        self.transport
-            .as_ref()
-            .map(|t| t.bytes_done)
-            .unwrap_or(0)
-            .max(self.share_bytes)
+        // An installed game that is updating: the folder still holds the
+        // version in use, and the engine counts it along with everything else,
+        // so both would read as "almost done" before a byte of the new package
+        // arrived. What lies in the folder beyond the installed package is the
+        // new one — under whatever name it arrives — and once the engine
+        // renames the finished file into place, an archive that is no longer
+        // the installed one is the whole of it.
+        if let Some(receipt) = &self.receipt {
+            let beyond_installed = self.share_bytes.saturating_sub(receipt.archive_bytes);
+            let swapped_in = self
+                .archive_len
+                .filter(|len| *len != receipt.archive_bytes)
+                .unwrap_or(0);
+            return beyond_installed
+                .max(swapped_in)
+                .max(self.partial_len.unwrap_or(0));
+        }
+        let engine = self.transport.as_ref().map(|t| t.bytes_done).unwrap_or(0);
+        let on_disk = self
+            .share_bytes
             .max(self.archive_len.unwrap_or(0))
-            .max(self.partial_len.unwrap_or(0))
+            .max(self.partial_len.unwrap_or(0));
+        // The larger of the two: the engine's figure is the better one when
+        // it has it, and the web-UI path derives its number from a share size
+        // that reads as a few hundred bytes while the engine is indexing.
+        engine.max(on_disk)
     }
 
     /// Gather the on-disk part of an observation.
@@ -1539,11 +1554,47 @@ mod tests {
             error: None,
         });
         assert_eq!(o.bytes_on_disk(), 9000);
-        // … but a small figure from a share the engine is still indexing does
-        // not outrank the gigabytes that already landed on the disk.
+        // … but on a first download a small figure from a share the engine is
+        // still indexing does not outrank the gigabytes already on the disk.
         o.share_bytes = 6_000_000_000;
         o.transport.as_mut().unwrap().bytes_done = 234;
         assert_eq!(o.bytes_on_disk(), 6_000_000_000);
+
+        // Updating an installed game: neither the old archive in the folder
+        // nor the engine's figure (which counts it) says anything about the
+        // new package — only the `.!sync` file of the arriving one does.
+        o.share_bytes = 6_000_000_000;
+        o.archive_len = Some(6_000_000_000);
+        o.partial_len = None;
+        o.receipt = Some(Receipt {
+            version: 1,
+            game_id: "g".into(),
+            revision: "20250308".into(),
+            installed_at: chrono::Utc::now(),
+            archive_bytes: 6_000_000_000,
+            files: 1,
+            setup_done: true,
+            exe_override: None,
+            adopted: false,
+        });
+        assert_eq!(o.bytes_on_disk(), 0);
+        // Once the new package starts arriving, its own file is the figure —
+        // the engine reports the whole folder and would stay near "done".
+        o.partial_len = Some(1_500_000_000);
+        o.transport.as_mut().unwrap().bytes_done = 6_000_000_000;
+        assert_eq!(o.bytes_on_disk(), 1_500_000_000);
+        // Arriving under a name of the engine's choosing: what the folder
+        // holds beyond the installed package counts, or the download would
+        // look stalled for its whole length.
+        o.partial_len = None;
+        o.share_bytes = 6_000_000_000 + 1_500_000_000;
+        assert_eq!(o.bytes_on_disk(), 1_500_000_000);
+        // Renamed into place: the archive is no longer the installed one, so
+        // it is the new package in full — no drop back to 0 % while the state
+        // machine waits for a stable size.
+        o.share_bytes = 7_000_000_000;
+        o.archive_len = Some(7_000_000_000);
+        assert_eq!(o.bytes_on_disk(), 7_000_000_000);
     }
 
     fn obs(

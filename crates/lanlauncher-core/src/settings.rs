@@ -160,6 +160,14 @@ impl Settings {
         // LANPage is expected at its fixed host. Old settings files may still
         // carry another value.
         self.lanpage_host = "launcher.lan".into();
+        // The sync mode is not a setting any more: the launcher runs its own
+        // engine and falls back to folder mode by itself when it cannot. A
+        // stored "folder" would otherwise never start an engine again, and a
+        // "demo" left behind by a `--demo` run would simulate downloads
+        // forever; that run sets it again after loading.
+        if matches!(self.transport, TransportMode::Folder | TransportMode::Demo) {
+            self.transport = TransportMode::Managed;
+        }
         // The two event-flavoured schemes became plain colour names; a
         // settings file from before that must not lose the user's choice.
         if let Some(theme) = &self.theme {
@@ -269,6 +277,20 @@ mod tests {
         assert_eq!(s.lanpage_host, "launcher.lan");
         assert_eq!(s.catalog_key, None);
         assert_eq!(s.resilio_api_key, None);
+    }
+
+    #[test]
+    fn a_stored_folder_mode_finds_its_way_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("settings.json");
+        for stored in ["folder", "demo"] {
+            std::fs::write(&p, format!(r#"{{"version":1,"transport":"{stored}"}}"#)).unwrap();
+            assert_eq!(
+                Settings::load(&p).unwrap().transport,
+                TransportMode::Managed,
+                "{stored}"
+            );
+        }
     }
 
     #[test]

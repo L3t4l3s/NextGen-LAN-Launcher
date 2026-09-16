@@ -138,6 +138,22 @@ impl Transport for DemoTransport {
         Ok(())
     }
     async fn health(&self) -> TransportHealth {
+        // Summed from the simulated shares, but without `tick`: health is
+        // polled on its own schedule and must not write the fake files.
+        let running = self
+            .shares
+            .lock()
+            .map(|shares| {
+                shares
+                    .values()
+                    // Same rule as `tick`: a share stuck at 99 % keeps
+                    // reporting a rate, and the status bar must agree with the
+                    // download row.
+                    .filter(|s| !s.paused && (s.stuck_at_99 || s.started.elapsed() < s.duration))
+                    .map(|s| (s.total as f64 / s.duration.as_secs_f64()) as u64)
+                    .sum::<u64>()
+            })
+            .unwrap_or(0);
         TransportHealth {
             kind: TransportKind::Demo,
             running: true,
@@ -149,6 +165,8 @@ impl Transport for DemoTransport {
             lan_mode: *self.lan_only.lock().unwrap_or_else(|e| e.into_inner()),
             peer_details: false,
             detail: Some("simulated transport".into()),
+            download_bps: running,
+            upload_bps: 0,
             web_ui: None,
         }
     }

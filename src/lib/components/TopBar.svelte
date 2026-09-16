@@ -1,10 +1,7 @@
 <script lang="ts">
   import appIcon from "$lib/assets/app-icon.png";
   import { app, type View } from "$lib/stores/app.svelte";
-  import { api } from "$lib/api";
-  import { t, userText } from "$lib/i18n";
-
-  let refreshing = $state(false);
+  import { t } from "$lib/i18n";
 
   const tabs: { id: View; label: string; count?: () => number }[] = [
     { id: "library", label: "nav.library" },
@@ -12,18 +9,6 @@
     { id: "diagnostics", label: "nav.diagnostics" },
   ];
 
-  async function refresh() {
-    refreshing = true;
-    try {
-      const n = await api.refreshCatalog();
-      await app.reloadGames();
-      app.toast("success", t("nav.refresh.done", { count: n }));
-    } catch (e) {
-      app.toast("error", userText(e));
-    } finally {
-      refreshing = false;
-    }
-  }
 </script>
 
 <header>
@@ -46,9 +31,6 @@
   </nav>
 
   <div class="right">
-    <button class="ghost" onclick={refresh} disabled={refreshing} title={t("nav.refresh")}>
-      <span class:spin={refreshing}>⟳</span> {t("nav.refresh")}
-    </button>
     <button class:active={app.view === "settings"} class="tab" onclick={() => (app.view = "settings")}>⚙ {t("nav.settings")}</button>
   </div>
 </header>
@@ -123,14 +105,5 @@
   .right {
     display: flex;
     gap: 0.4rem;
-  }
-  .spin {
-    display: inline-block;
-    animation: spin 1s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
 </style>

@@ -3,7 +3,7 @@
   import { api, confirmDialog } from "$lib/api";
   import { t, userText } from "$lib/i18n";
   import { formatBytes, formatPercent, formatSpeed, percentWidth } from "$lib/format";
-  import type { SharePeer } from "$lib/types";
+  import type { GameStatus, SharePeer } from "$lib/types";
   import ProblemCard from "./ProblemCard.svelte";
   import Sparkline from "./Sparkline.svelte";
 
@@ -15,14 +15,20 @@
 
   // One open panel at a time; its sources are polled only while it is open
   // and never twice at once (a slow engine would otherwise pile up calls).
+  /** Bytes are moving over the network: only then do rate and sources mean anything. */
+  const transferring = (status: GameStatus) => ["queued", "syncing", "paused"].includes(status.phase);
+
   let expanded = $state<string | null>(null);
+
+  // The panel disappears when a game moves on to verifying or leaves the list
+  // altogether; without this its peer poll would keep running every two
+  // seconds with nothing to show.
+  $effect(() => {
+    const open = items.find((x) => x.game.id === expanded);
+    if (expanded && (!open?.status || !transferring(open.status))) expanded = null;
+  });
   let peers = $state<SharePeer[]>([]);
   let peersLoaded = $state(false);
-
-  // A game that finishes leaves the list; its panel must not keep polling.
-  $effect(() => {
-    if (expanded && !items.some((i) => i.game.id === expanded)) expanded = null;
-  });
 
   $effect(() => {
     const id = expanded;
@@ -70,7 +76,6 @@
 
 <div class="page">
   <h1>{t("downloads.title")}</h1>
-  <p class="hint">{t("downloads.hint")}</p>
 
   {#if items.length === 0 && app.hintGames.length === 0}
     <div class="card empty">
@@ -93,9 +98,14 @@
             </div>
             <div class="row small muted">
               <span>{formatPercent(status.progress)}</span>
-              <span>{t("detail.progress", { done: formatBytes(status.bytesDone), total: formatBytes(status.bytesTotal) })}</span>
-              {#if status.downloadBps}<span>{formatSpeed(status.downloadBps)}</span>{/if}
-              <span>{t("detail.peers", { count: status.peers })}</span>
+              <!-- Bytes, rate and sources describe a transfer. While the
+                   launcher checks or unpacks an archive none of them moves,
+                   and showing them there reads as a stuck download. -->
+              {#if transferring(status)}
+                <span>{t("detail.progress", { done: formatBytes(status.bytesDone), total: formatBytes(status.bytesTotal) })}</span>
+                {#if status.downloadBps}<span>{formatSpeed(status.downloadBps)}</span>{/if}
+                <span>{t("detail.peers", { count: status.peers })}</span>
+              {/if}
               <span class="grow"></span>
               <button class="ghost" onclick={() => act(() => api.repair(game.id))}>🛠 {t("action.repair")}</button>
               {#if status.phase === "paused"}
@@ -105,11 +115,13 @@
               {/if}
               <button class="ghost danger" onclick={() => cancel(game)}>{t("downloads.cancel")}</button>
               <button class="ghost" onclick={() => { app.selectedId = game.id; app.view = "library"; }}>{t("action.open")}</button>
-              <button class="ghost" aria-expanded={expanded === game.id} onclick={() => (expanded = expanded === game.id ? null : game.id)}>
-                {expanded === game.id ? "▾" : "▸"} {t("downloads.details")}
-              </button>
+              {#if transferring(status)}
+                <button class="ghost" aria-expanded={expanded === game.id} onclick={() => (expanded = expanded === game.id ? null : game.id)}>
+                  {expanded === game.id ? "▾" : "▸"} {t("downloads.details")}
+                </button>
+              {/if}
             </div>
-            {#if expanded === game.id}
+            {#if expanded === game.id && transferring(status)}
               <div class="details">
                 <Sparkline values={app.speedHistory[game.id] ?? []} format={formatSpeed} label={t("downloads.speed_history")} />
                 <div class="sources">

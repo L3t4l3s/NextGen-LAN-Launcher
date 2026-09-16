@@ -18,7 +18,7 @@ event and with clear instructions whenever something does not work.
 | "Too many workers" at startup | Exactly one sync engine instance, controlled by the launcher; orphaned processes are cleaned up at start. |
 | Windows switches the LAN to a "Public" network profile | Diagnostics detects the profile and switches it to "Private" with one click; firewall rules apply to all profiles. |
 | Unclear row of icons at the top | Labelled tabs: Library · Downloads · LAN · Diagnostics, plus Settings on the right. |
-| Only one game folder | Several library folders (e.g. different SSDs); new games go where there is most space. |
+| Only one game folder | Several library folders (e.g. different SSDs); a new game goes to the default folder, or to the one with the most free space when the default is too small. |
 | Windows only | Launch profiles (`manifests/*.toml`) plus Wine/CrossOver/Proton on macOS and Linux; Windows keeps running `game_start.cmd`. |
 | Administrator rights for everything | The launcher runs as a normal user. UAC appears only for a game's one-time setup (which also registers the firewall rules its start script would add), for the few start scripts that write HKLM, for server scripts and for repairs. |
 
@@ -109,6 +109,12 @@ again.
   but the shell caches icons per path. The NSIS hook calling `SHChangeNotify` is meant to clear
   that on upgrade; whether it does for Explorer, the desktop shortcut and a pinned taskbar entry
   has not been verified against a real upgrade yet.
+- **Installer and the bundled engine:** the NSIS hook stops the Resilio copy under the install
+  folder before overwriting it, so an update no longer fails on the running engine. Tested only in
+  that it builds; whether it catches every case on a real upgrade is open.
+- **What `get_folders` means:** the launcher now reads `size` as the bytes this PC holds,
+  `total_size` as the share's size and `down_speed` as the rate — matching what a 2.8.1 engine
+  writes in its own log. Verified against that log, not against a running server.
 - **Firewall rules on a managed PC:** the rules are added with `netsh` from an elevated batch.
   Verified on a domain-joined Windows PC: the repair succeeds there, so the domain profile alone
   does not block it. A stricter policy still can, and then the failure carries the message `netsh`

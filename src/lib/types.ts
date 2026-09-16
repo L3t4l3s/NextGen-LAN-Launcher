@@ -195,8 +195,31 @@ export interface TransportHealth {
   /** The transport can name the peers of a share (Resilio with an API key). */
   peer_details: boolean;
   detail: string | null;
+  /** Current totals over all shares, for the status bar; shown even at zero. */
+  download_bps?: number;
+  upload_bps?: number;
   /** Engine web interface including credentials, for "open in browser". */
   web_ui?: string | null;
+}
+
+/** What the launcher started last, for the diagnostics page. */
+export interface LaunchAttempt {
+  gameId: string;
+  title: string;
+  /** "play", "Keygen", "Server". */
+  what: string;
+  /** Milliseconds since the epoch. */
+  at: number;
+  runner: string;
+  program: string;
+  commandLine: string;
+  cwd: string;
+  elevated: boolean;
+  pid: number | null;
+  /** Error code when the start itself failed. */
+  error: string | null;
+  exitCode: number | null;
+  ended: boolean;
 }
 
 export interface BootstrapInfo {

@@ -309,10 +309,25 @@ export function createMock() {
         settings = { ...next, catalogKey: key || null };
         return settings;
       }
-      case "refresh_catalog":
-        return demoGames.length;
       case "run_diagnostics":
         return report;
+      case "get_last_launch":
+        // A failed start is the interesting case for the panel's layout.
+        return {
+          gameId: "doom",
+          title: "Doom",
+          what: "play",
+          at: Date.now() - 45_000,
+          runner: "game_start.cmd",
+          program: "C:\\Windows\\System32\\cmd.exe",
+          commandLine: '/S /C ""E:\\LAN\\doom\\game_start.cmd" "E:\\LAN\\doom" doom de "Player""',
+          cwd: "E:\\LAN\\doom",
+          elevated: false,
+          pid: 4711,
+          error: null,
+          exitCode: 1,
+          ended: true,
+        };
       case "set_problem_ignored": {
         const key = args.key as string;
         if (args.ignored) {
@@ -333,8 +348,36 @@ export function createMock() {
       case "get_transport_health":
         // `?noserver` shows the "no sync server" state of a managed Resilio.
         return noServer
-          ? { kind: "resilio", running: true, api_reachable: true, version: "2.8.1", peers: 1, catalog_peers: 0, server_found: false, lan_mode: true, peer_details: true, detail: null }
-          : { kind: "demo", running: true, api_reachable: true, version: "demo", peers: 3, catalog_peers: 3, server_found: true, lan_mode: true, peer_details: false, detail: "simulated" };
+          ? {
+              kind: "resilio",
+              running: true,
+              api_reachable: true,
+              version: "2.8.1",
+              peers: 1,
+              catalog_peers: 0,
+              server_found: false,
+              lan_mode: true,
+              peer_details: true,
+              detail: null,
+              download_bps: 0,
+              upload_bps: 0,
+              web_ui: "http://127.0.0.1:8888/gui/",
+            }
+          : {
+              kind: "demo",
+              running: true,
+              api_reachable: true,
+              version: "demo",
+              peers: 3,
+              catalog_peers: 3,
+              server_found: true,
+              lan_mode: true,
+              peer_details: false,
+              detail: "simulated",
+              download_bps: 8_400_000,
+              upload_bps: 240_000,
+              web_ui: "http://127.0.0.1:8888/gui/",
+            };
       case "open_path":
       case "open_url":
         console.info("open", args);

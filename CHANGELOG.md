@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- Die Statusleiste zeigt die Gesamt-Download- und -Uploadrate über alle Freigaben, auch wenn sie
+  null ist: „nichts bewegt sich“ ist ebenfalls eine Antwort.
+- Die Teilnehmerzahl war die Summe über alle Freigaben. Ein Sync-Server, der 28 Freigaben anbietet,
+  wurde dadurch zu „28 Teilnehmer“. Gezählt wird jetzt die größte Zahl, die eine einzelne Freigabe
+  meldet — ohne Geräte-IDs pro Freigabe ist das die ehrliche Zahl.
+- Der Knopf „Katalog aktualisieren“ entfällt. Der Katalog wird geladen, sobald sich `game.db` oder
+  `assets.eti` ändern, und zusätzlich alle fünf Minuten blind — eine Änderung innerhalb derselben
+  Sekunde sieht man an Größe und Zeitstempel sonst nicht.
+- Diagnoseseite: ein dauerhafter Knopf „Resilio-Oberfläche“ neben den Logs, nicht mehr nur als
+  Reparatur eines Problems.
+- Diagnoseseite: „Letzter Start“ nennt Programm, Befehlszeile, Arbeitsverzeichnis und Ergebnis
+  (läuft noch, beendet mit Code n, oder der Fehler beim Starten). Ein Spiel, das nur ein leeres
+  cmd-Fenster öffnet, ließ sich bisher nur im Log nachvollziehen.
+
+- Die dokumentierte Resilio-API liefert `size` (was hier liegt), `total_size` (was die Freigabe
+  hat) und `down_speed`. Gelesen wurde `size` als Gesamtgröße, die Rate gar nicht: daher „0 B von
+  782 B“ und nie eine Übertragungsrate. Jetzt stimmen Fortschritt, Gesamtgröße und Rate.
+- Während „Wird geprüft“ und „Wird entpackt“ zeigt die Downloadseite keine Rate, keine Teilnehmer
+  und keine Quellen mehr — dort bewegt sich nichts über das Netz, und die Null sah aus wie ein
+  hängender Download.
+- Der Installer beendet vor dem Überschreiben die mitgelieferte Sync-Engine. Bisher schlug das
+  Update an der laufenden `Resilio Sync.exe` fehl, obwohl der Launcher selbst sauber geschlossen
+  wurde. Eine selbst installierte Resilio-Kopie bleibt unangetastet.
+- Ein neues Spiel landet im Standardordner, solange dort Platz ist, sonst im Bibliotheksordner mit
+  dem meisten freien Platz — bisher immer im obersten, auch wenn er zu klein war.
+- Die Einstellung „Sync-Modus“ entfällt: Der Launcher steuert seine Engine selbst, und ob jemand
+  im Netz ist, findet er von allein heraus. Der Haken „Nur im LAN synchronisieren“ bleibt.
+- Downloadseite ohne den Erklärtext darüber; die Diagnose-Zusammenfassung nennt nicht mehr die
+  Liste der geprüften Bereiche und sieht nicht mehr aus wie ein Hinweis unter Hinweisen.
+
 - „Ordner öffnen“ und „Link öffnen“ meldeten „Erledigt“ — als wäre ein Download fertig. Sie sagen
   jetzt, was sie getan haben.
 - Das Registrieren einer Spielfreigabe steht im Log, mit Ordner und Fehler. Ein Download, der nie

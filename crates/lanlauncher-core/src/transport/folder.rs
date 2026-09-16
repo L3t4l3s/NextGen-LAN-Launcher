@@ -96,6 +96,9 @@ impl Transport for FolderTransport {
             lan_mode: false,
             peer_details: false,
             detail: Some("folder mode: sync client is managed by the user".into()),
+            // Somebody else's sync client moves the bytes; we cannot measure it.
+            download_bps: 0,
+            upload_bps: 0,
             web_ui: None,
         }
     }

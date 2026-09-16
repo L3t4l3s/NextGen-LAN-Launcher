@@ -234,7 +234,46 @@ async fn manager(state: &AppState) -> Cmd<Arc<lanlauncher_core::install::Install
 
 #[tauri::command]
 pub async fn install_game(state: State<'_, Arc<AppState>>, game_id: String) -> Cmd<()> {
-    manager(&state).await?.install(&game_id).await.map_err(err)
+    // The manager first: an empty folder created before it exists would pin
+    // the game to that root for good, with nothing tracking it.
+    let manager = manager(&state).await?;
+    // Which root a new game goes to is decided here, once, by free space:
+    // creating the folder is what every later lookup follows. Asking per
+    // lookup would enumerate the volumes hundreds of times per round.
+    let mut created: Option<std::path::PathBuf> = None;
+    if let Some(game) = state.catalog().await.game(&game_id) {
+        // The same snapshot the manager resolves paths from, so the folder is
+        // created where the download will look for it. Writing the snapshot
+        // here instead would skip the media-scope update the sync loop does.
+        let library = state.library.read().ok().map(|l| l.clone());
+        if let Some(paths) =
+            library.and_then(|l| l.game_paths_for(&game.id, game.size_bytes.saturating_mul(2)))
+        {
+            let existed = paths.share_dir.exists();
+            std::fs::create_dir_all(&paths.share_dir)
+                .map_err(|e| format!("err.create_folder|{}: {e}", paths.share_dir.display()))?;
+            if !existed {
+                created = Some(paths.share_dir.clone());
+            }
+        }
+    }
+    match manager.install(&game_id).await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // An install that never started must not leave the game pinned to
+            // this root: the empty folder is what every later lookup follows.
+            // `remove_dir` only removes it while it is still empty.
+            if let Some(dir) = created {
+                if let Err(e) = std::fs::remove_dir(&dir) {
+                    log::warn!(
+                        "install of {game_id} failed and {} could not be removed: {e}",
+                        dir.display()
+                    );
+                }
+            }
+            Err(err(e))
+        }
+    }
 }
 
 #[tauri::command]
@@ -327,7 +366,23 @@ pub async fn play_game(
     if let Some(paths) = &paths {
         crate::fixes::ensure_firewall_rules(&state, paths, &game_id, &lang, &player).await;
     }
-    let pid = launch::spawn_for_user(&plan, &state.run_dir(), allow)
+    let title = state
+        .catalog()
+        .await
+        .game(&game_id)
+        .map(|g| g.title.clone())
+        .unwrap_or_else(|| game_id.clone());
+    let attempt = crate::state::LaunchAttempt::new(&game_id, &title, "play", &plan);
+    log::info!(
+        "starting {game_id} via {}: {} {}",
+        plan.runner,
+        plan.program.display(),
+        attempt.command_line
+    );
+    let outcome = launch::spawn_for_user_watched(&plan, &state.run_dir(), allow).await;
+    let pid = state
+        .inner()
+        .record_launch(attempt, outcome)
         .await
         .map_err(err)?;
     let mut running = state.running.write().await;
@@ -362,14 +417,29 @@ pub async fn run_extra(
         alternative: None,
     };
     let plan = launch::extra_plan(extra, &ctx).map_err(err)?;
+    let attempt =
+        crate::state::LaunchAttempt::new(&game_id, &game_id, &format!("{extra:?}"), &plan);
     log::info!(
         "starting extra {extra:?} for {game_id}: {} {}",
         plan.program.display(),
-        plan.raw_command_line.clone().unwrap_or_default()
+        attempt.command_line
     );
-    launch::spawn_for_user(&plan, &state.run_dir(), settings.allow_elevation)
+    let outcome =
+        launch::spawn_for_user_watched(&plan, &state.run_dir(), settings.allow_elevation).await;
+    state
+        .inner()
+        .record_launch(attempt, outcome)
         .await
         .map_err(err)
+}
+
+/// What the launcher started last and how it went — the diagnostics page's
+/// answer to "a window opened and nothing happened".
+#[tauri::command]
+pub async fn get_last_launch(
+    state: State<'_, Arc<AppState>>,
+) -> Cmd<Option<crate::state::LaunchAttempt>> {
+    Ok(state.last_launch.read().await.clone())
 }
 
 #[tauri::command]
@@ -475,7 +545,7 @@ pub async fn save_settings(
         if old_root != new_root {
             let st = state.inner().clone();
             tauri::async_runtime::spawn(async move {
-                if let Some(n) = crate::reload_catalog(&st, true).await {
+                if let Some(n) = crate::reload_catalog(&st, true, true).await {
                     use tauri::Emitter;
                     log::info!("catalog loaded after settings change: {n} games");
                     let _ = app.emit(crate::CATALOG_EVENT, n);
@@ -484,16 +554,6 @@ pub async fn save_settings(
         }
     }
     Ok(new)
-}
-
-#[tauri::command]
-pub async fn refresh_catalog(state: State<'_, Arc<AppState>>) -> Cmd<usize> {
-    if state.demo {
-        return Ok(state.catalog().await.games.len());
-    }
-    crate::reload_catalog(&state, true)
-        .await
-        .ok_or_else(|| "err.no_catalog".to_string())
 }
 
 #[tauri::command]
@@ -755,7 +815,17 @@ pub async fn open_url(app: tauri::AppHandle, url: String) -> Cmd<()> {
 /// the share manually. Not available in managed mode to keep keys private.
 #[tauri::command]
 pub async fn get_share_key(state: State<'_, Arc<AppState>>, game_id: String) -> Cmd<String> {
-    if state.effective_transport_mode().await != TransportMode::Folder {
+    // The *running* transport decides, not the setting: without a working
+    // engine the launcher falls back to folder mode by itself, and that is
+    // exactly when someone needs the key to paste into their own Resilio.
+    let transport = state.transport.read().await.clone();
+    let folder_mode = match transport {
+        Some(t) => t.kind() == lanlauncher_core::transport::TransportKind::Folder,
+        // Still starting: `build_transport` falls back to folder mode by
+        // itself, so "no transport yet" says nothing about the mode.
+        None => false,
+    };
+    if !folder_mode {
         return Err("err.key_folder_mode_only".into());
     }
     let catalog = state.catalog().await;
