@@ -228,8 +228,17 @@ export function createMock() {
         steps: ["disk.low_space.step.free", "disk.low_space.step.add_root"],
         fix: { kind: "open_folder", path: "E:\\LAN" },
       },
+      {
+        code: "network.public_profile_secondary",
+        severity: "warning",
+        params: { adapter: "WLAN", network: "Gast-WLAN", trusted_adapter: "Ethernet" },
+        steps: ["network.public_profile.step.fix", "network.public_profile.step.manual"],
+        fix: { kind: "set_network_profile_private", interface_index: 14 },
+        dismiss_key: "network.public_profile_secondary:WLAN",
+      },
       { code: "transport.demo_mode", severity: "info", params: {}, steps: [] },
     ],
+    ignored: [],
     checksRun: ["library", "network_profile", "transport", "orphans", "lanpage", "clock", "catalog"],
     generatedAt: new Date().toISOString(),
   };
@@ -304,6 +313,17 @@ export function createMock() {
         return demoGames.length;
       case "run_diagnostics":
         return report;
+      case "set_problem_ignored": {
+        const key = args.key as string;
+        if (args.ignored) {
+          report.ignored = [...report.ignored, ...report.problems.filter((p) => p.dismiss_key === key)];
+          report.problems = report.problems.filter((p) => p.dismiss_key !== key);
+        } else {
+          report.problems = [...report.problems, ...report.ignored.filter((p) => p.dismiss_key === key)];
+          report.ignored = report.ignored.filter((p) => p.dismiss_key !== key);
+        }
+        return;
+      }
       case "apply_fix": {
         const fix = args.fix as { kind: string; game_id?: string };
         if (fix.kind === "set_network_profile_private") report.problems = report.problems.filter((p) => p.code !== "network.public_profile");

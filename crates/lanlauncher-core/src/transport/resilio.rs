@@ -388,16 +388,32 @@ impl ResilioClient {
             let _ = self.api("set_folder_prefs", &p2).await;
             Ok(())
         } else {
-            self.gui(
-                "addsyncfolder",
-                &[
-                    ("name", dir_s.as_str()),
-                    ("secret", key.expose()),
-                    ("selectivesync", "0"),
-                ],
-            )
-            .await
-            .map(|_| ())
+            match self
+                .gui(
+                    "addsyncfolder",
+                    &[
+                        ("name", dir_s.as_str()),
+                        ("secret", key.expose()),
+                        ("selectivesync", "0"),
+                    ],
+                )
+                .await
+            {
+                Ok(_) => Ok(()),
+                // The web UI answers HTTP 500 for a folder it already has,
+                // the same case the API reports as "error 5". The engine
+                // keeps its folders across launcher restarts, so this is the
+                // normal second start, not a failure — but only when the
+                // folder carries the key we asked for. A changed catalog key
+                // must not report success while the engine keeps the old one.
+                Err(e) => match self.gui("getsyncfolders", &[]).await {
+                    Ok(v) if gui_folder_has_secret(&v, dir, key.expose()) => {
+                        log::debug!("{} is already a sync folder", dir.display());
+                        Ok(())
+                    }
+                    _ => Err(e),
+                },
+            }
         }
     }
 
@@ -565,6 +581,40 @@ pub fn counter_rate(previous: Option<(u64, Instant)>, value: u64, now: Instant) 
         return 0;
     }
     ((value - before) as f64 / seconds).round() as u64
+}
+
+/// Does the `getsyncfolders` answer already list `dir` with this secret?
+///
+/// A folder whose entry carries no secret at all counts as a match: some
+/// builds leave it out, and the alternative would be to report a working
+/// share as broken on every start.
+pub fn gui_folder_has_secret(v: &Value, dir: &Path, secret: &str) -> bool {
+    let want = super::normalise_dir(dir);
+    let folders = v
+        .get("folders")
+        .and_then(Value::as_array)
+        .cloned()
+        .or_else(|| {
+            v.get("value")
+                .and_then(|x| x.get("folders"))
+                .and_then(Value::as_array)
+                .cloned()
+        })
+        .unwrap_or_default();
+    folders.iter().any(|f| {
+        let path = f
+            .get("path")
+            .or_else(|| f.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if super::normalise_dir(Path::new(path)) != want {
+            return false;
+        }
+        match f.get("secret").and_then(Value::as_str) {
+            Some(s) => s.eq_ignore_ascii_case(secret),
+            None => true,
+        }
+    })
 }
 
 /// `getsyncfolders` response: `{folders:[{name, path, size, files, status,
@@ -1440,7 +1490,14 @@ pub fn locate_binary_detailed(
             candidates.extend(std::env::split_paths(&path).map(|d| d.join("rslsync")));
         }
     }
-    let found = candidates.iter().find(|p| p.is_file()).cloned();
+    // Tauri's `resource_dir()` is a verbatim path on Windows, and every
+    // candidate built from it inherits the prefix. `netsh` rejects it, so the
+    // firewall rules for the engine would fail on exactly the installed build.
+    let found = candidates
+        .iter()
+        .find(|p| p.is_file())
+        .cloned()
+        .map(crate::paths::strip_verbatim);
     LocateResult {
         found,
         probed: candidates,
@@ -1929,6 +1986,90 @@ mod tests {
         assert_eq!(c.version().await.unwrap(), "?");
         let f = c.folders().await.unwrap();
         assert_eq!(f[Path::new("/lan/a")].state, ShareState::Complete);
+    }
+
+    #[tokio::test]
+    async fn a_folder_the_engine_already_has_is_not_an_error() {
+        // Resilio keeps its folders between launcher starts and answers the
+        // second `addsyncfolder` with HTTP 500. The catalog share is fine,
+        // so this must not surface as "cannot register catalog share".
+        let base = mock_server_full(
+            vec![
+                (
+                    "/gui/token.html",
+                    200,
+                    "<div id='token' style='display:none;'>TOK</div>",
+                ),
+                ("action=addsyncfolder", 500, "ERROR"),
+                (
+                    "action=getsyncfolders",
+                    200,
+                    r#"{"folders":[{"name":"/lan/eti_launcher","secret":"BICDWADB4KCVNR6FCAGYTHEKZBYVUGTZX","size":5,"status":"Synced","peers":[]}]}"#,
+                ),
+            ],
+            None,
+            None,
+        )
+        .await;
+        let c = ResilioClient::new(base, "u", "p", None);
+        let key = ShareKey::parse("BICDWADB4KCVNR6FCAGYTHEKZBYVUGTZX").unwrap();
+        c.add_folder(&key, Path::new("/lan/eti_launcher"), true)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_folder_held_under_a_different_key_stays_an_error() {
+        // Changing settings.catalogKey must not look like success while the
+        // engine keeps syncing the old share.
+        let base = mock_server_full(
+            vec![
+                (
+                    "/gui/token.html",
+                    200,
+                    "<div id='token' style='display:none;'>TOK</div>",
+                ),
+                ("action=addsyncfolder", 500, "ERROR"),
+                (
+                    "action=getsyncfolders",
+                    200,
+                    r#"{"folders":[{"name":"/lan/eti_launcher","secret":"AWORXFGHDQZ3ZYLDBFKJVQ2XNGYVLGOOM","size":5,"status":"Synced","peers":[]}]}"#,
+                ),
+            ],
+            None,
+            None,
+        )
+        .await;
+        let c = ResilioClient::new(base, "u", "p", None);
+        let key = ShareKey::parse("BICDWADB4KCVNR6FCAGYTHEKZBYVUGTZX").unwrap();
+        assert!(c
+            .add_folder(&key, Path::new("/lan/eti_launcher"), true)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn a_folder_the_engine_does_not_have_stays_an_error() {
+        let base = mock_server_full(
+            vec![
+                (
+                    "/gui/token.html",
+                    200,
+                    "<div id='token' style='display:none;'>TOK</div>",
+                ),
+                ("action=addsyncfolder", 500, "ERROR"),
+                ("action=getsyncfolders", 200, r#"{"folders":[]}"#),
+            ],
+            None,
+            None,
+        )
+        .await;
+        let c = ResilioClient::new(base, "u", "p", None);
+        let key = ShareKey::parse("BICDWADB4KCVNR6FCAGYTHEKZBYVUGTZX").unwrap();
+        assert!(c
+            .add_folder(&key, Path::new("/lan/eti_launcher"), true)
+            .await
+            .is_err());
     }
 
     #[tokio::test]

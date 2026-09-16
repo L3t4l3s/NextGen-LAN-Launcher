@@ -61,6 +61,10 @@ export const de: Messages = {
   "action.working": "Bitte warten …",
   "action.choose_exe": "Startdatei wählen",
   "action.fix_now": "Jetzt beheben",
+  "action.ignore": "Ignorieren",
+  "action.ignore.hint": "Diese Warnung dauerhaft ausblenden. Sie bleibt unter „Ignorierte Meldungen“ abrufbar.",
+  "action.unignore": "Wieder anzeigen",
+  "action.unignore.hint": "Diese Warnung wieder in der Liste anzeigen.",
   "action.retry": "Erneut versuchen",
   "action.close": "Schließen",
   "action.cancel": "Abbrechen",
@@ -130,6 +134,7 @@ export const de: Messages = {
   "diag.logs": "Log-Ordner öffnen",
   "diag.restart_transport": "Sync-Dienst neu starten",
   "diag.last_run": "Zuletzt geprüft: {time}",
+  "diag.ignored": "Ignorierte Meldungen ({count})",
   "diag.intro":
     "Wenn Downloads nicht starten oder hängen, findest du hier die Ursache mit einer Anleitung – meistens mit einem Klick zu beheben.",
 
@@ -324,6 +329,7 @@ export const de: Messages = {
   "problem.transport.firewall_missing.title": "Windows-Firewall kennt den Sync-Dienst nicht",
   "problem.transport.firewall_missing.cause": "Für {program} gibt es keine Firewall-Regel. Andere Rechner können diesen PC dann nicht erreichen, und Antworten der LAN-Suche gehen verloren.",
   "problem.transport.firewall_missing.step.fix": "„Jetzt beheben“ legt Regeln für alle Netzwerkprofile an (einmalige Windows-Abfrage).",
+  "problem.transport.firewall_missing.step.domain": "Auf einem Domänen-PC darf die Firewall oft nur die IT ändern. Schlägt „Jetzt beheben“ fehl, nenne der IT den Pfad aus dem Hinweis oben und bitte um eine eingehende und ausgehende Regel dafür; oder blende die Meldung mit „Ignorieren“ aus.",
   "problem.transport.no_server.title": "Kein Sync-Server im LAN gefunden",
   "problem.transport.no_server.cause": "Andere Teilnehmer sind verbunden, aber niemand liefert den Katalog-Ordner eti_launcher. Downloads starten erst, wenn der Server erscheint. {detail}",
   "problem.transport.no_server.step.server": "Ist der Sync-Server der LAN eingeschaltet und im selben Netz?",

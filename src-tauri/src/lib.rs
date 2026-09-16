@@ -91,6 +91,9 @@ impl SetupHook for AppSetupHook {
             &format!("{game_id}-setup"),
             lines,
             &paths.share_dir,
+            // game_setup.cmd belongs to the game: it may print instructions
+            // or wait for a key press, so its console stays visible.
+            crate::fixes::Output::Console,
         )
         .await;
         match run {
@@ -503,7 +506,14 @@ pub fn run() {
             for d in [&dirs.config, &dirs.data, &dirs.cache] {
                 let _ = std::fs::create_dir_all(d);
             }
-            let resource_dir = app.path().resource_dir().ok();
+            // Tauri hands out a verbatim path (`\\?\C:\…`) on Windows. Windows
+            // accepts it, `netsh` does not, so every path derived from it is
+            // normalised here rather than at each use.
+            let resource_dir = app
+                .path()
+                .resource_dir()
+                .ok()
+                .map(lanlauncher_core::paths::strip_verbatim);
             let mut settings = Settings::load(&dirs.settings_file()).unwrap_or_default();
             if demo {
                 let demo_root = dirs.data.join("demo-library");
@@ -583,6 +593,7 @@ pub fn run() {
             commands::save_settings,
             commands::refresh_catalog,
             commands::run_diagnostics,
+            commands::set_problem_ignored,
             commands::apply_fix,
             commands::get_transport_health,
             commands::open_path,

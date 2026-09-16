@@ -119,15 +119,24 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         with:
           args: ${{ matrix.args }}
+      # upload-artifact keeps the folders the matched files sit in, which
+      # buries Setup.exe under release/bundle/nsis/ in the downloaded zip.
+      # Copying the installers flat first puts them at the top of it.
+      - name: Collect installers
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p installers
+          for root in target/release/bundle target/universal-apple-darwin/release/bundle; do
+            [ -d "$root" ] || continue
+            find "$root" -type f \
+              \( -name '*.exe' -o -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) \
+              -exec cp {} installers/ \;
+          done
+          ls -l installers
       - name: Upload bundles
         uses: actions/upload-artifact@v6
         with:
           name: bundles-${{ matrix.os }}
           if-no-files-found: warn
-          path: |
-            target/release/bundle/**/*.exe
-            target/release/bundle/**/*.dmg
-            target/release/bundle/**/*.AppImage
-            target/release/bundle/**/*.deb
-            target/release/bundle/**/*.rpm
-            target/universal-apple-darwin/release/bundle/**/*.dmg
+          path: installers/*

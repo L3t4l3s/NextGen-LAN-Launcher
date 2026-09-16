@@ -29,6 +29,8 @@ export interface Problem {
   params: Record<string, string>;
   steps: string[];
   fix?: FixAction;
+  /** Set when this warning can be hidden; the id the choice is stored under. */
+  dismiss_key?: string;
 }
 
 export interface GameStatus {
@@ -211,6 +213,8 @@ export interface BootstrapInfo {
 
 export interface Report {
   problems: Problem[];
+  /** Warnings the user has hidden; kept out of `problems`. */
+  ignored: Problem[];
   checksRun: string[];
   generatedAt: string;
 }

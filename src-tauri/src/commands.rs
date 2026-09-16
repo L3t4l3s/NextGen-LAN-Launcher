@@ -422,6 +422,10 @@ pub async fn save_settings(
         new.transport = TransportMode::Demo;
         new.setup_complete = true;
     }
+    // The list of hidden diagnostics warnings has no field in the settings
+    // dialog: the frontend posts the snapshot it fetched at start-up, so a
+    // dismissal made in the meantime would be dropped here.
+    new.ignored_problems = current.ignored_problems.clone();
     new.normalise_catalog_key();
     new.normalise_resilio_binary();
     new.normalise_resilio_api_key();
@@ -647,7 +651,26 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
         }
     }
 
-    Ok(Report::new(problems, checks))
+    Ok(Report::new(problems, checks).hide_ignored(|k| settings.problem_ignored(k)))
+}
+
+/// Hide a diagnostics warning for good, or show it again. Only problems that
+/// carry a dismiss key can be hidden; the UI offers the button for those.
+#[tauri::command]
+pub async fn set_problem_ignored(
+    state: State<'_, Arc<AppState>>,
+    key: String,
+    ignored: bool,
+) -> Cmd<()> {
+    let mut settings = state.settings.write().await;
+    if settings.set_problem_ignored(&key, ignored) {
+        settings.save(&state.settings_path()).map_err(err)?;
+        log::info!(
+            "diagnostics warning {key}: {}",
+            if ignored { "hidden" } else { "shown again" }
+        );
+    }
+    Ok(())
 }
 
 #[tauri::command]

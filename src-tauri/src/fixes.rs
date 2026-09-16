@@ -4,27 +4,51 @@
 use crate::state::AppState;
 use lanlauncher_core::diagnostics;
 use lanlauncher_core::problem::FixAction;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+/// Where the output of an elevated run goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Output {
+    /// Into a log file the launcher reads back, so a failure carries the
+    /// message the command printed. For helper commands only.
+    Captured,
+    /// Into the console of the elevated run, where the user sees it. Game
+    /// scripts print instructions and end with `pause`; redirecting them
+    /// shows an empty window instead. Only the UAC path has such a console,
+    /// so an already elevated launcher captures either way.
+    Console,
+}
 
 /// Run batch lines that need administrator rights and wait for them:
 /// directly through cmd.exe when the launcher is already elevated, else
 /// through PowerShell `Start-Process -Verb RunAs` (UAC prompt). Errors are
 /// `err.<code>` strings: `elevation_disabled` (setting), `elevation_denied`
-/// (prompt declined), `elevation_failed|<exit code>`.
+/// (prompt declined), `elevation_failed|<exit code>` (plus the command's own
+/// message with [`Output::Captured`]).
 pub(crate) async fn run_admin_lines(
     state: &AppState,
     stem: &str,
     lines: Vec<String>,
     cwd: &Path,
+    output: Output,
 ) -> Result<(), String> {
     use lanlauncher_core::launch::{apply_args, elevate, LaunchPlan};
     let elevated = elevate::running_elevated() != Some(false);
     if !elevated && !state.settings.read().await.allow_elevation {
         return Err("err.elevation_disabled".into());
     }
-    let batch = elevate::write_batch(&state.run_dir(), stem, &lines)
-        .map_err(|e| format!("err.elevation_failed|{e}"))?;
+    // An already elevated launcher runs the batch through its own hidden
+    // cmd.exe: there is no console for the user to read either way, so the
+    // transcript is the only thing that can explain a failure.
+    let output = if elevated { Output::Captured } else { output };
+    let (batch, log) = match output {
+        Output::Captured => elevate::write_batch_logged(&state.run_dir(), stem, &lines),
+        Output::Console => {
+            elevate::write_batch(&state.run_dir(), stem, &lines).map(|b| (b, PathBuf::new()))
+        }
+    }
+    .map_err(|e| format!("err.elevation_failed|{e}"))?;
     let plan = if elevated {
         LaunchPlan {
             program: std::path::PathBuf::from(
@@ -61,9 +85,18 @@ pub(crate) async fn run_admin_lines(
             .rev()
             .collect::<String>()
     };
+    // The elevated process writes to its own console, so what actually went
+    // wrong is only in the log the batch appends to. Windows console tools
+    // still write OEM-encoded text; the lossy conversion keeps the message
+    // readable even when the umlauts do not survive it.
+    let transcript = match output {
+        Output::Captured => std::fs::read(&log).map(|b| tail(&b)).unwrap_or_default(),
+        Output::Console => String::new(),
+    };
     log::warn!(
-        "{stem} exited with {}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+        "{stem} exited with {}\n--- transcript ---\n{}\n--- stdout ---\n{}\n--- stderr ---\n{}",
         out.status,
+        transcript,
         tail(&out.stdout),
         tail(&out.stderr)
     );
@@ -71,12 +104,19 @@ pub(crate) async fn run_admin_lines(
     if !elevated
         && (stderr.contains("cancel") || stderr.contains("abgebrochen") || stderr.contains("1223"))
     {
-        Err("err.elevation_denied".into())
+        return Err("err.elevation_denied".into());
+    }
+    let code = out.status.code().unwrap_or(-1);
+    // The batch returns the exit code of its *last* line, so only that
+    // line's output explains the code. Anything printed before it belongs to
+    // a command that has already been and gone, and quoting it would name
+    // the wrong culprit.
+    let reason = lanlauncher_core::launch::elevate::last_section(&transcript);
+    if reason.is_empty() {
+        Err(format!("err.elevation_failed|{code}"))
     } else {
-        Err(format!(
-            "err.elevation_failed|{}",
-            out.status.code().unwrap_or(-1)
-        ))
+        // Reads as "(Code 1 - Der Parameter ist ungueltig)" in the UI.
+        Err(format!("err.elevation_failed|{code} \u{2013} {reason}"))
     }
 }
 
@@ -109,6 +149,7 @@ pub(crate) async fn ensure_firewall_rules(
         &format!("{game_id}-firewall"),
         rules,
         &paths.share_dir,
+        Output::Captured,
     )
     .await
     {
@@ -237,6 +278,7 @@ pub async fn apply(
                     "network-profile",
                     vec![powershell_line(&script)],
                     &state.dirs.data,
+                    Output::Captured,
                 )
                 .await?;
             } else {
@@ -272,7 +314,14 @@ pub async fn apply(
                     .chain(rules.iter())
                     .map(|r| netsh_line(r))
                     .collect();
-                run_admin_lines(state, "firewall-rules", lines, &state.dirs.data).await?;
+                run_admin_lines(
+                    state,
+                    "firewall-rules",
+                    lines,
+                    &state.dirs.data,
+                    Output::Captured,
+                )
+                .await?;
             } else {
                 for rule in &stale {
                     if let Err(e) = netsh(rule).await {
@@ -319,6 +368,7 @@ pub async fn apply(
                     "defender-exclusion",
                     vec![powershell_line(&script)],
                     &state.dirs.data,
+                    Output::Captured,
                 )
                 .await?;
             } else {

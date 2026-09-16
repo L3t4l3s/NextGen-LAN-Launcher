@@ -65,10 +65,34 @@
         <ProblemCard {problem} onfixed={run} />
       {/each}
     </div>
+
+    {#if report.ignored.length}
+      <details class="ignored">
+        <summary>{t("diag.ignored", { count: report.ignored.length })}</summary>
+        <div class="stack">
+          {#each report.ignored as problem (problem.code + JSON.stringify(problem.params))}
+            <ProblemCard {problem} ignored onfixed={run} />
+          {/each}
+        </div>
+      </details>
+    {/if}
   {/if}
 </div>
 
 <style>
+  .ignored {
+    margin-top: 1rem;
+  }
+  .ignored summary {
+    cursor: pointer;
+    color: var(--color-text-muted);
+    font-size: 0.92rem;
+    padding: 0.3rem 0;
+  }
+  .ignored .stack {
+    margin-top: 0.6rem;
+    opacity: 0.72;
+  }
   .summary {
     display: flex;
     gap: 1rem;

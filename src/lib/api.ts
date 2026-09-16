@@ -62,6 +62,7 @@ export const api = {
   refreshCatalog: () => invoke<number>("refresh_catalog"),
   diagnostics: () => invoke<Report>("run_diagnostics"),
   applyFix: (fix: FixAction) => invoke<string>("apply_fix", { fix }),
+  setProblemIgnored: (key: string, ignored: boolean) => invoke<void>("set_problem_ignored", { key, ignored }),
   health: () => invoke<TransportHealth | null>("get_transport_health"),
   openPath: (path: string) => invoke<void>("open_path", { path }),
   openUrl: (url: string) => invoke<void>("open_url", { url }),

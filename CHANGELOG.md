@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Die Firewall-Reparatur scheiterte auf einem installierten Launcher mit „Code 1“. Ursache: Tauri
+  liefert den Programmpfad in der Windows-Langform (`\\?\C:\…`), und `netsh` lehnt die ab. Der
+  Pfad wird jetzt an der Quelle normalisiert. Ungetestet gegen einen echten Windows-PC, auf der
+  LAN prüfen.
+- Schlägt eine Aktion mit Adminrechten fehl, stand im Fehler nur der Exit-Code: Die erhöhte
+  Konsole gehört dem neuen Prozess, ihre Ausgabe war für den Launcher verloren. Sie landet jetzt in
+  einer Protokolldatei neben dem Skript; die letzte Zeile daraus steht in der Meldung, das ganze
+  Protokoll im Log.
+- Auf einem Domänen-PC darf die Firewall oft nur die IT ändern. Die Diagnose sagt das jetzt vorab
+  und nennt, was die IT braucht.
+- Warnungen der Diagnose lassen sich ausblenden („Ignorieren“), zum Beispiel der zweite Adapter auf
+  „Öffentlich“ oder eine Firewall, die per Richtlinie gesperrt ist. Sie zählen dann nicht mehr für
+  die Ampel und stehen aufklappbar unter „Ignorierte Meldungen“. Nur Warnungen, die man bewusst
+  hinnehmen kann; ein LAN, das gar nicht funktionieren kann, bleibt sichtbar.
+- „Kann Katalog-Freigabe nicht registrieren: HTTP 500“ beim zweiten Start: Die Web-Oberfläche
+  antwortet so für einen Ordner, den die Engine schon kennt. Der Fall gilt jetzt wie bei der
+  dokumentierten API als Erfolg.
+- Die Installer liegen im CI-Artefakt direkt im Zip statt unter `release/bundle/nsis/`.
+
 - Ohne Resilio-API-Key war der Launcher auf einem frischen PC unbrauchbar: Der Rückfall auf
   Resilios Web-Oberfläche scheiterte mit HTTP 400. Zwei Ursachen sind behoben: Die Sitzungs-Cookies
   der Oberfläche werden jetzt mitgeschickt (ohne sie verwirft Resilio den eigenen Token), und wenn

@@ -5,7 +5,12 @@
   import { has, t, userText } from "$lib/i18n";
   import { formatBytes } from "$lib/format";
 
-  let { problem, compact = false, onfixed }: { problem: Problem; compact?: boolean; onfixed?: () => void } = $props();
+  let {
+    problem,
+    compact = false,
+    ignored = false,
+    onfixed,
+  }: { problem: Problem; compact?: boolean; ignored?: boolean; onfixed?: () => void } = $props();
 
   let fixing = $state(false);
 
@@ -18,6 +23,18 @@
     }
     return p;
   });
+
+  // Hidden warnings stay in the report under "ignored", so the same button
+  // brings them back.
+  async function setIgnored(value: boolean) {
+    if (!problem.dismiss_key) return;
+    try {
+      await api.setProblemIgnored(problem.dismiss_key, value);
+      onfixed?.();
+    } catch (e) {
+      app.toast("error", t("toast.error", { detail: userText(e) }));
+    }
+  }
 
   async function fix() {
     if (!problem.fix) return;
@@ -38,8 +55,13 @@
   <div class="head">
     <span class="dot {problem.severity === 'error' ? 'error' : problem.severity === 'warning' ? 'warn' : ''}"></span>
     <strong>{t(`problem.${problem.code}.title`, params)}</strong>
-    {#if problem.fix}
+    {#if problem.fix && !ignored}
       <button class="primary small" onclick={fix} disabled={fixing}>{fixing ? t("action.working") : t("action.fix_now")}</button>
+    {/if}
+    {#if problem.dismiss_key}
+      <button class="ghost small" onclick={() => setIgnored(!ignored)} title={ignored ? t("action.unignore.hint") : t("action.ignore.hint")}>
+        {ignored ? t("action.unignore") : t("action.ignore")}
+      </button>
     {/if}
   </div>
   {#if has(`problem.${problem.code}.cause`)}

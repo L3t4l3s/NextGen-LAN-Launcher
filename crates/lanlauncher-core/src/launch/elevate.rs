@@ -171,9 +171,25 @@ pub fn firewall_add_rules(
 /// this is the same trust the user grants any script started from a UAC
 /// prompt.
 pub fn write_batch(dir: &Path, stem: &str, lines: &[String]) -> Result<PathBuf> {
-    std::fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
-    let safe: String = stem
-        .chars()
+    write_batch_inner(dir, stem, lines, None).map(|(batch, _)| batch)
+}
+
+/// As [`write_batch`], but every line also appends its output to a log file
+/// next to the batch, and the returned path points at that log.
+///
+/// The elevated process gets its own console, so whatever `netsh` or
+/// PowerShell prints there is lost to the launcher: a failure arrives as a
+/// bare exit code with nothing to act on. Reading the log afterwards is what
+/// turns that into a message a player, or a domain admin, can work with.
+pub fn write_batch_logged(dir: &Path, stem: &str, lines: &[String]) -> Result<(PathBuf, PathBuf)> {
+    let log = dir.join(format!("{}.log", safe_stem(stem)));
+    // Left over from the previous run; the batch only appends.
+    let _ = std::fs::remove_file(&log);
+    write_batch_inner(dir, stem, lines, Some(&log))
+}
+
+fn safe_stem(stem: &str) -> String {
+    stem.chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
                 c
@@ -181,16 +197,55 @@ pub fn write_batch(dir: &Path, stem: &str, lines: &[String]) -> Result<PathBuf> 
                 '_'
             }
         })
-        .collect();
-    let path = dir.join(format!("{safe}.cmd"));
+        .collect()
+}
+
+fn write_batch_inner(
+    dir: &Path,
+    stem: &str,
+    lines: &[String],
+    log: Option<&Path>,
+) -> Result<(PathBuf, PathBuf)> {
+    std::fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
+    let path = dir.join(format!("{}.cmd", safe_stem(stem)));
     let mut text = String::from("@echo off\r\n");
-    for l in lines {
+    // `>>"<log>" 2>&1` per line rather than one block around all of them:
+    // cmd's parenthesised blocks trip over the parentheses in rule names
+    // such as "NextGen LAN Launcher Sync (in)".
+    let redirect = log
+        .map(|l| format!(" >>\"{}\" 2>&1", l.display()))
+        .unwrap_or_default();
+    for (i, l) in lines.iter().enumerate() {
+        if log.is_some() {
+            // Numbered so the log says which line produced which message.
+            text.push_str(&format!("echo --- {}{redirect}\r\n", i + 1));
+        }
         text.push_str(l);
+        text.push_str(&redirect);
         text.push_str("\r\n");
     }
     text.push_str("exit /b %errorlevel%\r\n");
     std::fs::write(&path, text).map_err(|e| Error::io(&path, e))?;
-    Ok(path)
+    Ok((path, log.map(Path::to_path_buf).unwrap_or_default()))
+}
+
+/// The output of the last command in a transcript [`write_batch_logged`]
+/// produced: everything after the final `--- <n>` marker, joined into one
+/// line.
+///
+/// The batch returns the exit code of its last line, so only that line's
+/// output explains the failure; quoting anything earlier would name a
+/// command that already succeeded.
+pub fn last_section(transcript: &str) -> String {
+    let body = match transcript.rfind("--- ") {
+        Some(i) => &transcript[i..],
+        None => transcript,
+    };
+    body.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with("--- "))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The batch line that runs a plan: for cmd.exe script plans the command
@@ -293,6 +348,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_failing_command_is_the_last_one_in_the_transcript() {
+        let transcript = "--- 1\r\nOk.\r\n\r\n--- 2\r\nDer Parameter ist ung\u{fc}ltig.\r\n";
+        assert_eq!(last_section(transcript), "Der Parameter ist ung\u{fc}ltig.");
+        // A run whose last command said nothing leaves no reason to quote.
+        assert_eq!(last_section("--- 1\r\nOk.\r\n\r\n--- 2\r\n"), "");
+        assert_eq!(last_section(""), "");
+        // A truncated transcript (the tail of a long log) has no marker left.
+        assert_eq!(
+            last_section("Zugriff verweigert.\r\n"),
+            "Zugriff verweigert."
+        );
+    }
+
+    #[test]
     fn detects_admin_needs_but_not_firewall_rules() {
         let firewall_only = "netsh advfirewall firewall add rule name=\"%game_id%\" dir=in action=allow program=\"%game_path%\\local\\x.exe\" profile=any enable=yes >nul\r\n\"x.exe\"\r\nnetsh advfirewall firewall delete rule name=\"%game_id%\" >nul";
         assert!(!script_needs_admin(firewall_only));
@@ -379,6 +448,24 @@ mod tests {
         assert!(batch.ends_with("q3_setup_1.cmd"));
         let text = std::fs::read_to_string(&batch).unwrap();
         assert!(text.starts_with("@echo off\r\n"));
+        assert!(text.ends_with("exit /b %errorlevel%\r\n"));
+
+        // With a log, every line appends to it and the stale log of the
+        // previous run is gone before the batch runs.
+        let stale = dir.path().join("firewall-rules.log");
+        std::fs::write(&stale, "old run").unwrap();
+        let (batch, log) = write_batch_logged(
+            dir.path(),
+            "firewall-rules",
+            &[r#"netsh advfirewall firewall add rule name="Sync (in)" dir=in"#.into()],
+        )
+        .unwrap();
+        assert_eq!(log, stale);
+        assert!(!log.exists());
+        let text = std::fs::read_to_string(&batch).unwrap();
+        assert!(text.contains(&format!("echo --- 1 >>\"{}\" 2>&1", log.display())));
+        assert!(text.contains(&format!("dir=in >>\"{}\" 2>&1", log.display())));
+        // The exit code still comes from the last command, not from the echo.
         assert!(text.ends_with("exit /b %errorlevel%\r\n"));
 
         let script = runas_script(

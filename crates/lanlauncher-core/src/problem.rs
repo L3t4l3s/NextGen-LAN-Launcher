@@ -55,6 +55,15 @@ pub struct Problem {
     pub steps: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fix: Option<FixAction>,
+    /// Set when the user may hide this problem for good, and the id the
+    /// choice is stored under. It carries what the warning is about, not just
+    /// its code, so hiding "the second adapter is public" for one adapter
+    /// does not hide the same warning for another one.
+    ///
+    /// Only checks the user can reasonably decide to live with get a key —
+    /// a LAN that cannot work at all stays visible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dismiss_key: Option<String>,
 }
 
 impl Problem {
@@ -65,6 +74,7 @@ impl Problem {
             params: BTreeMap::new(),
             steps: Vec::new(),
             fix: None,
+            dismiss_key: None,
         }
     }
 
@@ -80,6 +90,12 @@ impl Problem {
 
     pub fn with_fix(mut self, fix: FixAction) -> Self {
         self.fix = Some(fix);
+        self
+    }
+
+    /// Let the user hide this problem, stored under `key`.
+    pub fn dismissible(mut self, key: impl Into<String>) -> Self {
+        self.dismiss_key = Some(key.into());
         self
     }
 }

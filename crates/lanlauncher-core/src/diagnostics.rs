@@ -14,6 +14,11 @@ use std::path::Path;
 #[serde(rename_all = "camelCase")]
 pub struct Report {
     pub problems: Vec<Problem>,
+    /// Problems the user has hidden (see [`Problem::dismiss_key`]). They are
+    /// kept out of `problems` so they colour no traffic light and raise no
+    /// badge, but the page can still list them and offer to show them again.
+    #[serde(default)]
+    pub ignored: Vec<Problem>,
     pub checks_run: Vec<String>,
     pub generated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -22,9 +27,21 @@ impl Report {
     pub fn new(problems: Vec<Problem>, checks_run: Vec<String>) -> Self {
         Self {
             problems,
+            ignored: Vec::new(),
             checks_run,
             generated_at: chrono::Utc::now(),
         }
+    }
+
+    /// Move every problem the user has hidden into `ignored`.
+    pub fn hide_ignored(mut self, is_ignored: impl Fn(&str) -> bool) -> Self {
+        let (ignored, rest) = self
+            .problems
+            .into_iter()
+            .partition(|p| p.dismiss_key.as_deref().is_some_and(&is_ignored));
+        self.problems = rest;
+        self.ignored = ignored;
+        self
     }
 
     pub fn worst(&self) -> Option<Severity> {
@@ -177,6 +194,11 @@ pub fn check_network_profiles(profiles: &[NetworkProfile]) -> Vec<Problem> {
                 });
             if let Some(t) = trusted {
                 problem = problem.param("trusted_adapter", &t.interface_alias);
+                // Only the secondary case: when no other adapter is trusted,
+                // this is the LAN link itself and hiding it would hide the
+                // reason nothing syncs. Keyed per adapter, because the next
+                // one is a different decision.
+                problem = problem.dismissible(format!("{code}:{}", p.interface_alias));
             }
             problem
         })
@@ -201,7 +223,14 @@ pub fn firewall_missing_problem(program: &std::path::Path) -> Problem {
     Problem::new("transport.firewall_missing", Severity::Warning)
         .param("program", program.display().to_string())
         .step("transport.firewall_missing.step.fix")
+        // On a domain-joined PC group policy can forbid local rules, and the
+        // fix then fails with a message from netsh that means nothing to a
+        // player. Saying so up front is cheaper than a support call.
+        .step("transport.firewall_missing.step.domain")
         .with_fix(FixAction::AddFirewallRules)
+        // A managed PC may never get these rules; the warning is then
+        // permanent and the user has no way to act on it.
+        .dismissible("transport.firewall_missing")
 }
 
 /// `netsh` commands that drop every existing rule for the sync engine.
@@ -548,6 +577,44 @@ mod tests {
             fw.params.get("program").map(String::as_str),
             Some(r"C:\App\Resilio Sync.exe")
         );
+    }
+
+    #[test]
+    fn only_the_secondary_public_adapter_can_be_hidden() {
+        let json = r#"[{"InterfaceIndex":5,"InterfaceAlias":"WLAN","Name":"Gast","NetworkCategory":0,"IPv4Connectivity":4},
+                       {"InterfaceIndex":7,"InterfaceAlias":"Ethernet","Name":"LAN","NetworkCategory":1,"IPv4Connectivity":2}]"#;
+        let problems = check_network_profiles(&parse_net_profiles(json));
+        assert_eq!(problems[0].code, "network.public_profile_secondary");
+        // Keyed per adapter: hiding the warning for the guest WLAN must not
+        // hide it for a second public adapter later.
+        assert_eq!(
+            problems[0].dismiss_key.as_deref(),
+            Some("network.public_profile_secondary:WLAN")
+        );
+
+        // The adapter that carries the LAN itself stays visible.
+        let only_public = r#"[{"InterfaceIndex":5,"InterfaceAlias":"WLAN","Name":"Gast","NetworkCategory":0,"IPv4Connectivity":4}]"#;
+        let problems = check_network_profiles(&parse_net_profiles(only_public));
+        assert_eq!(problems[0].code, "network.public_profile");
+        assert_eq!(problems[0].dismiss_key, None);
+    }
+
+    #[test]
+    fn hidden_problems_leave_the_traffic_light() {
+        let report = Report::new(
+            vec![
+                firewall_missing_problem(Path::new(r"C:\App\sync.exe")),
+                Problem::new("catalog.missing", Severity::Warning),
+            ],
+            vec!["firewall".into()],
+        )
+        .hide_ignored(|k| k == "transport.firewall_missing");
+        assert_eq!(report.ignored.len(), 1);
+        assert_eq!(report.problems.len(), 1);
+        assert_eq!(report.problems[0].code, "catalog.missing");
+        // The hidden warning no longer decides the page's colour, but the
+        // remaining one still does.
+        assert_eq!(report.worst(), Some(Severity::Warning));
     }
 
     #[test]

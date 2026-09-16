@@ -13,6 +13,23 @@
 
 use std::path::{Path, PathBuf};
 
+/// Windows verbatim paths (`\\?\C:\…`) come out of `canonicalize()` and out
+/// of Tauri's `resource_dir()`. Windows itself accepts them, but tools the
+/// launcher hands them to do not: `netsh advfirewall … program=\\?\C:\…`
+/// fails, and a firewall rule carrying that spelling would never match the
+/// running program. Strip the prefix wherever a path leaves the launcher.
+pub fn strip_verbatim(path: impl Into<PathBuf>) -> PathBuf {
+    let path = path.into();
+    let s = path.to_string_lossy().to_string();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        path
+    }
+}
+
 pub const LAUNCHER_SHARE_ID: &str = "eti_launcher";
 pub const CATALOG_RELATIVE: &str = "eti_launcher/update/game.db";
 pub const ASSETS_RELATIVE: &str = "eti_launcher/update/assets.eti";
@@ -97,5 +114,32 @@ impl GamePaths {
             setup_script: share_dir.join("game_setup.cmd"),
             share_dir,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verbatim_prefixes_are_stripped() {
+        assert_eq!(
+            strip_verbatim(PathBuf::from(r"\\?\C:\Program Files\App\sync.exe")),
+            PathBuf::from(r"C:\Program Files\App\sync.exe")
+        );
+        assert_eq!(
+            strip_verbatim(PathBuf::from(r"\\?\UNC\server\share\file")),
+            PathBuf::from(r"\\server\share\file")
+        );
+        // Paths without the prefix, and UNC paths already in their usual
+        // spelling, come back untouched.
+        assert_eq!(
+            strip_verbatim(PathBuf::from(r"C:\LAN\eti_launcher")),
+            PathBuf::from(r"C:\LAN\eti_launcher")
+        );
+        assert_eq!(
+            strip_verbatim(PathBuf::from("/home/user/lan")),
+            PathBuf::from("/home/user/lan")
+        );
     }
 }

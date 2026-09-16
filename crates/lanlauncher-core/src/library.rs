@@ -5,7 +5,7 @@
 //! game lives in exactly one root; new installs go to the root with the most
 //! free space unless the user picked one explicitly.
 
-use crate::paths::GamePaths;
+use crate::paths::{strip_verbatim, GamePaths};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -37,19 +37,6 @@ impl LibraryRoot {
 /// Prefer [`DiskTable`] when querying many paths in one go.
 pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
     DiskTable::refresh().space_for(path)
-}
-
-/// `canonicalize()` on Windows yields verbatim paths (`\\?\C:\…`) that never
-/// `starts_with` a plain mount point (`C:\`). Strip the prefix again.
-fn strip_verbatim(path: PathBuf) -> PathBuf {
-    let s = path.to_string_lossy();
-    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
-        PathBuf::from(format!(r"\\{rest}"))
-    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
-        PathBuf::from(rest)
-    } else {
-        path
-    }
 }
 
 /// Snapshot of mounted volumes, refreshed once per polling round so that

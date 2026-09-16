@@ -61,6 +61,9 @@ pub struct Settings {
     /// from the LANPage's `launcher.ini`; without any key the web-UI
     /// endpoints with login/password are used.
     pub resilio_api_key: Option<String>,
+    /// Diagnostics warnings the user has hidden, by
+    /// [`crate::problem::Problem::dismiss_key`]. Sorted and unique.
+    pub ignored_problems: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,11 +94,33 @@ impl Default for Settings {
             catalog_key: None,
             resilio_binary: None,
             resilio_api_key: None,
+            ignored_problems: Vec::new(),
         }
     }
 }
 
 impl Settings {
+    /// Hide or show a diagnostics warning again. Returns whether the list
+    /// changed, so the caller can skip writing an unchanged file.
+    pub fn set_problem_ignored(&mut self, key: &str, ignored: bool) -> bool {
+        match (self.ignored_problems.iter().position(|k| k == key), ignored) {
+            (None, true) => {
+                self.ignored_problems.push(key.to_string());
+                self.ignored_problems.sort();
+                true
+            }
+            (Some(i), false) => {
+                self.ignored_problems.remove(i);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    pub fn problem_ignored(&self, key: &str) -> bool {
+        self.ignored_problems.iter().any(|k| k == key)
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         match std::fs::read_to_string(path) {
             Ok(text) => {
@@ -189,6 +214,18 @@ impl Settings {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn ignoring_a_problem_is_idempotent_and_reversible() {
+        let mut s = Settings::default();
+        assert!(s.set_problem_ignored("network.public_profile_secondary:WLAN", true));
+        assert!(!s.set_problem_ignored("network.public_profile_secondary:WLAN", true));
+        assert!(s.problem_ignored("network.public_profile_secondary:WLAN"));
+        assert!(!s.problem_ignored("network.public_profile_secondary:Ethernet"));
+        assert!(s.set_problem_ignored("network.public_profile_secondary:WLAN", false));
+        assert!(s.ignored_problems.is_empty());
+        assert!(!s.set_problem_ignored("never.ignored", false));
+    }
     use super::*;
 
     #[test]
