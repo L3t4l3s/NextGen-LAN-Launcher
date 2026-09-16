@@ -24,6 +24,7 @@ use rand::RngExt;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tokio::process::{Child, Command};
@@ -199,6 +200,9 @@ pub struct ResilioClient {
     pub api_key: Option<String>,
     http: reqwest::Client,
     gui_token: Arc<Mutex<Option<String>>>,
+    /// Cleared once a build has refused `getversion`, so the probe does not
+    /// pay for a request that will never work on this engine.
+    gui_has_getversion: Arc<AtomicBool>,
 }
 
 use std::sync::Arc;
@@ -218,9 +222,13 @@ impl ResilioClient {
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(8))
                 .no_proxy()
+                // The web UI sets a session cookie together with the token in
+                // `token.html` and answers a token without it with HTTP 400.
+                .cookie_store(true)
                 .build()
                 .expect("reqwest client"),
             gui_token: Arc::new(Mutex::new(None)),
+            gui_has_getversion: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -295,7 +303,11 @@ impl ResilioClient {
             .basic_auth(&self.login, Some(&self.password))
             .send()
             .await?;
-        if resp.status().as_u16() == 401 || resp.status().as_u16() == 403 {
+        // 400 belongs in this list: that is what the web UI answers when the
+        // token no longer matches its session cookie. Without dropping the
+        // cached token, a session that goes stale while the launcher runs
+        // would make every later call fail the same way.
+        if matches!(resp.status().as_u16(), 400 | 401 | 403) {
             if let Ok(mut g) = self.gui_token.lock() {
                 *g = None;
             }
@@ -318,10 +330,33 @@ impl ResilioClient {
                 .unwrap_or("?")
                 .to_string());
         }
-        let v = self.gui("getversion", &[]).await?;
-        Ok(v.get("version")
-            .map(|x| x.to_string().trim_matches('"').to_string())
-            .unwrap_or("?".into()))
+        // Not every build answers `getversion`; some reply with HTTP 400.
+        // The folder list is what the fallback actually needs, so an engine
+        // that serves it counts as reachable even with an unknown version.
+        // A build that refuses `getversion` is remembered, otherwise every
+        // probe from here on would pay for two requests instead of one.
+        if self.gui_has_getversion.load(Ordering::Relaxed) {
+            match self.gui("getversion", &[]).await {
+                Ok(v) => {
+                    return Ok(v
+                        .get("version")
+                        .map(|x| x.to_string().trim_matches('"').to_string())
+                        .unwrap_or("?".into()))
+                }
+                Err(first) => {
+                    self.gui_has_getversion.store(false, Ordering::Relaxed);
+                    return match self.gui("getsyncfolders", &[]).await {
+                        Ok(_) => Ok("?".into()),
+                        // The engine is unreachable either way; the first
+                        // error is the one that describes the probe.
+                        Err(_) => Err(first),
+                    };
+                }
+            }
+        }
+        self.gui("getsyncfolders", &[])
+            .await
+            .map(|_| "?".to_string())
     }
 
     pub async fn shutdown(&self) -> Result<()> {
@@ -1737,27 +1772,73 @@ mod tests {
 
     /// Tiny HTTP server that answers with canned JSON per query string.
     async fn mock_server(routes: Vec<(&'static str, &'static str)>) -> String {
+        let with_status = routes.into_iter().map(|(n, b)| (n, 200u16, b)).collect();
+        mock_server_full(with_status, None, None).await
+    }
+
+    /// Mock HTTP server for the client tests.
+    ///
+    /// `set_cookie` is handed out with `token.html`, `require_cookie` makes
+    /// every `/gui/` request without that cookie fail with HTTP 400 — which is
+    /// how Resilio's own web UI behaves.
+    async fn mock_server_full(
+        routes: Vec<(&'static str, u16, &'static str)>,
+        set_cookie: Option<&'static str>,
+        require_cookie: Option<&'static str>,
+    ) -> String {
+        mock_server_recording(routes, set_cookie, require_cookie)
+            .await
+            .0
+    }
+
+    /// As [`mock_server_full`], plus the request lines it has served, so a
+    /// test can assert which calls were made and how often.
+    async fn mock_server_recording(
+        routes: Vec<(&'static str, u16, &'static str)>,
+        set_cookie: Option<&'static str>,
+        require_cookie: Option<&'static str>,
+    ) -> (String, Arc<Mutex<Vec<String>>>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
         tokio::spawn(async move {
             loop {
                 let Ok((mut sock, _)) = listener.accept().await else {
                     break;
                 };
                 let routes = routes.clone();
+                let log = log.clone();
                 tokio::spawn(async move {
                     let mut buf = vec![0u8; 8192];
                     let n = sock.read(&mut buf).await.unwrap_or(0);
                     let req = String::from_utf8_lossy(&buf[..n]).to_string();
                     let line = req.lines().next().unwrap_or("").to_string();
-                    let body = routes
+                    if let Ok(mut l) = log.lock() {
+                        l.push(line.clone());
+                    }
+                    let (mut status, mut body) = routes
                         .iter()
-                        .find(|(needle, _)| line.contains(needle))
-                        .map(|(_, b)| *b)
-                        .unwrap_or(r#"{"error":404}"#);
+                        .find(|(needle, _, _)| line.contains(needle))
+                        .map(|(_, s, b)| (*s, *b))
+                        .unwrap_or((200, r#"{"error":404}"#));
+                    if let Some(cookie) = require_cookie {
+                        // reqwest writes the header name in lower case.
+                        let has = req.lines().any(|l| {
+                            l.to_ascii_lowercase().starts_with("cookie:") && l.contains(cookie)
+                        });
+                        if line.contains("/gui/?") && !has {
+                            status = 400;
+                            body = "cookie missing";
+                        }
+                    }
+                    let cookie_header = match (set_cookie, line.contains("token.html")) {
+                        (Some(c), true) => format!("Set-Cookie: {c}\r\n"),
+                        _ => String::new(),
+                    };
                     let resp = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n{cookie_header}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
                         body.len(),
                         body
                     );
@@ -1765,7 +1846,7 @@ mod tests {
                 });
             }
         });
-        format!("http://{addr}")
+        (format!("http://{addr}"), seen)
     }
 
     #[tokio::test]
@@ -1818,6 +1899,64 @@ mod tests {
         assert_eq!(c.version().await.unwrap(), "2.8.1");
         let f = c.folders().await.unwrap();
         assert_eq!(f[Path::new("/lan/a")].state, ShareState::Complete);
+    }
+
+    #[tokio::test]
+    async fn gui_client_keeps_the_session_cookie_and_survives_a_refused_getversion() {
+        // A launcher without an API key only has the web UI: it hands out a
+        // session cookie with the token and rejects a token that comes back
+        // without it, and some builds answer `getversion` with HTTP 400.
+        let base = mock_server_full(
+            vec![
+                (
+                    "/gui/token.html",
+                    200,
+                    "<div id='token' style='display:none;'>TOK</div>",
+                ),
+                ("action=getversion", 400, "invalid request"),
+                (
+                    "action=getsyncfolders",
+                    200,
+                    r#"{"folders":[{"name":"/lan/a","size":5,"status":"Synced","peers":[]}]}"#,
+                ),
+            ],
+            Some("GUID=abc; path=/"),
+            Some("GUID=abc"),
+        )
+        .await;
+        let c = ResilioClient::new(base, "u", "p", None);
+        // Reachable although the version stays unknown.
+        assert_eq!(c.version().await.unwrap(), "?");
+        let f = c.folders().await.unwrap();
+        assert_eq!(f[Path::new("/lan/a")].state, ShareState::Complete);
+    }
+
+    #[tokio::test]
+    async fn a_refused_getversion_is_asked_once_and_drops_the_stale_token() {
+        let (base, seen) = mock_server_recording(
+            vec![
+                (
+                    "/gui/token.html",
+                    200,
+                    "<div id='token' style='display:none;'>TOK</div>",
+                ),
+                ("action=getversion", 400, "invalid request"),
+                ("action=getsyncfolders", 200, r#"{"folders":[]}"#),
+            ],
+            None,
+            None,
+        )
+        .await;
+        let c = ResilioClient::new(base, "u", "p", None);
+        assert_eq!(c.version().await.unwrap(), "?");
+        assert_eq!(c.version().await.unwrap(), "?");
+        let lines = seen.lock().unwrap().clone();
+        let count = |needle: &str| lines.iter().filter(|l| l.contains(needle)).count();
+        // The build has no `getversion`; asking twice would double every probe.
+        assert_eq!(count("action=getversion"), 1, "{lines:?}");
+        // The 400 drops the cached token, so the session is fetched again
+        // instead of every later call failing the same way.
+        assert_eq!(count("token.html"), 2, "{lines:?}");
     }
 
     #[test]

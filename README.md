@@ -27,6 +27,26 @@ Play / Update), but the secondary actions **Repair**, **Pause sync**, **Open fol
 stay visible at all times, whatever the launcher is currently doing. Repair stops the sync,
 verifies the archive and re-extracts it.
 
+## The Resilio API key
+
+Resilio's documented Sync API (`/api?method=…`) needs an `api_key`; without one the launcher falls
+back to the endpoints of Resilio's web interface, which are undocumented and differ between
+builds. The key is the same for every client of a LAN, so it lives in one of three places, in this
+order:
+
+1. **Settings → Advanced → Resilio API key.** Saving it restarts the engine, no app restart needed.
+2. **An installed ETI client:** `%ProgramFiles%\eti\LAN Launcher\sync\config.json`, line
+   `"api_key"`. The launcher reads it by itself, nothing to type.
+3. **The LANPage's `launcher.ini`**, so every PC at the LAN gets it without typing:
+
+   ```ini
+   [launcher]
+   resilio_api_key = <the key>
+   ```
+
+The key is not in this repository. A PC without an ETI installation and without a LANPage
+therefore needs step 1 once.
+
 ## Layout
 
 ```

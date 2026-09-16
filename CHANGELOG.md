@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Ohne Resilio-API-Key war der Launcher auf einem frischen PC unbrauchbar: Der Rückfall auf
+  Resilios Web-Oberfläche scheiterte mit HTTP 400. Zwei Ursachen sind behoben: Die Sitzungs-Cookies
+  der Oberfläche werden jetzt mitgeschickt (ohne sie verwirft Resilio den eigenen Token), und wenn
+  `getversion` abgelehnt wird, gilt eine beantwortete Ordnerliste als „Engine erreichbar“.
+  Ungetestet gegen eine echte Engine, auf der LAN prüfen.
+- Die Karte „Resilio Sync nicht verfügbar“ nennt jetzt den API-Key als Ursache und wo er hingehört.
+  `README.md` beschreibt die drei Quellen (Einstellung, ETI-Installation, `launcher.ini`).
 - Downloads zeigen jetzt eine echte Laderate: Die dokumentierte Resilio-API liefert keine, deshalb
   misst der Launcher das Wachstum der Datei auf der Platte (geglättet). Pro Eintrag lässt sich
   „Details“ aufklappen: Verlauf der Laderate der letzten zwei Minuten als Diagramm und die Quellen

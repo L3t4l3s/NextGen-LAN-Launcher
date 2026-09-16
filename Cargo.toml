@@ -14,7 +14,9 @@ serde_json = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "time", "sync", "process", "fs"] }
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+# `cookies`: Resilio's web UI hands out a session cookie with its token and
+# rejects a token that comes back without it.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "cookies"] }
 
 [profile.release]
 codegen-units = 1

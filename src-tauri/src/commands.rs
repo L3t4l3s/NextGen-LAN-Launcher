@@ -591,6 +591,7 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
             .param("detail", e)
             .step("transport.start_failed.step.install")
             .step("transport.start_failed.step.pick_binary")
+            .step("transport.start_failed.step.api_key")
             .step("transport.start_failed.step.folder_mode")
             .with_fix(FixAction::OpenUrl {
                 url: lanlauncher_core::transport::resilio::official_download_url(),

@@ -345,6 +345,7 @@ export const en: Messages = {
   "problem.transport.start_failed.cause": "{detail}",
   "problem.transport.start_failed.step.install": "Install Resilio Sync (link via “Fix now”) and restart the launcher.",
   "problem.transport.start_failed.step.pick_binary": "Or Settings → Advanced → pick the Resilio executable, e.g. the ETI launcher's “btsync.exe”.",
+  "problem.transport.start_failed.step.api_key": "Engine running but not answering (HTTP 400 or 401)? Then the Resilio API key is missing: Settings → Advanced → Resilio API key. It is in an ETI installation under %ProgramFiles%\\eti\\LAN Launcher\\sync\\config.json, or in the LANPage's launcher.ini as resilio_api_key.",
   "problem.transport.start_failed.step.folder_mode": "Until then offline mode applies: installed games run, keys can be pasted into Resilio manually.",
 
   "problem.lanpage.unreachable.title": "LANPage not reachable ({host})",
