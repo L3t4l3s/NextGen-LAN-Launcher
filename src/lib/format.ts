@@ -30,7 +30,21 @@ export function formatSpeed(bps: number): string {
 }
 
 export function formatPercent(fraction: number): string {
-  return `${Math.round(Math.min(1, Math.max(0, fraction)) * 100)} %`;
+  return `${percentValue(fraction)} %`;
+}
+
+/**
+ * The same number as a CSS length. `formatPercent` puts a space before the
+ * sign, as German typography wants — and CSS drops a declaration with one,
+ * which left every progress bar looking full whatever the number said.
+ */
+export function percentWidth(fraction: number): string {
+  return `${percentValue(fraction)}%`;
+}
+
+function percentValue(fraction: number): number {
+  const f = Number.isFinite(fraction) ? fraction : 0;
+  return Math.round(Math.min(1, Math.max(0, f)) * 100);
 }
 
 /** `20250308` → `08.03.2025` (de) / `2025-03-08` (en). */

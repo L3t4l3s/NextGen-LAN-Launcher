@@ -97,6 +97,8 @@ export const en: Messages = {
   "detail.manifest.none": "There is no launch profile for {platform} yet. After installing you can pick the executable yourself.",
   "detail.progress": "{done} of {total}",
   "detail.peers": "{count} peers",
+  "card.no_source": "No source",
+  "card.stalled": "Stalled",
   "detail.stalled": "No progress for several minutes.",
   "detail.exe_choice.title": "Choose executable",
   "detail.exe_choice.text": "Pick the file that starts the game. Your choice is remembered.",

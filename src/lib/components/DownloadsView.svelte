@@ -2,7 +2,7 @@
   import { app } from "$lib/stores/app.svelte";
   import { api, confirmDialog } from "$lib/api";
   import { t, userText } from "$lib/i18n";
-  import { formatBytes, formatPercent, formatSpeed } from "$lib/format";
+  import { formatBytes, formatPercent, formatSpeed, percentWidth } from "$lib/format";
   import type { SharePeer } from "$lib/types";
   import ProblemCard from "./ProblemCard.svelte";
   import Sparkline from "./Sparkline.svelte";
@@ -89,7 +89,7 @@
               <span class="badge {status.phase === 'failed' ? 'error' : status.stalled || status.phase === 'paused' ? 'warn' : 'busy'}">{t(`phase.${status.phase}`)}</span>
             </div>
             <div class="progress" class:stalled={status.stalled} class:working={!["syncing", "paused"].includes(status.phase)}>
-              <span style:width={formatPercent(status.progress)}></span>
+              <span style:width={percentWidth(status.progress)}></span>
             </div>
             <div class="row small muted">
               <span>{formatPercent(status.progress)}</span>

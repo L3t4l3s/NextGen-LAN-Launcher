@@ -2,7 +2,7 @@
   import type { GameView } from "$lib/types";
   import { app } from "$lib/stores/app.svelte";
   import { coverSrc } from "$lib/api";
-  import { formatPercent, placeholderGradient } from "$lib/format";
+  import { formatPercent, formatSpeed, placeholderGradient, percentWidth } from "$lib/format";
   import { t } from "$lib/i18n";
   import { phaseBadge } from "$lib/phase";
 
@@ -11,6 +11,26 @@
   const status = $derived(app.statusOf(game.id));
   const badge = $derived(phaseBadge(status));
   const busy = $derived(status ? ["queued", "syncing", "verifying", "extracting", "setup"].includes(status.phase) : false);
+  // A tile is narrow, so the label carries what a bar alone cannot say: how
+  // far along it is, and — the case that looks like a hung download — that
+  // nothing is arriving because no one is offering the game yet. The full
+  // figures are in the detail panel and under Downloads.
+  // Which of the two "nothing is arriving" cases this is, is the backend's
+  // call: it knows whether anyone offers the game. A tile is too narrow for
+  // the sentence, so the short word carries the tooltip with it.
+  const trouble = $derived(
+    status?.problem?.code === "sync.no_peers"
+      ? { label: "card.no_source", title: "problem.sync.no_peers.title" }
+      : status?.stalled
+        ? { label: "card.stalled", title: "problem.sync.stalled.title" }
+        : null,
+  );
+  const label = $derived.by(() => {
+    if (!status) return "";
+    if (trouble) return t(trouble.label);
+    const speed = status.phase === "syncing" ? formatSpeed(status.downloadBps) : "";
+    return speed ? `${formatPercent(status.progress)} · ${speed}` : formatPercent(status.progress);
+  });
 </script>
 
 <button class="tile" class:selected class:dimmed={game.disabledByEvent} onclick={() => onselect(game.id)}>
@@ -32,13 +52,25 @@
     <small class="muted">{game.genre ?? ""}{game.maxPlayers ? ` · ${game.maxPlayers} ${t("detail.players")}` : ""}</small>
     {#if busy && status}
       <div class="progress" class:stalled={status.stalled} class:working={status.phase !== "syncing"}>
-        <span style:width={formatPercent(status.progress)}></span>
+        <span style:width={percentWidth(status.progress)}></span>
       </div>
+      <small class="muted label" class:warn-text={!!trouble} title={trouble ? t(trouble.title) : undefined}>{label}</small>
     {/if}
   </div>
 </button>
 
 <style>
+  /* `.meta small` is more specific than `.label` would be on its own. */
+  .meta .label.warn-text {
+    color: var(--color-warning);
+  }
+  .meta .label {
+    display: block;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .tile {
     display: flex;
     flex-direction: column;

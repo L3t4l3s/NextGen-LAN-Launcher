@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Jeder Fortschrittsbalken stand immer auf voll, egal welcher Wert danebenstand. Die Breite kam
+  als „23 %“ aus der Anzeige-Formatierung, und CSS verwirft eine Länge mit Leerzeichen vor dem
+  Prozentzeichen. Balken und Zahl kommen jetzt aus getrennten Funktionen.
+- Downloads zeigten „0 B von 782 B“ und meldeten nach zwei Minuten „Download hängt“, während der
+  Sync-Server mit voller Rate lieferte. Zwei Ursachen: Die Größe der Engine (die beim Indizieren
+  erst ein paar hundert Byte kennt) galt als Gesamtgröße, obwohl der Katalog die echte kennt; und
+  gezählt wurden nur `<id>.eti` und dessen `.!sync`-Datei, nicht der Ordner. Jetzt ist die
+  Katalogangabe die Untergrenze, und gezählt wird, was im Spielordner liegt.
+- Die Kachel in der Bibliothek zeigt unter dem Balken Prozent und Laderate. Liegt es daran, dass
+  niemand das Spiel anbietet, steht dort „Keine Quelle“, bei einem hängenden Download „Hängt“ —
+  beides mit der ausführlichen Erklärung als Tooltip. Welcher Fall vorliegt, entscheidet der
+  Kern, nicht die Oberfläche.
+- „Der ausgewählte Ordner wurde bereits zu Resilio Sync hinzugefügt“ (API-Fehler 200) brach das
+  Hinzufügen einer Freigabe ab. Der Fall gilt jetzt wie Fehler 5 als Erfolg, sofern die Freigabe
+  denselben Schlüssel trägt — geprüft wird das über beide Antwortformate.
+- Die Prüfung auf der Diagnoseseite dauerte mehrere Sekunden: `Get-NetFirewallRule` lädt erst ein
+  PowerShell-Modul. Die Firewall-Regel wird jetzt per `netsh` über den Exit-Code geprüft, und die
+  Abfrage der Netzwerkprofile läuft parallel zur Engine-Abfrage.
+- Überarbeitetes App-Icon (freigestellt statt auf schwarzem Quadrat).
+
 - Nach einem Update zeigte Windows im Explorer, auf der Verknüpfung und in der Taskleiste weiter
   das alte Icon, obwohl die neue EXE das richtige enthält (die Vorschau zeigte es). Das ist der
   Icon-Cache pro Pfad. Der Installer meldet dem System jetzt, dass sich Symbole geändert haben;

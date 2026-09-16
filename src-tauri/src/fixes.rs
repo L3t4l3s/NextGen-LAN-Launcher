@@ -138,19 +138,37 @@ pub(crate) async fn ensure_firewall_rules(
 }
 
 /// Windows: does the inbound firewall rule for the sync engine exist?
-/// `Get-NetFirewallRule` needs no elevation and its output is a plain count,
-/// unlike netsh whose messages are localised. `None` off Windows, when
-/// PowerShell fails or the firewall service is not running.
+///
+/// `netsh` answers in milliseconds and says it in its exit code — 0 when a
+/// rule matched, 1 when none did — so nothing depends on its localised text.
+/// `Get-NetFirewallRule` would be tidier to read but loads a PowerShell
+/// module first, which is most of the several seconds the diagnostics page
+/// used to take. `None` off Windows or when netsh cannot be run at all.
 pub async fn firewall_rule_present() -> Option<bool> {
     if !cfg!(target_os = "windows") {
         return None;
     }
-    let name = diagnostics::FIREWALL_RULE_IN.replace('\'', "''");
-    let script = format!(
-        "$ErrorActionPreference = 'Stop'; @(Get-NetFirewallRule -DisplayName '{name}' -ErrorAction SilentlyContinue).Count"
-    );
-    let out = powershell(&script).await.ok()?;
-    out.trim().parse::<u32>().ok().map(|n| n > 0)
+    let mut cmd = tokio::process::Command::new("netsh");
+    let out = lanlauncher_core::launch::elevate::hide_window(&mut cmd)
+        .args([
+            "advfirewall",
+            "firewall",
+            "show",
+            "rule",
+            &format!("name={}", diagnostics::FIREWALL_RULE_IN),
+        ])
+        .output()
+        .await
+        .ok()?;
+    // 0: a rule was printed. 1: none matched. Anything else — a stopped
+    // firewall service, an unreachable policy store — is not an answer, and
+    // claiming the rule is missing would offer a repair that fails the same
+    // way.
+    match out.status.code() {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
+        _ => None,
+    }
 }
 
 /// Whether administrative commands must go through `run_admin_lines`.

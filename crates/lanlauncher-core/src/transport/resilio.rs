@@ -377,17 +377,22 @@ impl ResilioClient {
             ];
             let prefs = folder_prefs(lan_only);
             params.extend(prefs.iter().copied());
-            match self.api("add_folder", &params).await {
-                Ok(_) => {}
-                // error 5 = folder already added; treat as success
-                Err(Error::Transport(m)) if m.contains("error 5") => {}
-                Err(e) => return Err(e),
+            if let Err(e) = self.api("add_folder", &params).await {
+                // The engine keeps its folders across launcher restarts, so
+                // "already added" is the normal second start. It only counts
+                // as success when the folder carries the key we asked for:
+                // a changed catalog key has to surface.
+                if !(is_already_added(&e) && self.holds_folder(dir, key.expose()).await) {
+                    return Err(e);
+                }
             }
             let mut p2 = vec![("dir", dir_s.as_str()), ("secret", key.expose())];
             p2.extend(folder_prefs(lan_only));
             let _ = self.api("set_folder_prefs", &p2).await;
             Ok(())
         } else {
+            // The web UI answers HTTP 500 for a folder it already has — the
+            // same case, checked the same way.
             match self
                 .gui(
                     "addsyncfolder",
@@ -400,20 +405,30 @@ impl ResilioClient {
                 .await
             {
                 Ok(_) => Ok(()),
-                // The web UI answers HTTP 500 for a folder it already has,
-                // the same case the API reports as "error 5". The engine
-                // keeps its folders across launcher restarts, so this is the
-                // normal second start, not a failure — but only when the
-                // folder carries the key we asked for. A changed catalog key
-                // must not report success while the engine keeps the old one.
-                Err(e) => match self.gui("getsyncfolders", &[]).await {
-                    Ok(v) if gui_folder_has_secret(&v, dir, key.expose()) => {
-                        log::debug!("{} is already a sync folder", dir.display());
+                Err(e) => {
+                    if self.holds_folder(dir, key.expose()).await {
                         Ok(())
+                    } else {
+                        Err(e)
                     }
-                    _ => Err(e),
-                },
+                }
             }
+        }
+    }
+
+    /// Does the engine already hold `dir` with this secret?
+    async fn holds_folder(&self, dir: &Path, secret: &str) -> bool {
+        let answer = if self.has_api_key() {
+            self.api("get_folders", &[]).await
+        } else {
+            self.gui("getsyncfolders", &[]).await
+        };
+        match answer {
+            Ok(v) if folder_has_secret(&v, dir, secret) => {
+                log::debug!("{} is already a sync folder", dir.display());
+                true
+            }
+            _ => false,
         }
     }
 
@@ -604,17 +619,35 @@ pub fn counter_rate(previous: Option<(u64, Instant)>, value: u64, now: Instant) 
     ((value - before) as f64 / seconds).round() as u64
 }
 
-/// Does the `getsyncfolders` answer already list `dir` with this secret?
+/// Resilio's "this folder is already added": the documented API answers 200,
+/// older builds 5. Matched on the parsed number, so `error 500` is not taken
+/// for `error 5`.
+fn is_already_added(e: &Error) -> bool {
+    let Error::Transport(m) = e else {
+        return false;
+    };
+    m.split("error ")
+        .nth(1)
+        .and_then(|rest| {
+            rest.split_whitespace()
+                .next()
+                .and_then(|n| n.parse::<i64>().ok())
+        })
+        .is_some_and(|code| code == 5 || code == 200)
+}
+
+/// Does a folder listing already contain `dir` with this secret?
 ///
-/// A folder whose entry carries no secret at all counts as a match: some
-/// builds leave it out, and the alternative would be to report a working
-/// share as broken on every start.
-pub fn gui_folder_has_secret(v: &Value, dir: &Path, secret: &str) -> bool {
+/// Takes both shapes: the API's top-level array of `{dir, secret}` and the
+/// web UI's `{folders:[{name|path, secret}]}`. A folder whose entry carries
+/// no secret at all counts as a match: some builds leave it out, and the
+/// alternative would be to report a working share as broken on every start.
+pub fn folder_has_secret(v: &Value, dir: &Path, secret: &str) -> bool {
     let want = super::normalise_dir(dir);
     let folders = v
-        .get("folders")
-        .and_then(Value::as_array)
+        .as_array()
         .cloned()
+        .or_else(|| v.get("folders").and_then(Value::as_array).cloned())
         .or_else(|| {
             v.get("value")
                 .and_then(|x| x.get("folders"))
@@ -624,7 +657,8 @@ pub fn gui_folder_has_secret(v: &Value, dir: &Path, secret: &str) -> bool {
         .unwrap_or_default();
     folders.iter().any(|f| {
         let path = f
-            .get("path")
+            .get("dir")
+            .or_else(|| f.get("path"))
             .or_else(|| f.get("name"))
             .and_then(Value::as_str)
             .unwrap_or_default();
@@ -2022,6 +2056,39 @@ mod tests {
         assert_eq!(c.version().await.unwrap(), "?");
         let f = c.folders().await.unwrap();
         assert_eq!(f[Path::new("/lan/a")].state, ShareState::Complete);
+    }
+
+    #[test]
+    fn already_added_is_recognised_by_code_not_by_substring() {
+        let err = |m: &str| Error::Transport(m.to_string());
+        // What the documented API answers for a folder it already has.
+        assert!(is_already_added(&err(
+            "API add_folder: error 200 Der ausgewählte Ordner wurde bereits zu Resilio Sync hinzugefügt."
+        )));
+        assert!(is_already_added(&err("API add_folder: error 5 exists")));
+        // Not a prefix match: 500 and 55 are different failures.
+        assert!(!is_already_added(&err("API add_folder: error 500 nope")));
+        assert!(!is_already_added(&err("API add_folder: error 55 nope")));
+        assert!(!is_already_added(&err("no code at all")));
+    }
+
+    #[tokio::test]
+    async fn an_added_folder_is_recognised_in_both_answer_shapes() {
+        let secret = "BICDWADB4KCVNR6FCAGYTHEKZBYVUGTZX";
+        let dir = Path::new("/lan/eti_launcher");
+        // The API's top-level array …
+        let api: Value = serde_json::from_str(&format!(
+            r#"[{{"dir":"/lan/eti_launcher","secret":"{secret}"}}]"#
+        ))
+        .unwrap();
+        assert!(folder_has_secret(&api, dir, secret));
+        assert!(!folder_has_secret(&api, dir, "BOTHERKEY"));
+        // … and the web UI's wrapper.
+        let gui: Value = serde_json::from_str(&format!(
+            r#"{{"folders":[{{"name":"/lan/eti_launcher","secret":"{secret}"}}]}}"#
+        ))
+        .unwrap();
+        assert!(folder_has_secret(&gui, dir, secret));
     }
 
     #[tokio::test]

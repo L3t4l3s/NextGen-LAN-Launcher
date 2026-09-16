@@ -74,11 +74,10 @@
     max-width: 140px;
     object-fit: contain;
   }
-  /* The app icon is a full square with its own background, so it gets the
-     rounded corners a logo from the LANPage brings along itself. */
+  /* The app icon is square and free-standing; a logo from the LANPage may be
+     any shape and keeps whatever width it needs. */
   .brand img.fallback {
     width: 34px;
-    border-radius: 10px;
   }
   .titles {
     display: flex;

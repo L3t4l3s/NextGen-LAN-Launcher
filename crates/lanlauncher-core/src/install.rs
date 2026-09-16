@@ -107,6 +107,12 @@ pub struct Observation {
     pub catalog_bytes: u64,
     pub archive_len: Option<u64>,
     pub partial_len: Option<u64>,
+    /// Bytes of every file directly in the share folder, `local/` excluded.
+    ///
+    /// The engine writes the package under names of its own (`…eti.!sync`
+    /// while transferring, and whatever the share actually contains), so the
+    /// only figure that always matches what is arriving is the folder itself.
+    pub share_bytes: u64,
     pub version_ini: Option<String>,
     pub receipt: Option<Receipt>,
     /// `local/` exists (extraction happened and was not deleted by hand).
@@ -119,6 +125,27 @@ pub struct Observation {
 }
 
 impl Observation {
+    /// How many bytes of this game have arrived.
+    ///
+    /// The engine's own figure when it has one; otherwise what the share
+    /// folder holds. The folder is the honest source: the package may be
+    /// transferred under a name of the engine's choosing, so looking only for
+    /// `<id>.eti` and its `.!sync` twin showed nothing while gigabytes were
+    /// landing next to them.
+    pub fn bytes_on_disk(&self) -> u64 {
+        // Whichever is larger. The engine's figure can be the better one, but
+        // in the web-UI path it is derived from the same folder size that
+        // reads as a few hundred bytes while indexing — and a small non-zero
+        // number would otherwise outrank what is demonstrably on the disk.
+        self.transport
+            .as_ref()
+            .map(|t| t.bytes_done)
+            .unwrap_or(0)
+            .max(self.share_bytes)
+            .max(self.archive_len.unwrap_or(0))
+            .max(self.partial_len.unwrap_or(0))
+    }
+
     /// Gather the on-disk part of an observation.
     pub fn from_disk(
         paths: &GamePaths,
@@ -133,6 +160,19 @@ impl Observation {
         let partial_len = std::fs::metadata(partial_path(&paths.archive))
             .ok()
             .map(|m| m.len());
+        // Files only, and only the top level: `local/` holds the extracted
+        // game and would dwarf the download, `.sync/` is the engine's own
+        // bookkeeping and is a directory too.
+        let share_bytes = std::fs::read_dir(&paths.share_dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter_map(|e| e.metadata().ok())
+                    .filter(|m| m.is_file())
+                    .map(|m| m.len())
+                    .sum()
+            })
+            .unwrap_or(0);
         let version_ini = std::fs::read_to_string(&paths.version_file)
             .ok()
             .map(|s| s.trim().to_string())
@@ -154,6 +194,7 @@ impl Observation {
             catalog_bytes: game.size_bytes,
             archive_len,
             partial_len,
+            share_bytes,
             version_ini,
             receipt,
             local_present,
@@ -404,12 +445,7 @@ impl Tracker {
         }
 
         // Track byte progress for stall detection and display.
-        let bytes_now = obs
-            .transport
-            .as_ref()
-            .filter(|t| t.bytes_done > 0)
-            .map(|t| t.bytes_done)
-            .unwrap_or(obs.archive_len.or(obs.partial_len).unwrap_or(0));
+        let bytes_now = obs.bytes_on_disk();
         if bytes_now != self.last_bytes {
             self.last_bytes = bytes_now;
             self.last_progress_at = now;
@@ -546,20 +582,20 @@ impl Tracker {
         now: Instant,
         needs_exe_choice: bool,
     ) -> GameStatus {
+        // While the engine is still indexing a share it reports a size of a
+        // few hundred bytes for a package of many gigabytes; taking it at face
+        // value turned every download into "0 B of 782 B". The catalog's own
+        // figure is the floor.
         let total = obs
             .transport
             .as_ref()
             .map(|t| t.bytes_total)
-            .filter(|t| *t > 0)
-            .unwrap_or(obs.catalog_bytes.max(1));
+            .unwrap_or(0)
+            .max(obs.catalog_bytes)
+            .max(1);
         let done = match self.phase {
             Phase::Ready | Phase::UpdateAvailable => total,
-            _ => obs
-                .transport
-                .as_ref()
-                .filter(|t| t.bytes_done > 0)
-                .map(|t| t.bytes_done)
-                .unwrap_or(obs.archive_len.or(obs.partial_len).unwrap_or(0)),
+            _ => obs.bytes_on_disk(),
         };
         let progress = match self.phase {
             Phase::Verifying | Phase::Extracting | Phase::Setup => self.work_progress,
@@ -1421,6 +1457,61 @@ mod tests {
     use super::*;
     use crate::catalog::ShareKey;
 
+    #[test]
+    fn an_indexing_engine_does_not_shrink_the_download() {
+        // Resilio answers with a few hundred bytes for a package of many
+        // gigabytes while it is still indexing the share. Taken at face value
+        // that reads as "0 B of 782 B" and the bar never moves, while the
+        // folder on disk is filling at full speed.
+        let mut o = obs(None, None, None, None);
+        o.catalog_bytes = 60_000_000_000;
+        o.share_bytes = 6_000_000_000;
+        o.transport = Some(ShareStatus {
+            dir: "/x".into(),
+            state: ShareState::Downloading,
+            bytes_done: 0,
+            bytes_total: 782,
+            files_total: 1,
+            peers: 1,
+            download_bps: 0,
+            upload_bps: 0,
+            error: None,
+        });
+        let mut t = Tracker::new("g");
+        t.phase = Phase::Syncing;
+        let s = t.status(&o, &Policy::default(), Instant::now(), false);
+        assert_eq!(s.bytes_total, 60_000_000_000);
+        assert_eq!(s.bytes_done, 6_000_000_000);
+        assert!((s.progress - 0.1).abs() < 0.001, "{}", s.progress);
+    }
+
+    #[test]
+    fn bytes_come_from_the_share_folder_when_the_package_has_another_name() {
+        // Only `<id>.eti` and `<id>.eti.!sync` used to count, so a package the
+        // engine transfers under a different name looked like no progress.
+        let mut o = obs(None, None, None, None);
+        o.share_bytes = 4096;
+        assert_eq!(o.bytes_on_disk(), 4096);
+        // The engine's own figure counts where it is the larger one …
+        o.transport = Some(ShareStatus {
+            dir: "/x".into(),
+            state: ShareState::Downloading,
+            bytes_done: 9000,
+            bytes_total: 10_000,
+            files_total: 1,
+            peers: 1,
+            download_bps: 0,
+            upload_bps: 0,
+            error: None,
+        });
+        assert_eq!(o.bytes_on_disk(), 9000);
+        // … but a small figure from a share the engine is still indexing does
+        // not outrank the gigabytes that already landed on the disk.
+        o.share_bytes = 6_000_000_000;
+        o.transport.as_mut().unwrap().bytes_done = 234;
+        assert_eq!(o.bytes_on_disk(), 6_000_000_000);
+    }
+
     fn obs(
         archive: Option<u64>,
         partial: Option<u64>,
@@ -1432,6 +1523,7 @@ mod tests {
             catalog_bytes: 1000,
             archive_len: archive,
             partial_len: partial,
+            share_bytes: archive.or(partial).unwrap_or(0),
             version_ini: version.map(str::to_string),
             receipt: None,
             local_present: false,

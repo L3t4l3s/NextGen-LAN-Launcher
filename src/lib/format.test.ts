@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { formatBytes, formatPercent, formatRevision, placeholderGradient, setByteUnits, stripHtml } from "./format";
+import { formatBytes, formatPercent, formatRevision, percentWidth, placeholderGradient, setByteUnits, stripHtml } from "./format";
 
 describe("format helpers", () => {
+  it("keeps the CSS width free of the space the label needs", () => {
+    // "23 %" is not a CSS length: the declaration is dropped and the bar
+    // renders full, whatever the number next to it says.
+    expect(formatPercent(0.234)).toBe("23 %");
+    expect(percentWidth(0.234)).toBe("23%");
+    expect(percentWidth(0)).toBe("0%");
+    expect(percentWidth(1.5)).toBe("100%");
+    expect(percentWidth(Number.NaN)).toBe("0%");
+  });
+
   it("formats bytes with decimal units", () => {
     expect(formatBytes(0)).toBe("0 B");
     expect(formatBytes(910_000_000)).toBe("910 MB");

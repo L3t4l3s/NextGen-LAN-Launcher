@@ -508,11 +508,12 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
         20 * 1024 * 1024 * 1024,
     ));
 
-    if cfg!(target_os = "windows") {
+    // Asking Windows for the network profiles costs a PowerShell start and a
+    // module load; it runs while the engine is queried instead of after it.
+    let profiles = cfg!(target_os = "windows").then(|| {
         checks.push("network_profile".into());
-        let profiles = crate::fixes::network_profiles().await;
-        problems.extend(diagnostics::check_network_profiles(&profiles));
-    }
+        tauri::async_runtime::spawn(crate::fixes::network_profiles())
+    });
 
     checks.push("transport".into());
     let transport = state.transport.read().await.clone();
@@ -551,6 +552,11 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
             }
         }
     }
+    if let Some(handle) = profiles {
+        let found = handle.await.unwrap_or_default();
+        problems.extend(diagnostics::check_network_profiles(&found));
+    }
+
     checks.push("covers".into());
     if let Some(root) = state.default_root_path().await {
         let assets = root.join(lanlauncher_core::paths::ASSETS_RELATIVE);

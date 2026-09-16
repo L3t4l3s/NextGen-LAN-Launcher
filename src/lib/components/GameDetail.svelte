@@ -3,7 +3,7 @@
   import { app } from "$lib/stores/app.svelte";
   import { api, confirmDialog, copyText, coverSrc } from "$lib/api";
   import { t, userText } from "$lib/i18n";
-  import { formatBytes, formatPercent, formatRevision, formatSpeed, placeholderGradient, stripHtml } from "$lib/format";
+  import { formatBytes, formatPercent, formatRevision, formatSpeed, placeholderGradient, stripHtml, percentWidth } from "$lib/format";
   import { isBusy, isPlayable, phaseBadge } from "$lib/phase";
   import ProblemCard from "./ProblemCard.svelte";
 
@@ -170,7 +170,7 @@
       <div class="progress-block">
         {#if busy || status.phase === "paused"}
           <div class="progress" class:stalled={status.stalled} class:working={status.phase !== "syncing" && status.phase !== "paused"}>
-            <span style:width={formatPercent(status.progress)}></span>
+            <span style:width={percentWidth(status.progress)}></span>
           </div>
           <div class="row small muted">
             <span>{formatPercent(status.progress)}</span>
