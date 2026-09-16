@@ -72,7 +72,7 @@ installer of this launcher must provide them at that path (planned in `release.y
 * `GET http://launcher.lan/launcher.ini` – block format, parser in `launcher_ini.rs`.
   Keys: `lan_title, lan_id, lan_url, force_lan_mode, lan_upload_limit, stats_url, ts3_server,
   discord_url, dc_hub, link_1..5 ("Label|URL"), disable_games`. Unknown keys are kept
-  (`theme_url` is ours).
+  (`theme_url` and the `theme_*` colour keys are ours, see THEMING.md).
 * `GET http://launcher.lan/launcher.css` – legacy stylesheet, scoped to the background layer
   (the body becomes transparent while it is active so the gradient shows through).
 * `GET http://launcher.lan/logo.png` – the event logo the LANPage itself uses (`$logo` default);

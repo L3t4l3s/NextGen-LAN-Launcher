@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Die LANPage kann ihre Farben jetzt in der `launcher.ini` nennen (`theme_primary`,
+  `theme_background`, `theme_mode` und die übrigen `theme_*`-Schlüssel), ohne eine `theme.json`
+  zu hinterlegen. Eine vorhandene `theme.json` hat weiterhin Vorrang. Ein fehlerhafter Wert kostet
+  nur sich selbst und steht im Log; ohne Farbangabe bleibt das gewählte Schema unangetastet.
+
 - Jeder Fortschrittsbalken stand immer auf voll, egal welcher Wert danebenstand. Die Breite kam
   als „23 %“ aus der Anzeige-Formatierung, und CSS verwirft eine Länge mit Leerzeichen vor dem
   Prozentzeichen. Balken und Zahl kommen jetzt aus getrennten Funktionen.

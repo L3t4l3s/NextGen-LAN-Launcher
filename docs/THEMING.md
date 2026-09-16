@@ -23,9 +23,40 @@ Organisers can brand the launcher per event without touching code.
 }
 ```
 
-All fields are optional; missing values fall back to the default theme. Colours are validated
+All fields are optional; missing values fall back to the default theme — including the colours,
+so `"mode": "light"` on its own leaves the dark palette in place; name the colours you want. (The
+`theme_mode` key of `launcher.ini` below does switch the palette, because there is no file to take
+the colours from.) Colours are validated
 (hex, rgb()/hsl(), names) so a theme can never inject CSS. Layout is deliberately not
 themable so support instructions stay valid across LANs.
+
+## Colours in `launcher.ini`
+
+A LANPage that would rather add three lines to a file it already serves than host another one can
+name its colours in `launcher.ini`, in the same block format as every other key:
+
+```ini
+theme_primary ### NextGen: accent colour of the launcher {
+#29b6f6
+}
+
+theme_background ### NextGen: page background {
+#0b1a2b
+}
+```
+
+Recognised keys: `theme_mode` (`dark`/`light`, picks the base the rest is applied to),
+`theme_name`, `theme_radius`, and one per colour — `theme_background`, `theme_surface`,
+`theme_surface_alt`, `theme_text`, `theme_text_muted`, `theme_primary`, `theme_primary_text`,
+`theme_accent`, `theme_success`, `theme_warning`, `theme_danger`, `theme_border`.
+
+`NO_THEME_JSON=1 node tools/dev-lanpage/server.mjs` serves the dev LANPage without a theme.json,
+which is how to try these keys locally.
+
+Values are validated like every other colour, and a malformed one is ignored with a line in the
+log instead of costing the whole theme. A served `theme.json` wins over these keys: it is the
+deliberate one and can say more. Naming no colour at all (only `theme_name`) yields no theme, so a
+LANPage cannot override a scheme the user picked in the settings without meaning to.
 
 ## Legacy `launcher.css`
 

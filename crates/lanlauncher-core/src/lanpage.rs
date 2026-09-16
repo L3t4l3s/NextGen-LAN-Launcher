@@ -137,27 +137,67 @@ pub async fn fetch_event(host: &str) -> EventBundle {
         if resp.status().is_success() {
             if let Ok(text) = resp.text().await {
                 // Web servers often answer the probed default theme.json with
-                // an HTML page and status 200; that is no error. A theme_url
-                // the organiser configured must parse, or the error is kept.
-                if explicit_theme_url.is_none() && !looks_like_json(&text) {
-                    return bundle;
-                }
-                match Theme::parse(&text) {
-                    Ok(t) => {
-                        bundle.fetched.push("theme.json".into());
-                        bundle.theme = Some(t);
+                // an HTML page and status 200; that is no error, it just is
+                // not a theme. A theme_url the organiser configured must
+                // parse, or the error is kept.
+                if explicit_theme_url.is_some() || looks_like_theme(&text) {
+                    match Theme::parse(&text) {
+                        Ok(t) => {
+                            bundle.fetched.push("theme.json".into());
+                            bundle.theme = Some(t);
+                        }
+                        Err(e) => bundle.errors.push(format!("theme.json: {e}")),
                     }
-                    Err(e) => bundle.errors.push(format!("theme.json: {e}")),
+                } else if text.trim_start().starts_with('{') {
+                    // Someone meant to put a theme here. Saying so is the
+                    // only way an organiser learns about a trailing comma;
+                    // the file is not applied either way.
+                    log::warn!("{theme_url}: not a theme, ignored");
                 }
             }
+        }
+    }
+
+    // No theme.json: the colours may still be in launcher.ini. The file wins
+    // where both exist — it is the deliberate one and can say more.
+    if bundle.theme.is_none() {
+        if let Some(theme) = bundle
+            .config
+            .as_ref()
+            .and_then(|c| Theme::from_ini(&c.extra))
+        {
+            log::info!("theme from launcher.ini: {}", theme.name);
+            bundle.theme = Some(theme);
         }
     }
     bundle
 }
 
-/// A body that can be a theme at all (an HTML 404 page is not).
-pub fn looks_like_json(body: &str) -> bool {
-    body.trim_start().starts_with('{')
+/// A body that can be a theme at all.
+///
+/// The probed `/theme.json` catches whatever a LANPage answers for unknown
+/// paths: an HTML index page, or a JSON error body. Every theme field has a
+/// default, so any JSON object would otherwise parse into the default theme
+/// and silently displace the colours from `launcher.ini`. A theme has to say
+/// something themable.
+pub fn looks_like_theme(body: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    [
+        "colors",
+        "mode",
+        "radius",
+        "logo",
+        "backgroundImage",
+        "fontFamily",
+        "icons",
+    ]
+    .iter()
+    .any(|key| object.contains_key(*key))
 }
 
 /// Hardware/identity report the ETI LANPage expects.
@@ -276,10 +316,112 @@ impl StatsReport {
 mod tests {
     use super::*;
 
+    /// A LANPage on a throwaway port: `routes` are matched as substrings of
+    /// the request line, in order.
+    async fn lanpage(routes: Vec<(&'static str, &'static str, &'static str)>) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                let routes = routes.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 2048];
+                    let n = sock.read(&mut buf).await.unwrap_or(0);
+                    let line = String::from_utf8_lossy(&buf[..n])
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .to_string();
+                    let (status, ctype, body) = routes
+                        .iter()
+                        .find(|(path, _, _)| line.contains(path))
+                        .map(|(_, ctype, body)| (200, *ctype, *body))
+                        .unwrap_or((404, "text/plain", "no"));
+                    let resp = format!(
+                        "HTTP/1.1 {status} OK\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    const INI_WITH_COLOURS: &str =
+        "lan_title ### t {\nNext Generation LAN\n}\n\ntheme_primary ### c {\n#29b6f6\n}\n";
+
+    #[tokio::test]
+    async fn colours_from_the_ini_survive_a_json_error_body_for_theme_json() {
+        // The other way a LANPage answers an unknown path.
+        let base = lanpage(vec![
+            ("launcher.ini", "text/plain", INI_WITH_COLOURS),
+            (
+                "theme.json",
+                "application/json",
+                r#"{"error":"not found","code":404}"#,
+            ),
+        ])
+        .await;
+        let bundle = fetch_event(&base).await;
+        assert_eq!(
+            bundle.theme.as_ref().map(|t| t.colors.primary.as_str()),
+            Some("#29b6f6")
+        );
+    }
+
+    #[tokio::test]
+    async fn colours_from_the_ini_survive_a_soft_404_for_theme_json() {
+        // Many LANPages answer any unknown path with their index page and
+        // status 200. That is not a theme, and it must not cost the ini its
+        // colours either.
+        let base = lanpage(vec![
+            ("launcher.ini", "text/plain", INI_WITH_COLOURS),
+            ("theme.json", "text/html", "<!DOCTYPE html><html>404</html>"),
+        ])
+        .await;
+        let bundle = fetch_event(&base).await;
+        assert_eq!(
+            bundle.theme.as_ref().map(|t| t.colors.primary.as_str()),
+            Some("#29b6f6")
+        );
+        assert_eq!(
+            bundle.config.unwrap().title.as_deref(),
+            Some("Next Generation LAN")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_served_theme_json_wins_over_the_ini() {
+        let base = lanpage(vec![
+            ("launcher.ini", "text/plain", INI_WITH_COLOURS),
+            (
+                "theme.json",
+                "application/json",
+                r##"{"name":"File","colors":{"primary":"#ff0000"}}"##,
+            ),
+        ])
+        .await;
+        let bundle = fetch_event(&base).await;
+        assert_eq!(
+            bundle.theme.as_ref().map(|t| t.colors.primary.as_str()),
+            Some("#ff0000")
+        );
+    }
+
     #[test]
-    fn html_error_pages_are_not_themes() {
-        assert!(!looks_like_json("<!DOCTYPE html><html>404</html>"));
-        assert!(looks_like_json("  {\"version\": 1}"));
+    fn only_a_themable_body_counts_as_a_theme() {
+        assert!(!looks_like_theme("<!DOCTYPE html><html>404</html>"));
+        // Every theme field has a default, so an error body would otherwise
+        // parse into the default theme and displace the ini colours.
+        assert!(!looks_like_theme(r#"{"error":"not found"}"#));
+        assert!(!looks_like_theme(r#"{"version": 1}"#));
+        assert!(looks_like_theme(r##"  {"colors": {"primary": "#fff"}}"##));
+        assert!(looks_like_theme(r#"{"mode":"light"}"#));
     }
 
     #[test]
