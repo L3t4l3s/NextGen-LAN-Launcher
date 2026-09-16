@@ -128,7 +128,7 @@
   }
   .steps .done {
     background: var(--color-success);
-    color: #08140c;
+    color: var(--color-success-text, #08140c);
   }
   input {
     width: 100%;

@@ -337,13 +337,15 @@ pub async fn apply(
             app.opener()
                 .open_path(path, None::<&str>)
                 .map_err(|e| e.to_string())?;
-            Ok(String::new())
+            // "Erledigt" is what an empty message reads as, and that is a
+            // strange thing to say about opening a folder.
+            Ok("msg.folder_opened".into())
         }
         FixAction::OpenUrl { url } => {
             app.opener()
                 .open_url(url, None::<&str>)
                 .map_err(|e| e.to_string())?;
-            Ok(String::new())
+            Ok("msg.link_opened".into())
         }
         FixAction::AddDefenderExclusion { path } => {
             let escaped = path.replace('\'', "''");

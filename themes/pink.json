@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "Pinkes Einhorn",
+  "name": "Pink",
   "mode": "dark",
   "colors": {
     "background": "#2a0c2a",
@@ -11,9 +11,9 @@
     "primary": "#ff4fd8",
     "primaryText": "#1e051c",
     "accent": "#7ee8ff",
-    "success": "#6ee7a8",
+    "success": "#22c55e",
     "warning": "#ffd166",
-    "danger": "#ff6b8a",
+    "danger": "#ff5c5c",
     "border": "#732e6d"
   },
   "radius": 16

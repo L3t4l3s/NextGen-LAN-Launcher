@@ -836,7 +836,11 @@ impl InstallManager {
         let game = self.game(game_id).await?;
         let paths = self.paths_for(&game)?;
         std::fs::create_dir_all(&paths.share_dir).map_err(|e| Error::io(&paths.share_dir, e))?;
-        self.transport
+        // A download that never starts is otherwise invisible in the log: the
+        // share either reached the engine or it did not, and that is the first
+        // thing to know.
+        match self
+            .transport
             .add_share(
                 &game.key,
                 &paths.share_dir,
@@ -845,7 +849,20 @@ impl InstallManager {
                     paused: false,
                 },
             )
-            .await?;
+            .await
+        {
+            Ok(()) => log::info!(
+                "share for {game_id} registered at {}",
+                paths.share_dir.display()
+            ),
+            Err(e) => {
+                log::warn!(
+                    "share for {game_id} not registered at {}: {e}",
+                    paths.share_dir.display()
+                );
+                return Err(e);
+            }
+        }
         let mut trackers = self.trackers.lock().await;
         trackers
             .entry(game_id.to_string())
@@ -861,7 +878,7 @@ impl InstallManager {
         let paths = self.paths_for(&game)?;
         let _ = self.transport.set_paused(&paths.share_dir, false).await;
         let _ = std::fs::remove_dir_all(extract::staging_dir(&paths.local_dir));
-        let _ = self
+        if let Err(e) = self
             .transport
             .add_share(
                 &game.key,
@@ -871,7 +888,15 @@ impl InstallManager {
                     paused: false,
                 },
             )
-            .await;
+            .await
+        {
+            // The repair itself (verify and re-extract) still runs on what is
+            // on disk; only a fresh download would need the share.
+            log::warn!(
+                "share for {game_id} not registered at {}: {e}",
+                paths.share_dir.display()
+            );
+        }
         let mut trackers = self.trackers.lock().await;
         trackers
             .entry(game_id.to_string())
@@ -1004,7 +1029,7 @@ impl InstallManager {
                     } else {
                         t.phase = Phase::Syncing;
                     }
-                    let _ = self
+                    if let Err(e) = self
                         .transport
                         .add_share(
                             &game.key,
@@ -1014,7 +1039,16 @@ impl InstallManager {
                                 paused: false,
                             },
                         )
-                        .await;
+                        .await
+                    {
+                        // Not fatal — the game keeps whatever is on disk — but
+                        // it is why nothing arrives, so it has to be readable.
+                        log::warn!(
+                            "share for {} not registered at {}: {e}",
+                            game.id,
+                            paths.share_dir.display()
+                        );
+                    }
                 }
                 trackers.insert(game.id.clone(), t);
             }

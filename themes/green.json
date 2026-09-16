@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "name": "Grün",
+  "mode": "dark",
+  "colors": {
+    "background": "#0a1410",
+    "surface": "#102019",
+    "surfaceAlt": "#183024",
+    "text": "#e9f7ee",
+    "textMuted": "#94b5a3",
+    "primary": "#2fbf71",
+    "primaryText": "#04120a",
+    "accent": "#22d3ee",
+    "success": "#bef264",
+    "warning": "#eab308",
+    "danger": "#f87171",
+    "border": "#224734"
+  },
+  "radius": 12
+}

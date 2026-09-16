@@ -8,7 +8,7 @@
   let query = $state("");
   let filter = $state<"all" | "installed" | "active">("all");
   let genre = $state("");
-  let sort = $state<"catalog" | "title" | "players" | "size" | "year">("catalog");
+  let sort = $state<"title" | "players" | "size" | "year">("title");
 
   /** "8" / "16-32" / "bis 64" → the largest number in the text, 0 when none. */
   function playerCount(value: string | null): number {
@@ -37,8 +37,6 @@
       })
       .sort((a, b) => {
         switch (sort) {
-          case "title":
-            return a.title.localeCompare(b.title, app.settings?.language ?? "de");
           // Descending for the numbers: the biggest, the most players and the
           // newest are what people look for.
           case "players":
@@ -48,7 +46,7 @@
           case "year":
             return releaseYear(b.releaseYear) - releaseYear(a.releaseYear);
           default:
-            return a.order - b.order;
+            return a.title.localeCompare(b.title, app.settings?.language ?? "de");
         }
       });
   });
@@ -70,7 +68,7 @@
         {/each}
       </select>
       <select bind:value={sort} aria-label={t("library.sort")}>
-        {#each ["catalog", "title", "players", "size", "year"] as option (option)}
+        {#each ["title", "players", "size", "year"] as option (option)}
           <option value={option}>{t(`library.sort.${option}`)}</option>
         {/each}
       </select>

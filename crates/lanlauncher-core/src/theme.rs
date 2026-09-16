@@ -35,7 +35,7 @@ impl Default for ThemeColors {
             text_muted: "#9aa4b5".into(),
             primary: "#4f8cff".into(),
             primary_text: "#ffffff".into(),
-            accent: "#ff9f43".into(),
+            accent: "#7ee8ff".into(),
             success: "#2ecc71".into(),
             warning: "#f1c40f".into(),
             danger: "#ff5c5c".into(),
@@ -105,10 +105,10 @@ impl ThemeColors {
             text_muted: "#5c6779".into(),
             primary: "#2f6fed".into(),
             primary_text: "#ffffff".into(),
-            accent: "#d9771c".into(),
-            success: "#1f9d5a".into(),
-            warning: "#c99a06".into(),
-            danger: "#d94848".into(),
+            accent: "#c026d3".into(),
+            success: "#15803d".into(),
+            warning: "#854d0e".into(),
+            danger: "#dc2626".into(),
             border: "#d3d9e4".into(),
         }
     }
@@ -152,6 +152,8 @@ impl Theme {
                 other => log::warn!("launcher.ini: theme_mode is neither dark nor light: {other}"),
             }
         }
+        let mut primary_set = false;
+        let mut primary_text_set = false;
         {
             let c = &mut theme.colors;
             for (key, slot) in [
@@ -174,9 +176,19 @@ impl Theme {
                 if is_safe_css_color(value) {
                     *slot = value.to_string();
                     any = true;
+                    primary_set |= key == "theme_primary";
+                    primary_text_set |= key == "theme_primary_text";
                 } else {
                     log::warn!("launcher.ini: {key} is not a colour: {value}");
                 }
+            }
+        }
+        // A LANPage that names only `theme_primary` would keep the built-in
+        // white button text; on a light primary that is unreadable. Deriving
+        // it is only right where the organiser said nothing about it.
+        if primary_set && !primary_text_set {
+            if let Some(ink) = readable_on(&theme.colors.primary) {
+                theme.colors.primary_text = ink.to_string();
             }
         }
         if let Some(name) = extra
@@ -279,8 +291,125 @@ pub fn is_safe_css_color(value: &str) -> bool {
         })
 }
 
+/// Black or white, whichever reads better on `background`, or `None` when the
+/// colour cannot be read at all — a caller must then keep what it had rather
+/// than guess.
+pub fn readable_on(background: &str) -> Option<&'static str> {
+    const DARK: &str = "#0d1318";
+    const LIGHT: &str = "#ffffff";
+    let rgb = parse_color(background)?;
+    let channel = |v: f64| {
+        let c = v / 255.0;
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let luminance = 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
+    let ratio = |ink: f64| {
+        let (a, b) = if luminance > ink {
+            (luminance, ink)
+        } else {
+            (ink, luminance)
+        };
+        (a + 0.05) / (b + 0.05)
+    };
+    // The two inks as luminance: #0d1318 is near black, #ffffff is white.
+    Some(if ratio(1.0) > ratio(0.006) {
+        LIGHT
+    } else {
+        DARK
+    })
+}
+
+/// `#rgb`, `#rrggbb(aa)`, `rgb()/rgba()` and `hsl()/hsla()` as 0-255 triples.
+/// Named colours are not resolved; there are 148 of them and the only caller
+/// can do without.
+fn parse_color(value: &str) -> Option<[f64; 3]> {
+    let v = value.trim();
+    if let Some(hex) = v.strip_prefix('#') {
+        let bytes: Vec<f64> = match hex.len() {
+            3 | 4 => hex
+                .chars()
+                .take(3)
+                .filter_map(|c| u8::from_str_radix(&format!("{c}{c}"), 16).ok())
+                .map(f64::from)
+                .collect(),
+            6 | 8 => (0..3)
+                .filter_map(|i| u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok())
+                .map(f64::from)
+                .collect(),
+            _ => return None,
+        };
+        return (bytes.len() == 3).then(|| [bytes[0], bytes[1], bytes[2]]);
+    }
+    let lower = v.to_ascii_lowercase();
+    let (kind, rest) = lower.split_once('(')?;
+    let inner = rest.strip_suffix(')')?;
+    let parts: Vec<&str> = inner
+        .split([',', ' ', '/'])
+        .filter(|p| !p.is_empty())
+        .collect();
+    let number = |s: &str| -> Option<f64> { s.trim_end_matches('%').parse::<f64>().ok() };
+    match kind.trim() {
+        "rgb" | "rgba" => {
+            let scale = |s: &str| -> Option<f64> {
+                let n = number(s)?;
+                Some(if s.ends_with('%') {
+                    n * 255.0 / 100.0
+                } else {
+                    n
+                })
+            };
+            Some([
+                scale(parts.first()?)?,
+                scale(parts.get(1)?)?,
+                scale(parts.get(2)?)?,
+            ])
+        }
+        "hsl" | "hsla" => {
+            let h = number(parts.first()?)? / 360.0;
+            let s = number(parts.get(1)?)? / 100.0;
+            let l = number(parts.get(2)?)? / 100.0;
+            let hue = |mut t: f64| -> f64 {
+                if t < 0.0 {
+                    t += 1.0;
+                }
+                if t > 1.0 {
+                    t -= 1.0;
+                }
+                let q = if l < 0.5 {
+                    l * (1.0 + s)
+                } else {
+                    l + s - l * s
+                };
+                let p = 2.0 * l - q;
+                let c = if t < 1.0 / 6.0 {
+                    p + (q - p) * 6.0 * t
+                } else if t < 0.5 {
+                    q
+                } else if t < 2.0 / 3.0 {
+                    p + (q - p) * (2.0 / 3.0 - t) * 6.0
+                } else {
+                    p
+                };
+                c * 255.0
+            };
+            Some([hue(h + 1.0 / 3.0), hue(h), hue(h - 1.0 / 3.0)])
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_dark_base_matches_the_shipped_default_theme() {
+        let shipped = Theme::parse(include_str!("../../../themes/default.json")).unwrap();
+        assert_eq!(shipped.colors, ThemeColors::default());
+    }
 
     #[test]
     fn the_light_base_matches_the_shipped_light_theme() {
@@ -334,6 +463,46 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(named.name, "Sommer-LAN");
+    }
+
+    #[test]
+    fn a_light_primary_gets_dark_button_text() {
+        // White on #ffd166 is about 1.4:1 — the label on every primary button.
+        let theme = Theme::from_ini(&ini(&[("theme_primary", "#ffd166")])).unwrap();
+        assert_eq!(theme.colors.primary_text, "#0d1318");
+        // A dark primary keeps the light ink.
+        let dark = Theme::from_ini(&ini(&[("theme_primary", "#1d4ed8")])).unwrap();
+        assert_eq!(dark.colors.primary_text, "#ffffff");
+        // Notations other than hex are understood too.
+        let rgb = Theme::from_ini(&ini(&[("theme_primary", "rgb(255, 209, 102)")])).unwrap();
+        assert_eq!(rgb.colors.primary_text, "#0d1318");
+        let hsl = Theme::from_ini(&ini(&[("theme_primary", "hsl(220, 70%, 30%)")])).unwrap();
+        assert_eq!(hsl.colors.primary_text, "#ffffff");
+        // A colour nobody can read (a name) leaves the built-in ink alone
+        // instead of guessing.
+        let named = Theme::from_ini(&ini(&[("theme_primary", "gold")])).unwrap();
+        assert_eq!(
+            named.colors.primary_text,
+            ThemeColors::default().primary_text
+        );
+        // A typo in the key name must not trigger the derivation either.
+        let typo = Theme::from_ini(&ini(&[
+            ("theme_primry", "#ffd166"),
+            ("theme_accent", "#ffd166"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            typo.colors.primary_text,
+            ThemeColors::default().primary_text
+        );
+
+        // What the organiser said themselves is never second-guessed.
+        let explicit = Theme::from_ini(&ini(&[
+            ("theme_primary", "#ffd166"),
+            ("theme_primary_text", "#333333"),
+        ]))
+        .unwrap();
+        assert_eq!(explicit.colors.primary_text, "#333333");
     }
 
     #[test]

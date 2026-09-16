@@ -12,7 +12,7 @@ Organisers can brand the launcher per event without touching code.
   "colors": {
     "background": "#0f1218", "surface": "#171c25", "surfaceAlt": "#1f2632",
     "text": "#f2f4f8", "textMuted": "#9aa4b5",
-    "primary": "#4f8cff", "primaryText": "#ffffff", "accent": "#ff9f43",
+    "primary": "#4f8cff", "primaryText": "#ffffff", "accent": "#7ee8ff",
     "success": "#2ecc71", "warning": "#f1c40f", "danger": "#ff5c5c", "border": "#2a3140"
   },
   "logo": "http://launcher.lan/logo.png",
@@ -53,6 +53,9 @@ Recognised keys: `theme_mode` (`dark`/`light`, picks the base the rest is applie
 `NO_THEME_JSON=1 node tools/dev-lanpage/server.mjs` serves the dev LANPage without a theme.json,
 which is how to try these keys locally.
 
+Naming `theme_primary` without `theme_primary_text` gives the button label the ink that reads
+better on it; saying both keeps exactly what you said.
+
 Values are validated like every other colour, and a malformed one is ignored with a line in the
 log instead of costing the whole theme. A served `theme.json` wins over these keys: it is the
 deliberate one and can say more. Naming no colour at all (only `theme_name`) yields no theme, so a
@@ -70,7 +73,11 @@ uses the event theme when present.
 
 ## Built-in themes
 
-`src/lib/theme.ts` (`builtinThemes`) ships NextGen Dark (`default`), NextGen Light (`light`),
-Pinkes Einhorn (`unicorn`) and Beispiel-LAN Orange (`beispiel-lan`); the JSON files under `themes/`
-mirror them for organisers who want a starting point. "Automatic" takes the LANPage's
-`launcher.css` and `logo.png` (or a served `theme.json`).
+`src/lib/theme.ts` (`builtinThemes`) ships NextGen Dark (`default`), NextGen Light (`light`) and
+the colour schemes Blau (`blue`), Grün (`green`), Orange (`orange`), Pink (`pink`) and Rot
+(`red`); the JSON files under `themes/` mirror them for organisers who want a starting point.
+"Automatic" takes the LANPage's `launcher.css` and `logo.png`, a served `theme.json`, or the
+`theme_*` keys of `launcher.ini`.
+
+The ids of two schemes changed with their names (`unicorn` → `pink`, `beispiel-lan` → `orange`);
+`Settings::migrate` carries an existing choice over.

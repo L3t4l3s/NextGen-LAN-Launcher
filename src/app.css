@@ -6,7 +6,7 @@
   --color-text-muted: #9aa4b5;
   --color-primary: #4f8cff;
   --color-primary-text: #ffffff;
-  --color-accent: #ff9f43;
+  --color-accent: #7ee8ff;
   --color-success: #2ecc71;
   --color-warning: #f1c40f;
   --color-danger: #ff5c5c;
@@ -112,7 +112,8 @@ button.primary:hover:not(:disabled) {
 }
 button.success {
   background: var(--color-success);
-  color: #08140c;
+  /* Set per theme: a dark green needs light text, a bright one dark. */
+  color: var(--color-success-text, #08140c);
   border-color: transparent;
   font-weight: 600;
 }

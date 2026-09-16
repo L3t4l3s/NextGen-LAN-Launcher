@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- „Ordner öffnen“ und „Link öffnen“ meldeten „Erledigt“ — als wäre ein Download fertig. Sie sagen
+  jetzt, was sie getan haben.
+- Das Registrieren einer Spielfreigabe steht im Log, mit Ordner und Fehler. Ein Download, der nie
+  anfängt, war bisher im Log nicht von einem unterschieden, der nie angefordert wurde.
+- Farbschemata: Die Farben für Status-Abzeichen (läuft, spielbereit, angehalten, Fehler, Update)
+  liegen in jedem Schema weit genug auseinander, um sie unterscheiden zu können; ein Test hält das
+  fest. Im hellen Schema war der Akzent dem Warnton zu ähnlich.
+
+- Farbschemata: „Pinkes Einhorn“ heißt jetzt „Pink“, „Beispiel-LAN Orange“ nur noch „Orange“, dazu
+  kommen Blau, Grün und Rot. Eine gespeicherte Auswahl wird mit umbenannt.
+- Die Bibliothek ist standardmäßig alphabetisch sortiert; die Sortierung „Reihenfolge des
+  Katalogs“ entfällt.
+
 - Die LANPage kann ihre Farben jetzt in der `launcher.ini` nennen (`theme_primary`,
   `theme_background`, `theme_mode` und die übrigen `theme_*`-Schlüssel), ohne eine `theme.json`
   zu hinterlegen. Eine vorhandene `theme.json` hat weiterhin Vorrang. Ein fehlerhafter Wert kostet

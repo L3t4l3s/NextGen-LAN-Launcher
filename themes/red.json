@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "name": "Rot",
+  "mode": "dark",
+  "colors": {
+    "background": "#160a0c",
+    "surface": "#231013",
+    "surfaceAlt": "#33181c",
+    "text": "#ffeef0",
+    "textMuted": "#c9a0a5",
+    "primary": "#e5484d",
+    "primaryText": "#1a0407",
+    "accent": "#a78bfa",
+    "success": "#4ade80",
+    "warning": "#facc15",
+    "danger": "#ffa0a0",
+    "border": "#4a242a"
+  },
+  "radius": 12
+}

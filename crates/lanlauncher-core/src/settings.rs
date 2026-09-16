@@ -160,6 +160,18 @@ impl Settings {
         // LANPage is expected at its fixed host. Old settings files may still
         // carry another value.
         self.lanpage_host = "launcher.lan".into();
+        // The two event-flavoured schemes became plain colour names; a
+        // settings file from before that must not lose the user's choice.
+        if let Some(theme) = &self.theme {
+            let renamed = match theme.as_str() {
+                "unicorn" => Some("pink"),
+                "beispiel-lan" => Some("orange"),
+                _ => None,
+            };
+            if let Some(id) = renamed {
+                self.theme = Some(id.to_string());
+            }
+        }
         self.normalise_catalog_key();
         self.normalise_resilio_binary();
         self.normalise_resilio_api_key();
@@ -257,6 +269,21 @@ mod tests {
         assert_eq!(s.lanpage_host, "launcher.lan");
         assert_eq!(s.catalog_key, None);
         assert_eq!(s.resilio_api_key, None);
+    }
+
+    #[test]
+    fn renamed_themes_keep_the_users_choice() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("settings.json");
+        std::fs::write(&p, r#"{"version":1,"theme":"unicorn"}"#).unwrap();
+        assert_eq!(Settings::load(&p).unwrap().theme.as_deref(), Some("pink"));
+        std::fs::write(&p, r#"{"version":1,"theme":"beispiel-lan"}"#).unwrap();
+        assert_eq!(Settings::load(&p).unwrap().theme.as_deref(), Some("orange"));
+        // Automatic mode and every other id are left alone.
+        std::fs::write(&p, r#"{"version":1,"theme":null}"#).unwrap();
+        assert_eq!(Settings::load(&p).unwrap().theme, None);
+        std::fs::write(&p, r#"{"version":1,"theme":"light"}"#).unwrap();
+        assert_eq!(Settings::load(&p).unwrap().theme.as_deref(), Some("light"));
     }
 
     #[test]

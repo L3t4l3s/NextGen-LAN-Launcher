@@ -125,7 +125,7 @@
     height: 22px;
     border-radius: 50%;
     background: var(--color-warning);
-    color: #1a1400;
+    color: var(--color-warning-text, #1a1400);
     font-weight: 800;
     display: grid;
     place-items: center;
