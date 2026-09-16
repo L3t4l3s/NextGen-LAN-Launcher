@@ -6,6 +6,8 @@
   misst der Launcher das Wachstum der Datei auf der Platte (geglättet). Pro Eintrag lässt sich
   „Details“ aufklappen: Verlauf der Laderate der letzten zwei Minuten als Diagramm und die Quellen
   mit Name, Verbindungsart und Rate.
+- Der Windows-Lauf der CI scheiterte an einem ungenutzten Import im Windows-Zweig; der Import
+  entfällt, `tokio::process::Command` bringt `creation_flags` selbst mit.
 - Downloads lassen sich abbrechen, ohne den Umweg über „Entfernen“ in der Bibliothek. Läuft nur
   ein Update, bleibt die installierte Version samt Spielständen erhalten; nur das heruntergeladene
   Archiv verschwindet.

@@ -52,6 +52,9 @@ npm run build          # vite build
 `cargo test` im Workspace-Root baut auch die Tauri-Schale; unter Linux braucht das die
 WebKitGTK-Entwicklungspakete (siehe unten).
 
+Diese Liste kompiliert **keinen** `#[cfg(windows)]`-Zweig. Wer daran etwas ändert, prüft
+zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht erst die CI.
+
 ## Entwicklung
 
 - `npm run dev` startet die Oberfläche im Browser mit simuliertem Backend (`http://localhost:1420`,
@@ -154,6 +157,30 @@ apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-d
 ```
 
 Für End-to-End-Tests zusätzlich `xvfb imagemagick xdotool`, für Fixtures `rar unrar`.
+
+## Windows-Code hier prüfen
+
+Die Prüfliste oben kompiliert die `#[cfg(windows)]`-Zweige nicht; ein dort ungenutzter Import
+bricht erst die CI. Einmal einrichten:
+
+```bash
+apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
+rustup target add x86_64-pc-windows-gnu
+mkdir -p /tmp/wininc
+printf '#include <powrprof.h>\n' > /tmp/wininc/PowrProf.h
+printf '#include <wbemidl.h>\n'  > /tmp/wininc/Wbemidl.h   # mingw-Header sind kleingeschrieben
+```
+
+Danach prüfen (Tests laufen so nicht, nur Clippy und Compiler):
+
+```bash
+export CXXFLAGS_x86_64_pc_windows_gnu=-I/tmp/wininc
+cargo clippy -p lanlauncher-core --all-targets --target x86_64-pc-windows-gnu -- -D warnings
+cargo clippy -p nextgen-lan-launcher --target x86_64-pc-windows-gnu -- -D warnings
+```
+
+Die CI baut mit MSVC, nicht mit mingw; kleine Unterschiede bleiben möglich, die Lints sind
+dieselben.
 
 ## Was hier nicht geprüft werden kann
 

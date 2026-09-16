@@ -24,11 +24,10 @@ pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Hide the console of a helper process (no-op off Windows).
 pub fn hide_window(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
+    // `tokio::process::Command` has its own `creation_flags` on Windows, so
+    // the extension trait of the standard library must not be imported here.
     #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    cmd.creation_flags(CREATE_NO_WINDOW);
     cmd
 }
 
