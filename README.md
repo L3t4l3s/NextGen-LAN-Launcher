@@ -87,8 +87,28 @@ the installer builds (artifacts `bundles-<os>` on the run page) only run for pul
 to `main`, a manual run of the *CI* workflow, or a commit whose message contains `[full-ci]`.
 Tags `v*` are built by `release.yml` instead.
 
+## The app icon after an upgrade
+
+Windows caches the icon of every path it has displayed. An upgrade writes a new executable to the
+same path, so Explorer, the desktop shortcut and the taskbar can keep showing the icon of the
+version before it, while the preview pane — which reads the file directly — already shows the new
+one. The installer asks the shell to re-read it (`src-tauri/installer-hooks.nsh`, untested against a
+real upgrade, see [Open items](#open-items)); where the cache is stubborn anyway, this clears it:
+
+```bat
+ie4uinit.exe -show
+```
+
+Failing that, close Explorer, delete `%LocalAppData%\Microsoft\Windows\Explorer\iconcache*.db`
+and start it again, or simply reboot. A pinned taskbar entry keeps its own copy: unpin and pin it
+again.
+
 ## Open items
 
+- **Icon after an upgrade:** the executable carries the right icon (the preview pane proves it),
+  but the shell caches icons per path. The NSIS hook calling `SHChangeNotify` is meant to clear
+  that on upgrade; whether it does for Explorer, the desktop shortcut and a pinned taskbar entry
+  has not been verified against a real upgrade yet.
 - **Firewall rules on a managed PC:** the rules are added with `netsh` from an elevated batch.
   Verified on a domain-joined Windows PC: the repair succeeds there, so the domain profile alone
   does not block it. A stricter policy still can, and then the failure carries the message `netsh`

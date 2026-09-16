@@ -106,6 +106,11 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   mit einem hier unsichtbaren Lint gebrochen). Beim Anheben lokal `cargo +<version> clippy` prüfen.
 - **sysinfo** ist auf 0.38 gepinnt, weil 0.39 einen neueren Rust-Compiler verlangt.
 - **rand 0.10:** Der Trait heißt `RngExt`, nicht `Rng`.
+- **Icon-Cache von Windows:** Die EXE trägt `icons/icon.ico` als Ressource 32512 (zu sehen in der
+  von `tauri-build` erzeugten `resource.rc` unter `target/<target>/*/build/nextgen-lan-launcher-*/out/`).
+  Zeigt Windows nach einem Update trotzdem das alte Icon, liegt das am Cache pro Pfad, nicht am
+  Build: Die Vorschau liest die Datei direkt und zeigt das neue. `src-tauri/installer-hooks.nsh`
+  ruft nach der Installation `SHChangeNotify`; von Hand hilft `ie4uinit.exe -show`.
 - **Windows-Bundle-Größe:** `webviewInstallMode: offlineInstaller` bettet den WebView2-Installer
   (~150 MB) ein, damit die Installation auf einer LAN ohne Internet klappt; `embedBootstrapper`
   wäre 1,8 MB, lädt WebView2 aber bei Bedarf herunter. `bundle.targets` nennt für Windows nur

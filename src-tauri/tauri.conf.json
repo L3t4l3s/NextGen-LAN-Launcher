@@ -58,6 +58,7 @@
       },
       "nsis": {
         "installMode": "perMachine",
+        "installerHooks": "installer-hooks.nsh",
         "languages": [
           "German",
           "English"

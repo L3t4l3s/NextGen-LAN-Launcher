@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Nach einem Update zeigte Windows im Explorer, auf der Verknüpfung und in der Taskleiste weiter
+  das alte Icon, obwohl die neue EXE das richtige enthält (die Vorschau zeigte es). Das ist der
+  Icon-Cache pro Pfad. Der Installer meldet dem System jetzt, dass sich Symbole geändert haben;
+  die README beschreibt, wie man einen hartnäckigen Cache von Hand leert. Ungetestet gegen ein
+  echtes Update, auf der LAN prüfen.
+
 - Eigenes App-Icon für Windows, macOS und Linux; ohne Logo von der LANPage steht es auch oben
   links in der Kopfzeile und als Symbol im Browser-Tab.
 - Die Resilio-Oberfläche öffnet sich per Knopf in der Diagnose und meldet sich selbst an. Das
