@@ -96,6 +96,7 @@ impl Transport for FolderTransport {
             lan_mode: false,
             peer_details: false,
             detail: Some("folder mode: sync client is managed by the user".into()),
+            web_ui: None,
         }
     }
     async fn add_share(&self, key: &ShareKey, dir: &Path, _opts: &ShareOptions) -> Result<()> {

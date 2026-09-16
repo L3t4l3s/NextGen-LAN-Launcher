@@ -249,7 +249,7 @@ pub async fn spawn_for_user(plan: &LaunchPlan, run_dir: &Path, allow: bool) -> R
 /// which is reported as `err.elevation_denied`.
 pub async fn spawn_elevated(plan: &LaunchPlan, run_dir: &Path) -> Result<u32> {
     let stem = plan.runner.trim_end_matches(".cmd").replace(' ', "-");
-    let batch = elevate::write_batch(run_dir, &stem, &[elevate::batch_line(plan)])?;
+    let batch = elevate::write_batch(run_dir, &stem, &[elevate::batch_line(plan).into()])?;
     log::info!("starting {} elevated via {}", plan.runner, batch.display());
     let runas = elevate::runas_plan(&batch, &plan.cwd);
     let mut cmd = tokio::process::Command::new(&runas.program);

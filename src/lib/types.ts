@@ -195,6 +195,8 @@ export interface TransportHealth {
   /** The transport can name the peers of a share (Resilio with an API key). */
   peer_details: boolean;
   detail: string | null;
+  /** Engine web interface including credentials, for "open in browser". */
+  web_ui?: string | null;
 }
 
 export interface BootstrapInfo {

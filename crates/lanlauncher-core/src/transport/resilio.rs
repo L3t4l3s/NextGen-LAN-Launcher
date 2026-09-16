@@ -450,7 +450,9 @@ impl ResilioClient {
             let v = self.api("get_folders", &[]).await?;
             let mut out = HashMap::new();
             for f in v.as_array().cloned().unwrap_or_default() {
-                let dir = PathBuf::from(f.get("dir").and_then(Value::as_str).unwrap_or(""));
+                let dir = crate::paths::strip_verbatim(PathBuf::from(
+                    f.get("dir").and_then(Value::as_str).unwrap_or(""),
+                ));
                 let peers = match self
                     .api(
                         "get_folder_peers",
@@ -478,6 +480,21 @@ impl ResilioClient {
             Ok(parse_gui_folders(&v))
         }
     }
+}
+
+/// Percent-encode a user info field so a generated password cannot break the
+/// URL apart. Everything outside the unreserved set is escaped, which is
+/// stricter than RFC 3986 needs and always safe.
+fn urlencoding(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for b in value.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
 }
 
 pub fn parse_gui_token(html: &str) -> Option<String> {
@@ -510,7 +527,11 @@ pub fn parse_api_folder(f: &Value, peers: u32) -> ShareStatus {
         ShareState::Downloading
     };
     ShareStatus {
-        dir: PathBuf::from(f.get("dir").and_then(Value::as_str).unwrap_or("")),
+        // Like the GUI answer, the API reports the Windows long-path
+        // spelling; it would reach the log and the diagnostics card.
+        dir: crate::paths::strip_verbatim(PathBuf::from(
+            f.get("dir").and_then(Value::as_str).unwrap_or(""),
+        )),
         state,
         bytes_done: 0,
         bytes_total: size,
@@ -634,12 +655,17 @@ pub fn parse_gui_folders(v: &Value) -> HashMap<PathBuf, ShareStatus> {
         })
         .unwrap_or_default();
     for f in folders {
-        let path = f
-            .get("path")
-            .or_else(|| f.get("name"))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
+        // Resilio answers with the Windows long-path spelling for a folder
+        // registered without it; it would show up that way in the UI and in
+        // the log.
+        let path = crate::paths::strip_verbatim(PathBuf::from(
+            f.get("path")
+                .or_else(|| f.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+        ))
+        .to_string_lossy()
+        .to_string();
         let size = f.get("size").and_then(as_u64_lenient).unwrap_or(0);
         let files = f.get("files").and_then(as_u64_lenient).unwrap_or(0);
         let peers = f
@@ -1098,6 +1124,15 @@ impl Transport for ResilioTransport {
             self.config.login,
             self.config_path.display()
         );
+        // The engine's password is random per installation, so nobody can be
+        // expected to type it. The credentials ride along in the URL and the
+        // browser logs in by itself, the way the ETI launcher did.
+        let web_ui = Some(format!(
+            "http://{}:{}@127.0.0.1:{}/gui/",
+            urlencoding(&self.config.login),
+            urlencoding(&self.config.password),
+            self.config.api_port
+        ));
         if let Ok(mut last) = self.last_detail.lock() {
             if last.as_deref() != Some(detail.as_str()) {
                 log::info!("sync engine: {detail}");
@@ -1115,6 +1150,7 @@ impl Transport for ResilioTransport {
             peer_details: self.client.has_api_key(),
             lan_mode: *self.lan_only.lock().unwrap_or_else(|e| e.into_inner()),
             detail: Some(detail),
+            web_ui,
         }
     }
 

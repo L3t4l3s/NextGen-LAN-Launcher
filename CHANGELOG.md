@@ -2,16 +2,29 @@
 
 ## Unreleased
 
+- Eigenes App-Icon für Windows, macOS und Linux; ohne Logo von der LANPage steht es auch oben
+  links in der Kopfzeile und als Symbol im Browser-Tab.
+- Die Resilio-Oberfläche öffnet sich per Knopf in der Diagnose und meldet sich selbst an. Das
+  Kennwort der Engine wird je Installation zufällig erzeugt, tippen konnte man es also nicht.
+- Resilio meldet Ordner in der Windows-Langform (`\\?\C:\LAN\…`) zurück, auch wenn wir sie ohne
+  angemeldet haben. Der Abgleich mit unseren Ordnern scheiterte daran: kein Fortschritt, keine
+  Gegenstellen, obwohl die Freigabe lief. Pfadvergleiche ignorieren das Präfix jetzt.
+- Ein Admin-Lauf mit mehreren Befehlen meldete nur das Ergebnis des letzten. Vier Firewall-Regeln,
+  von denen die erste scheiterte, galten als Erfolg. Jetzt zählt der erste Fehlschlag, und die
+  Meldung zitiert genau den Befehl, der ihn ausgelöst hat. Zeilen, die scheitern dürfen (das
+  Löschen nicht vorhandener Regeln), sind als solche gekennzeichnet.
+
 - Die Firewall-Reparatur scheiterte auf einem installierten Launcher mit „Code 1“. Ursache: Tauri
   liefert den Programmpfad in der Windows-Langform (`\\?\C:\…`), und `netsh` lehnt die ab. Der
-  Pfad wird jetzt an der Quelle normalisiert. Ungetestet gegen einen echten Windows-PC, auf der
-  LAN prüfen.
+  Pfad wird jetzt an der Quelle normalisiert. Auf einem Domänen-PC geprüft: Die Reparatur läuft
+  durch.
 - Schlägt eine Aktion mit Adminrechten fehl, stand im Fehler nur der Exit-Code: Die erhöhte
   Konsole gehört dem neuen Prozess, ihre Ausgabe war für den Launcher verloren. Sie landet jetzt in
   einer Protokolldatei neben dem Skript; die letzte Zeile daraus steht in der Meldung, das ganze
   Protokoll im Log.
-- Auf einem Domänen-PC darf die Firewall oft nur die IT ändern. Die Diagnose sagt das jetzt vorab
-  und nennt, was die IT braucht.
+- Auf einem Domänen-PC darf die Firewall je nach Richtlinie nur die IT ändern. Die Diagnose sagt
+  das jetzt vorab und nennt, was die IT braucht. (Die Domäne allein verhindert die Regeln nicht,
+  das ist geprüft.)
 - Warnungen der Diagnose lassen sich ausblenden („Ignorieren“), zum Beispiel der zweite Adapter auf
   „Öffentlich“ oder eine Firewall, die per Richtlinie gesperrt ist. Sie zählen dann nicht mehr für
   die Ampel und stehen aufklappbar unter „Ignorierte Meldungen“. Nur Warnungen, die man bewusst

@@ -89,10 +89,10 @@ Tags `v*` are built by `release.yml` instead.
 
 ## Open items
 
-- **Firewall rules on a managed PC:** the rules are added with `netsh` from an elevated batch. On a
-  domain-joined PC group policy can forbid local rules; the failure is now shown with the message
-  `netsh` actually printed, and the warning can be hidden. Which policies block it has not been
-  tested against a real domain.
+- **Firewall rules on a managed PC:** the rules are added with `netsh` from an elevated batch.
+  Verified on a domain-joined Windows PC: the repair succeeds there, so the domain profile alone
+  does not block it. A stricter policy still can, and then the failure carries the message `netsh`
+  printed and the warning can be hidden.
 - **Real Resilio operation:** the client speaks the documented Sync API (`/api`, with an API key)
   and falls back to the GUI endpoints. Both can only be verified against a running sync server.
   The install logic deliberately does not depend on either.

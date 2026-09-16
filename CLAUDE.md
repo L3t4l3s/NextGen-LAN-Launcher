@@ -32,6 +32,8 @@ Der Fortschrittswert des Sync-Engines ist reine Anzeige (`crates/lanlauncher-cor
 | `manifests/` | TOML-Startprofile für macOS/Linux, eines pro ETI-Game-ID. |
 | `assets/covers/` | Mitgelieferte Cover (`<id>.jpg`) aus dem öffentlichen Repo eti-lan/LAN-Launcher (Public Domain). Aktualisieren mit `tools/update-covers.sh`, Upstream-Commit steht in `UPSTREAM`. Zur Laufzeit gewinnt der Cover-Cache aus `assets.eti` (`AppState::cover_dirs`). |
 | `themes/`, `tools/dev-lanpage/` | Beispiel-Themes, lokale LANPage-Attrappe. |
+| `screenshots/` | Bilder für die README, erzeugt aus der Browser-Attrappe: `npm run dev`, dann `node tools/screenshots.mjs` (Chromium über `PLAYWRIGHT_CHROMIUM`, falls schon eins da ist). |
+| `src-tauri/icons/` | App-Icon. `app-icon.png` ist die Quelle, aus der alle PNG-Größen stammen; `icon.ico` und `icon.icns` sind die mitgelieferten Mehrgrößen-Dateien. Die Kopfzeile nutzt `src/lib/assets/app-icon.png`, wenn die LANPage kein Logo liefert. |
 | `.github/workflows/` | `ci.yml` (jeder Push: Core-Tests Linux + Frontend; volle 3-OS-Matrix und Installer nur bei PR, Push auf `main`, manuellem Start oder `[full-ci]` in der Commit-Nachricht; Tags baut `release.yml`), `release.yml` (Installer bei Tag `v*`), `resilio-lock.yml` (Hashes/Version für `resilio.lock.json`, optional für einen festen Build). |
 
 Sprachen: Code, Kommentare, `README.md` und `docs/` Englisch; UI-Texte in `src/lib/i18n/{de,en}.ts`
@@ -73,6 +75,25 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
 
 ## Bekannte Stolperfallen
 
+- **Windows-Langform (`\\?\C:\…`):** Tauris `resource_dir()` liefert sie, `canonicalize()` auch,
+  und jeder daraus gebaute Pfad erbt das Präfix. Windows selbst nimmt es, `netsh` nicht: Die
+  Firewall-Reparatur scheiterte damit auf jedem installierten Build mit Exit-Code 1. `resource_dir`
+  und der gefundene Resilio-Pfad laufen deshalb durch `paths::strip_verbatim`; jeder weitere Pfad,
+  der den Launcher Richtung externes Werkzeug verlässt, gehört ebenfalls dort hindurch.
+- **Ausgabe erhöhter Läufe:** Der Admin-Prozess hat seine eigene Konsole, `.output()` sieht davon
+  nichts. Hilfsbefehle laufen über `elevate::write_batch_logged` und hängen ihre Ausgabe an eine
+  Protokolldatei; `elevate::last_section` liest daraus die Meldung des Befehls, der den Exit-Code
+  bestimmt hat. Zeilen, deren Ausgabe der Benutzer sehen muss, sind
+  `elevate::BatchLine::console` — `game_setup.cmd` gibt Hinweise aus und wartet auf einen
+  Tastendruck. Die Marker der Zeile landen trotzdem im Protokoll, sonst zitiert die Meldung den
+  Befehl davor.
+- **Mehrzeilige Admin-Läufe:** Alle Zeilen laufen, der Rückgabewert ist der *erste* Fehlschlag
+  (`NLL_RC` im erzeugten Batch). Zeilen, die scheitern dürfen, sind `elevate::BatchLine::optional`
+  — `netsh … delete rule` endet mit 1, wenn keine Regel passte. Neue Zeilen ohne diese
+  Kennzeichnung gelten als Pflicht.
+- **Pfade von der Engine:** Resilio antwortet mit der Windows-Langform, auch für Ordner, die ohne
+  sie angemeldet wurden. `transport::normalise_dir` entfernt das Präfix, sonst findet der
+  Zustandsautomat die Freigabe des Spiels nicht.
 - **Demo-Timing:** Der Demo-Download dauert 25 s, danach wartet der Zustandsautomat 15 s auf eine
   stabile Archivgröße (`Policy::stable_for`), erst dann folgen Prüfen, Entpacken, Setup. Ein
   Test, der früher als ~45 s nach „Installieren“ abbricht, sieht fälschlich einen „Hänger“.

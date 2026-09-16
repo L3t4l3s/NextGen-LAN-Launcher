@@ -162,6 +162,53 @@ pub fn firewall_add_rules(
         .collect()
 }
 
+/// One line of an elevated batch: whether its failure counts, and whether its
+/// output goes into the log or stays on the elevated console.
+///
+/// Both matter in the same batch. `netsh advfirewall firewall delete rule`
+/// exits 1 when no rule matched, which is the normal case on a clean machine,
+/// so a run must not fail over it. A game's `game_setup.cmd` on the other
+/// hand prints instructions and may wait for a key press, so its output has
+/// to stay where the user can see it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchLine {
+    pub command: String,
+    /// `false`: run it, log it, but let it fail without failing the run.
+    pub required: bool,
+    /// `false`: leave the output on the elevated console instead of the log.
+    pub capture: bool,
+}
+
+impl BatchLine {
+    /// A command that may fail; its failure is not the run's.
+    pub fn optional(command: impl Into<String>) -> Self {
+        Self {
+            capture: true,
+            required: false,
+            command: command.into(),
+        }
+    }
+
+    /// A command the user has to watch: its output stays on the console.
+    pub fn console(command: impl Into<String>) -> Self {
+        Self {
+            capture: false,
+            required: true,
+            command: command.into(),
+        }
+    }
+}
+
+impl<T: Into<String>> From<T> for BatchLine {
+    fn from(command: T) -> Self {
+        Self {
+            command: command.into(),
+            required: true,
+            capture: true,
+        }
+    }
+}
+
 /// A batch file for one elevated run: the lines, then the exit code of the
 /// last command. Written into the launcher's data dir with a plain name so
 /// the cmd.exe command line needs nothing but the quoted path. Names are
@@ -170,7 +217,7 @@ pub fn firewall_add_rules(
 /// immediately before the run and its content is the user's own request, so
 /// this is the same trust the user grants any script started from a UAC
 /// prompt.
-pub fn write_batch(dir: &Path, stem: &str, lines: &[String]) -> Result<PathBuf> {
+pub fn write_batch(dir: &Path, stem: &str, lines: &[BatchLine]) -> Result<PathBuf> {
     write_batch_inner(dir, stem, lines, None).map(|(batch, _)| batch)
 }
 
@@ -181,7 +228,11 @@ pub fn write_batch(dir: &Path, stem: &str, lines: &[String]) -> Result<PathBuf> 
 /// PowerShell prints there is lost to the launcher: a failure arrives as a
 /// bare exit code with nothing to act on. Reading the log afterwards is what
 /// turns that into a message a player, or a domain admin, can work with.
-pub fn write_batch_logged(dir: &Path, stem: &str, lines: &[String]) -> Result<(PathBuf, PathBuf)> {
+pub fn write_batch_logged(
+    dir: &Path,
+    stem: &str,
+    lines: &[BatchLine],
+) -> Result<(PathBuf, PathBuf)> {
     let log = dir.join(format!("{}.log", safe_stem(stem)));
     // Left over from the previous run; the batch only appends.
     let _ = std::fs::remove_file(&log);
@@ -203,7 +254,7 @@ fn safe_stem(stem: &str) -> String {
 fn write_batch_inner(
     dir: &Path,
     stem: &str,
-    lines: &[String],
+    lines: &[BatchLine],
     log: Option<&Path>,
 ) -> Result<(PathBuf, PathBuf)> {
     std::fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
@@ -215,35 +266,79 @@ fn write_batch_inner(
     let redirect = log
         .map(|l| format!(" >>\"{}\" 2>&1", l.display()))
         .unwrap_or_default();
+    if let Some(l) = log {
+        // The batch truncates the log itself: deleting it beforehand is best
+        // effort, and a leftover from the previous run would put that run's
+        // failure into this run's error message.
+        text.push_str(&format!("type nul >\"{}\"\r\n", l.display()));
+    }
+    // Every line runs — the game's setup must not be skipped because a
+    // firewall rule before it failed — but the batch reports the *first*
+    // failure instead of only the last line's exit code. Four netsh rules
+    // where the first one fails used to come back as success.
+    text.push_str("set \"NLL_RC=0\"\r\n");
     for (i, l) in lines.iter().enumerate() {
+        // Our own markers always go to the log — only the command's output
+        // stays on the console for a console line. Without its marker the
+        // reader would quote the last *captured* command, which succeeded.
         if log.is_some() {
             // Numbered so the log says which line produced which message.
             text.push_str(&format!("echo --- {}{redirect}\r\n", i + 1));
         }
-        text.push_str(l);
-        text.push_str(&redirect);
+        text.push_str(&l.command);
+        if l.capture {
+            text.push_str(&redirect);
+        }
         text.push_str("\r\n");
+        if !l.required {
+            continue;
+        }
+        text.push_str("set \"NLL_LAST=%errorlevel%\"\r\n");
+        if log.is_some() {
+            // Marks this command's own section as the failing one.
+            text.push_str(&format!(
+                "if not \"%NLL_LAST%\"==\"0\" echo {FAILURE_MARKER} %NLL_LAST%{redirect}\r\n"
+            ));
+        }
+        text.push_str(
+            "if not \"%NLL_LAST%\"==\"0\" if \"%NLL_RC%\"==\"0\" set \"NLL_RC=%NLL_LAST%\"\r\n",
+        );
     }
-    text.push_str("exit /b %errorlevel%\r\n");
+    text.push_str("exit /b %NLL_RC%\r\n");
     std::fs::write(&path, text).map_err(|e| Error::io(&path, e))?;
     Ok((path, log.map(Path::to_path_buf).unwrap_or_default()))
 }
 
-/// The output of the last command in a transcript [`write_batch_logged`]
-/// produced: everything after the final `--- <n>` marker, joined into one
-/// line.
+/// What the batch echoes into its log for a command that failed.
+const FAILURE_MARKER: &str = "!! exit";
+
+/// The output of the command that failed in a transcript
+/// [`write_batch_logged`] produced, joined into one line.
 ///
-/// The batch returns the exit code of its last line, so only that line's
-/// output explains the failure; quoting anything earlier would name a
-/// command that already succeeded.
+/// The batch reports the first failing command's exit code, so that command's
+/// output is the one that explains it; a later command that succeeded would
+/// name the wrong culprit. A command whose output stayed on the console has
+/// an empty section, which correctly yields no quote at all. Without any
+/// failure marker (a truncated log, or a run that failed before the first
+/// command) the last section is the best guess left.
 pub fn last_section(transcript: &str) -> String {
-    let body = match transcript.rfind("--- ") {
-        Some(i) => &transcript[i..],
-        None => transcript,
+    let sections: Vec<&str> = transcript.split("--- ").skip(1).collect();
+    let picked = sections
+        .iter()
+        .find(|s| s.contains(FAILURE_MARKER))
+        .or_else(|| sections.last())
+        .copied();
+    // A section starts with the number the batch echoed; a transcript
+    // without any marker (truncated, or cut off before the first command)
+    // has no such line to drop.
+    let (body, skip_number) = match picked {
+        Some(s) => (s, 1),
+        None => (transcript, 0),
     };
     body.lines()
         .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with("--- "))
+        .skip(skip_number)
+        .filter(|l| !l.is_empty() && !l.starts_with(FAILURE_MARKER))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -348,10 +443,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_failing_command_is_the_last_one_in_the_transcript() {
-        let transcript = "--- 1\r\nOk.\r\n\r\n--- 2\r\nDer Parameter ist ung\u{fc}ltig.\r\n";
+    fn the_marked_command_is_the_one_quoted() {
+        // The first rule failed, a later one succeeded: quoting the last
+        // section would report "Ok." for a run that failed.
+        let transcript =
+            "--- 1\r\nDer Parameter ist ung\u{fc}ltig.\r\n!! exit 1\r\n--- 2\r\nOk.\r\n";
         assert_eq!(last_section(transcript), "Der Parameter ist ung\u{fc}ltig.");
-        // A run whose last command said nothing leaves no reason to quote.
+        // Without a marker the last section is the best guess left.
+        assert_eq!(
+            last_section("--- 1\r\nOk.\r\n\r\n--- 2\r\nWeg.\r\n"),
+            "Weg."
+        );
+        // A run whose command said nothing leaves no reason to quote.
         assert_eq!(last_section("--- 1\r\nOk.\r\n\r\n--- 2\r\n"), "");
         assert_eq!(last_section(""), "");
         // A truncated transcript (the tail of a long log) has no marker left.
@@ -359,6 +462,10 @@ mod tests {
             last_section("Zugriff verweigert.\r\n"),
             "Zugriff verweigert."
         );
+
+        // A console line that failed has an empty section: no quote is
+        // better than quoting the command before it, which worked.
+        assert_eq!(last_section("--- 1\r\nOk.\r\n--- 2\r\n!! exit 2\r\n"), "");
     }
 
     #[test]
@@ -444,11 +551,11 @@ mod tests {
         assert_eq!(batch_line(&exe), r#""D:\LAN\q3\keygen.exe" "a b" c"#);
 
         let dir = tempfile::tempdir().unwrap();
-        let batch = write_batch(dir.path(), "q3 setup/1", &[batch_line(&plan)]).unwrap();
+        let batch = write_batch(dir.path(), "q3 setup/1", &[batch_line(&plan).into()]).unwrap();
         assert!(batch.ends_with("q3_setup_1.cmd"));
         let text = std::fs::read_to_string(&batch).unwrap();
         assert!(text.starts_with("@echo off\r\n"));
-        assert!(text.ends_with("exit /b %errorlevel%\r\n"));
+        assert!(text.ends_with("exit /b %NLL_RC%\r\n"));
 
         // With a log, every line appends to it and the stale log of the
         // previous run is gone before the batch runs.
@@ -457,16 +564,43 @@ mod tests {
         let (batch, log) = write_batch_logged(
             dir.path(),
             "firewall-rules",
-            &[r#"netsh advfirewall firewall add rule name="Sync (in)" dir=in"#.into()],
+            &[
+                BatchLine::optional(r#"netsh advfirewall firewall delete rule name=all dir=in"#),
+                r#"netsh advfirewall firewall add rule name="Sync (in)" dir=in"#.into(),
+                BatchLine::console(r#"call "D:\LAN\q3\game_setup.cmd""#),
+            ],
         )
         .unwrap();
         assert_eq!(log, stale);
         assert!(!log.exists());
         let text = std::fs::read_to_string(&batch).unwrap();
         assert!(text.contains(&format!("echo --- 1 >>\"{}\" 2>&1", log.display())));
+        // The stale-rule delete runs and is logged, but netsh's "no rule
+        // matched" (exit 1) must not fail the repair.
+        assert_eq!(text.matches("set \"NLL_LAST=%errorlevel%\"").count(), 2);
+        // The game's script keeps its console: no redirect, no log section,
+        // but its exit code still counts.
+        assert!(text.contains("call \"D:\\LAN\\q3\\game_setup.cmd\"\r\n"));
+        // Its section header and failure marker still go to the log, so a
+        // failing setup script is not reported with the previous command's
+        // "Ok." — it simply has nothing to quote.
+        assert!(text.contains(&format!("echo --- 3 >>\"{}\" 2>&1", log.display())));
+        assert!(!text.contains(&format!("game_setup.cmd\" >>\"{}\"", log.display())));
+        // The batch truncates the log itself; a leftover from the previous
+        // run must not be read as this run's failure.
+        assert!(text.contains(&format!("type nul >\"{}\"", log.display())));
         assert!(text.contains(&format!("dir=in >>\"{}\" 2>&1", log.display())));
-        // The exit code still comes from the last command, not from the echo.
-        assert!(text.ends_with("exit /b %errorlevel%\r\n"));
+        // Every line runs, and the exit code is the *first* failure: four
+        // netsh rules whose first one fails must not report success.
+        assert!(text.contains("set \"NLL_RC=0\""));
+        assert!(
+            text.contains(r#"if not "%NLL_LAST%"=="0" if "%NLL_RC%"=="0" set "NLL_RC=%NLL_LAST%""#)
+        );
+        assert!(text.contains(&format!(
+            "echo !! exit %NLL_LAST% >>\"{}\" 2>&1",
+            log.display()
+        )));
+        assert!(text.ends_with("exit /b %NLL_RC%\r\n"));
 
         let script = runas_script(
             Path::new(r"C:\Users\O'Neil\run\x.cmd"),

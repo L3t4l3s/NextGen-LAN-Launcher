@@ -1,4 +1,5 @@
 <script lang="ts">
+  import appIcon from "$lib/assets/app-icon.png";
   import { app, type View } from "$lib/stores/app.svelte";
   import { api } from "$lib/api";
   import { t, userText } from "$lib/i18n";
@@ -27,11 +28,8 @@
 
 <header>
   <div class="brand" onclick={() => (app.view = "library")} role="button" tabindex="0" onkeydown={(e) => e.key === "Enter" && (app.view = "library")}>
-    {#if app.logo}
-      <img src={app.logo} alt="" />
-    {:else}
-      <span class="logo"></span>
-    {/if}
+    <!-- The LANPage's logo wins; without one the app's own icon stands in. -->
+    <img class:fallback={!app.logo} src={app.logo || appIcon} alt="" />
     <div class="titles">
       <strong>{app.eventTitle || t("app.title")}</strong>
       {#if app.eventTitle}<small>{t("app.title")}</small>{/if}
@@ -76,11 +74,11 @@
     max-width: 140px;
     object-fit: contain;
   }
-  .logo {
+  /* The app icon is a full square with its own background, so it gets the
+     rounded corners a logo from the LANPage brings along itself. */
+  .brand img.fallback {
     width: 34px;
-    height: 34px;
     border-radius: 10px;
-    background: linear-gradient(135deg, var(--color-primary), var(--color-accent));
   }
   .titles {
     display: flex;

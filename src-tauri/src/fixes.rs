@@ -4,51 +4,28 @@
 use crate::state::AppState;
 use lanlauncher_core::diagnostics;
 use lanlauncher_core::problem::FixAction;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
-
-/// Where the output of an elevated run goes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Output {
-    /// Into a log file the launcher reads back, so a failure carries the
-    /// message the command printed. For helper commands only.
-    Captured,
-    /// Into the console of the elevated run, where the user sees it. Game
-    /// scripts print instructions and end with `pause`; redirecting them
-    /// shows an empty window instead. Only the UAC path has such a console,
-    /// so an already elevated launcher captures either way.
-    Console,
-}
 
 /// Run batch lines that need administrator rights and wait for them:
 /// directly through cmd.exe when the launcher is already elevated, else
 /// through PowerShell `Start-Process -Verb RunAs` (UAC prompt). Errors are
 /// `err.<code>` strings: `elevation_disabled` (setting), `elevation_denied`
-/// (prompt declined), `elevation_failed|<exit code>` (plus the command's own
-/// message with [`Output::Captured`]).
+/// (prompt declined), `elevation_failed|<exit code>` (plus the message of the
+/// command that failed, for lines whose output is captured).
 pub(crate) async fn run_admin_lines(
     state: &AppState,
     stem: &str,
-    lines: Vec<String>,
+    lines: Vec<lanlauncher_core::launch::elevate::BatchLine>,
     cwd: &Path,
-    output: Output,
 ) -> Result<(), String> {
     use lanlauncher_core::launch::{apply_args, elevate, LaunchPlan};
     let elevated = elevate::running_elevated() != Some(false);
     if !elevated && !state.settings.read().await.allow_elevation {
         return Err("err.elevation_disabled".into());
     }
-    // An already elevated launcher runs the batch through its own hidden
-    // cmd.exe: there is no console for the user to read either way, so the
-    // transcript is the only thing that can explain a failure.
-    let output = if elevated { Output::Captured } else { output };
-    let (batch, log) = match output {
-        Output::Captured => elevate::write_batch_logged(&state.run_dir(), stem, &lines),
-        Output::Console => {
-            elevate::write_batch(&state.run_dir(), stem, &lines).map(|b| (b, PathBuf::new()))
-        }
-    }
-    .map_err(|e| format!("err.elevation_failed|{e}"))?;
+    let (batch, log) = elevate::write_batch_logged(&state.run_dir(), stem, &lines)
+        .map_err(|e| format!("err.elevation_failed|{e}"))?;
     let plan = if elevated {
         LaunchPlan {
             program: std::path::PathBuf::from(
@@ -89,10 +66,7 @@ pub(crate) async fn run_admin_lines(
     // wrong is only in the log the batch appends to. Windows console tools
     // still write OEM-encoded text; the lossy conversion keeps the message
     // readable even when the umlauts do not survive it.
-    let transcript = match output {
-        Output::Captured => std::fs::read(&log).map(|b| tail(&b)).unwrap_or_default(),
-        Output::Console => String::new(),
-    };
+    let transcript = std::fs::read(&log).map(|b| tail(&b)).unwrap_or_default();
     log::warn!(
         "{stem} exited with {}\n--- transcript ---\n{}\n--- stdout ---\n{}\n--- stderr ---\n{}",
         out.status,
@@ -107,10 +81,10 @@ pub(crate) async fn run_admin_lines(
         return Err("err.elevation_denied".into());
     }
     let code = out.status.code().unwrap_or(-1);
-    // The batch returns the exit code of its *last* line, so only that
-    // line's output explains the code. Anything printed before it belongs to
-    // a command that has already been and gone, and quoting it would name
-    // the wrong culprit.
+    // The batch returns the exit code of the *first* command that failed and
+    // marks that command's section in the transcript, so this is the output
+    // that explains the code — a later command that still succeeded would
+    // name the wrong culprit.
     let reason = lanlauncher_core::launch::elevate::last_section(&transcript);
     if reason.is_empty() {
         Err(format!("err.elevation_failed|{code}"))
@@ -147,9 +121,8 @@ pub(crate) async fn ensure_firewall_rules(
     match run_admin_lines(
         state,
         &format!("{game_id}-firewall"),
-        rules,
+        rules.into_iter().map(Into::into).collect(),
         &paths.share_dir,
-        Output::Captured,
     )
     .await
     {
@@ -276,9 +249,8 @@ pub async fn apply(
                 run_admin_lines(
                     state,
                     "network-profile",
-                    vec![powershell_line(&script)],
+                    vec![powershell_line(&script).into()],
                     &state.dirs.data,
-                    Output::Captured,
                 )
                 .await?;
             } else {
@@ -309,19 +281,15 @@ pub async fn apply(
             let stale = diagnostics::firewall_stale_rules(&binary);
             let rules = diagnostics::firewall_rules(&binary, port);
             if needs_runas() {
+                use lanlauncher_core::launch::elevate::BatchLine;
+                // The deletes are expected to fail when no rule matched; only
+                // the allow rules decide whether the repair worked.
                 let lines = stale
                     .iter()
-                    .chain(rules.iter())
-                    .map(|r| netsh_line(r))
+                    .map(|r| BatchLine::optional(netsh_line(r)))
+                    .chain(rules.iter().map(|r| BatchLine::from(netsh_line(r))))
                     .collect();
-                run_admin_lines(
-                    state,
-                    "firewall-rules",
-                    lines,
-                    &state.dirs.data,
-                    Output::Captured,
-                )
-                .await?;
+                run_admin_lines(state, "firewall-rules", lines, &state.dirs.data).await?;
             } else {
                 for rule in &stale {
                     if let Err(e) = netsh(rule).await {
@@ -366,9 +334,8 @@ pub async fn apply(
                 run_admin_lines(
                     state,
                     "defender-exclusion",
-                    vec![powershell_line(&script)],
+                    vec![powershell_line(&script).into()],
                     &state.dirs.data,
-                    Output::Captured,
                 )
                 .await?;
             } else {

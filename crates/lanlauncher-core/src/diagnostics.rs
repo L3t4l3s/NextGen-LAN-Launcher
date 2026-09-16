@@ -217,6 +217,16 @@ pub fn ps_set_private(interface_index: u32) -> String {
 /// name=…` with it tells whether the rules exist.
 pub const FIREWALL_RULE_IN: &str = "NextGen LAN Launcher Sync (in)";
 
+/// Offer "open the engine's web interface" where it is the next useful step.
+/// The URL carries the credentials, so the browser does not ask for a random
+/// password nobody knows.
+fn web_ui_fix(problem: Problem, health: &TransportHealth) -> Problem {
+    match &health.web_ui {
+        Some(url) => problem.with_fix(FixAction::OpenUrl { url: url.clone() }),
+        None => problem,
+    }
+}
+
 /// Problem for a sync engine without Windows firewall rules: other players
 /// cannot connect to this PC, LAN discovery answers may be dropped.
 pub fn firewall_missing_problem(program: &std::path::Path) -> Problem {
@@ -376,22 +386,24 @@ pub fn check_transport(health: &TransportHealth) -> Vec<Problem> {
                         .with_fix(FixAction::RestartTransport),
                 );
             } else if health.peers == 0 {
-                out.push(
+                out.push(web_ui_fix(
                     Problem::new("transport.no_peers", Severity::Warning)
                         .param("detail", health.detail.clone().unwrap_or_default())
                         .step("transport.no_peers.step.server")
                         .step("transport.no_peers.step.network")
                         .step("transport.no_peers.step.webui"),
-                );
+                    health,
+                ));
             } else if health.server_found == Some(false) {
                 // Other players are connected, but nobody serves the catalog
                 // share, so the sync server itself is missing.
-                out.push(
+                out.push(web_ui_fix(
                     Problem::new("transport.no_server", Severity::Warning)
                         .param("detail", health.detail.clone().unwrap_or_default())
                         .step("transport.no_server.step.server")
                         .step("transport.no_server.step.wait"),
-                );
+                    health,
+                ));
             }
         }
         crate::transport::TransportKind::Folder => {
@@ -537,6 +549,7 @@ mod tests {
             lan_mode: true,
             peer_details: false,
             detail: None,
+            web_ui: None,
         };
         let codes = |h: &TransportHealth| -> Vec<String> {
             check_transport(h).into_iter().map(|p| p.code).collect()
@@ -560,6 +573,7 @@ mod tests {
             lan_mode: true,
             peer_details: false,
             detail: Some("E:\\LAN\\eti_launcher: 0 peers, Indexing".into()),
+            web_ui: Some("http://launcher:s3cr3t@127.0.0.1:8888/gui/".into()),
         };
         let problems = check_transport(&health);
         let p = problems
@@ -569,6 +583,14 @@ mod tests {
         assert_eq!(
             p.params.get("detail").map(String::as_str),
             Some("E:\\LAN\\eti_launcher: 0 peers, Indexing")
+        );
+        // The card opens the engine's web interface, logged in: the password
+        // is random per installation and nobody could type it.
+        assert_eq!(
+            p.fix,
+            Some(FixAction::OpenUrl {
+                url: "http://launcher:s3cr3t@127.0.0.1:8888/gui/".into()
+            })
         );
         let fw = firewall_missing_problem(Path::new(r"C:\App\Resilio Sync.exe"));
         assert_eq!(fw.code, "transport.firewall_missing");

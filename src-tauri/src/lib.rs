@@ -79,9 +79,12 @@ impl SetupHook for AppSetupHook {
             .map(|t| elevate::firewall_add_rules(&t, &paths.share_dir, game_id, &lang, &player))
             .unwrap_or_default();
         let setup = launch::windows::setup_plan(paths, game_id, &lang, &player);
-        let mut lines = rules.clone();
+        let mut lines: Vec<elevate::BatchLine> = rules.iter().cloned().map(Into::into).collect();
         if let Some(plan) = &setup {
-            lines.push(elevate::batch_line(plan));
+            // The game's own script keeps the console: it prints instructions
+            // and may wait for a key press. The rules above are logged, so a
+            // rule a policy refuses still names itself in the error.
+            lines.push(elevate::BatchLine::console(elevate::batch_line(plan)));
         }
         if lines.is_empty() {
             return Ok(());
@@ -91,9 +94,6 @@ impl SetupHook for AppSetupHook {
             &format!("{game_id}-setup"),
             lines,
             &paths.share_dir,
-            // game_setup.cmd belongs to the game: it may print instructions
-            // or wait for a key press, so its console stays visible.
-            crate::fixes::Output::Console,
         )
         .await;
         match run {

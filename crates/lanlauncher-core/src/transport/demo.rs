@@ -149,6 +149,7 @@ impl Transport for DemoTransport {
             lan_mode: *self.lan_only.lock().unwrap_or_else(|e| e.into_inner()),
             peer_details: false,
             detail: Some("simulated transport".into()),
+            web_ui: None,
         }
     }
     async fn add_share(&self, key: &ShareKey, dir: &Path, opts: &ShareOptions) -> Result<()> {

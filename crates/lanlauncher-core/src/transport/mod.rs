@@ -88,6 +88,11 @@ pub struct TransportHealth {
     #[serde(default)]
     pub peer_details: bool,
     pub detail: Option<String>,
+    /// Address of the engine's web interface, credentials included, for
+    /// "open in browser". The password is the random one from the engine
+    /// config: it goes to the browser, never into the log.
+    #[serde(default)]
+    pub web_ui: Option<String>,
 }
 
 /// Peer counts split into "everything" and "the catalog share".
@@ -185,8 +190,11 @@ pub fn partial_path(final_path: &Path) -> PathBuf {
 }
 
 /// Directory key for matching engine-reported paths against our own: the
-/// engine may differ in separators, trailing slashes and (on Windows) case.
+/// engine may differ in separators, trailing slashes, the Windows long-path
+/// prefix (Resilio answers `\\?\C:\LAN\…` for a folder we registered as
+/// `C:\LAN\…`) and in case.
 pub fn normalise_dir(path: &Path) -> String {
+    let path = crate::paths::strip_verbatim(path.to_path_buf());
     let s = path.to_string_lossy().replace('\\', "/");
     let s = s.trim_end_matches('/');
     if cfg!(target_os = "windows") {
@@ -198,6 +206,21 @@ pub fn normalise_dir(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_windows_long_path_prefix_does_not_break_matching() {
+        // Resilio reports the folder back with the prefix. Without this the
+        // install state machine finds no share for the game and shows no
+        // progress and no peers at all.
+        assert_eq!(
+            normalise_dir(Path::new(r"\\?\C:\LAN\eti_launcher")),
+            normalise_dir(Path::new(r"C:\LAN\eti_launcher"))
+        );
+        assert_eq!(
+            normalise_dir(Path::new(r"\\?\UNC\srv\lan\x")),
+            normalise_dir(Path::new(r"\\srv\lan\x"))
+        );
+    }
     use super::*;
 
     fn share(dir: &str, peers: u32) -> ShareStatus {
