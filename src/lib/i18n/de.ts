@@ -91,6 +91,7 @@ export const de: Messages = {
   "detail.manifest.share_overlay": "Startprofil der LAN-Orga",
   "detail.manifest.derived_from_script": "aus dem Windows-Skript abgeleitet",
   "detail.manifest.unverified": "Für diesen Paketstand noch nicht bestätigt.",
+  "detail.manifest.autodetect": "Startdatei wird nach der Installation automatisch gesucht.",
   "detail.manifest.none": "Für dieses Spiel gibt es noch kein Startprofil für {platform}. Nach der Installation kannst du die Startdatei selbst wählen.",
   "detail.progress": "{done} von {total}",
   "detail.peers": "{count} Teilnehmer",

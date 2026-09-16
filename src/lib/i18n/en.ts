@@ -91,6 +91,7 @@ export const en: Messages = {
   "detail.manifest.share_overlay": "launch profile from the organisers",
   "detail.manifest.derived_from_script": "derived from the Windows script",
   "detail.manifest.unverified": "Not yet confirmed for this package revision.",
+  "detail.manifest.autodetect": "The executable is picked automatically after the install.",
   "detail.manifest.none": "There is no launch profile for {platform} yet. After installing you can pick the executable yourself.",
   "detail.progress": "{done} of {total}",
   "detail.peers": "{count} peers",

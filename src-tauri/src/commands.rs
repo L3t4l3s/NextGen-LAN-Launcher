@@ -103,20 +103,18 @@ fn manifest_info(m: &Manifest, revision: &str, lang: &str) -> ManifestInfo {
             .get(lang)
             .or_else(|| m.setup.notes.get("en"))
             .cloned(),
-        verified_for_revision: m.matches_revision(revision),
+        // A profile whose entry point had to come from the Windows script is
+        // not confirmed for this package, whatever revisions its notes name.
+        // A manifest that is *only* the script says so in its origin line
+        // already, so it does not get the warning on top.
+        verified_for_revision: m.matches_revision(revision)
+            && !(m.exe_from_script && m.origin != ManifestOrigin::DerivedFromScript),
     }
 }
 
 fn resolve_manifest(state: &AppState, game: &Game) -> Option<Manifest> {
     let paths = state_paths(state, game)?;
-    match state.manifests.resolve(&game.id, Some(&paths.share_dir)) {
-        Ok(Some(m)) => Some(m),
-        _ => std::fs::read_to_string(&paths.start_script)
-            .ok()
-            .and_then(|s| {
-                lanlauncher_core::script_probe::ScriptProbe::analyse(&s).to_manifest(&game.id)
-            }),
-    }
+    state.manifests.resolve_for(&game.id, &paths)
 }
 
 fn state_paths(state: &AppState, game: &Game) -> Option<lanlauncher_core::paths::GamePaths> {

@@ -1,0 +1,25 @@
+{
+  "version": 2,
+  "name": "Dev-LAN",
+  "mode": "dark",
+  "colors": {
+    "background": "#081522",
+    "surface": "#0f2133",
+    "surfaceAlt": "#16304a",
+    "text": "#eaf3ff",
+    "textMuted": "#93a9c0",
+    "primary": "#29b6f6",
+    "primaryText": "#04121e",
+    "accent": "#ffd54f",
+    "success": "#2ecc71",
+    "warning": "#f1c40f",
+    "danger": "#ff5c5c",
+    "border": "#1d3a55",
+    "header": "#0b2a45",
+    "headerText": "#e8f4ff",
+    "footer": "#06121f",
+    "footerText": "#7f97af"
+  },
+  "logo": "http://127.0.0.1:8080/logo.png",
+  "radius": 10
+}

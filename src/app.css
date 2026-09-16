@@ -11,6 +11,11 @@
   --color-warning: #f1c40f;
   --color-danger: #ff5c5c;
   --color-border: #2a3140;
+  /* The bars follow the surface unless a theme names them. */
+  --color-header: var(--color-surface);
+  --color-header-text: var(--color-text);
+  --color-footer: var(--color-surface);
+  --color-footer-text: var(--color-text-muted);
   --radius: 12px;
   /* ETI ships covers as 140x100 images; tiles and the detail hero share it. */
   --cover-ratio: 7 / 5;
@@ -54,8 +59,19 @@ body {
   background: var(--bg-image, none) center / cover no-repeat;
   opacity: 0.9;
 }
-/* With an event stylesheet the body steps aside so the layer is visible. */
-:root[data-legacy] body {
+/* An event photo swallows the text behind it; the overlay a theme may name
+   is laid on top of the image, not of the content — and only where there is
+   an image, so it never tints a legacy launcher.css instead. */
+:root[data-bg-image] #bg_layer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--bg-overlay, transparent);
+}
+/* With an event stylesheet — or a background image of its own — the body steps
+   aside so the layer is visible. */
+:root[data-legacy] body,
+:root[data-bg-image] body {
   background: transparent;
 }
 

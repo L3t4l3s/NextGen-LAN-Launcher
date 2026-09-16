@@ -1,4 +1,4 @@
-import type { Theme } from "./types";
+import type { FontFace, Theme, ThemeColors } from "./types";
 import lightJson from "../../themes/light.json";
 import blueJson from "../../themes/blue.json";
 import greenJson from "../../themes/green.json";
@@ -26,8 +26,10 @@ export const defaultTheme: Theme = {
   },
   logo: null,
   backgroundImage: null,
+  backgroundOverlay: null,
   radius: 12,
   fontFamily: null,
+  fontFaces: [],
   icons: {},
   legacyCss: null,
 };
@@ -48,7 +50,10 @@ export const builtinThemes: Record<string, Theme> = {
   red: fromJson(redJson as Partial<Theme>),
 };
 
-const varMap: Record<keyof Theme["colors"], string> = {
+/** The colours every theme has; the chrome ones below are optional. */
+type BaseColorKey = Exclude<keyof ThemeColors, "header" | "headerText" | "footer" | "footerText">;
+
+const varMap: Record<BaseColorKey, string> = {
   background: "--color-bg",
   surface: "--color-surface",
   surfaceAlt: "--color-surface-alt",
@@ -63,7 +68,24 @@ const varMap: Record<keyof Theme["colors"], string> = {
   border: "--color-border",
 };
 
-const SAFE_COLOR = /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]+|(rgb|rgba|hsl|hsla)\([0-9a-zA-Z ,.%/-]+\))$/;
+// Case-insensitive like the Rust check, which lowercases before testing; a
+// value is trimmed before it is tested and before it is used, so nothing can
+// pass one side and fail the other.
+const SAFE_COLOR = /^(#[0-9a-f]{3,8}|[a-z]+|(rgb|rgba|hsl|hsla)\([0-9a-z ,.%/-]+\))$/i;
+
+/** The colour if the launcher may paint with it, else null. */
+function safeColor(value: string | null | undefined): string | null {
+  const v = value?.trim() ?? "";
+  return v && SAFE_COLOR.test(v) ? v : null;
+}
+
+/** The optional chrome colours and what they fall back to. */
+const chromeMap: [keyof ThemeColors, string, keyof ThemeColors][] = [
+  ["header", "--color-header", "surface"],
+  ["headerText", "--color-header-text", "text"],
+  ["footer", "--color-footer", "surface"],
+  ["footerText", "--color-footer-text", "textMuted"],
+];
 
 /** The two text colours the UI paints on a coloured surface. */
 const INK = { dark: "#08140c", light: "#f2f4f8" };
@@ -127,13 +149,76 @@ export function readableOn(background: string): string {
   return ratio(INK.light) > ratio(INK.dark) ? INK.light : INK.dark;
 }
 
+// Same rules as `FontFace::is_valid` in crates/lanlauncher-core/src/theme.rs:
+// a value that passes there must render here, or a font disappears without a
+// word. The two quote characters and the CSS escape are what must not get in.
+const FONT_URL = /^https?:\/\/[^\s"'<>\\]+$/;
+const FONT_DATA = /^data:font\/[A-Za-z0-9;,/+=._-]+$/;
+// `\p{M}` covers what Rust's `char::is_alphanumeric` lets through beyond
+// letters and digits (combining marks), so neither side accepts a family the
+// other one silently drops.
+const FONT_FAMILY = /^[\p{L}\p{M}\p{N} ._-]{1,64}$/u;
+const FONT_WEIGHT = /^([1-9]\d{0,2}|normal|bold|lighter|bolder)$/;
+const FONT_STYLE = /^(normal|italic|oblique)$/;
+
+/**
+ * The `@font-face` rules for the event's fonts, written here from the checked
+ * declarations — the launcher never takes a stylesheet from a LANPage, so a
+ * theme can bring a font but not restyle the window.
+ */
+function fontFaceCss(faces: FontFace[]): string {
+  const srcOk = (src: string) => (FONT_URL.test(src) && src.length <= 512) || (FONT_DATA.test(src) && src.length <= 2_000_000);
+  return faces
+    .filter(
+      (f) =>
+        FONT_FAMILY.test(f.family?.trim() ?? "") &&
+        srcOk(f.src?.trim() ?? "") &&
+        (!f.weight || FONT_WEIGHT.test(f.weight.trim())) &&
+        (!f.style || FONT_STYLE.test(f.style.trim())),
+    )
+    .map((f) => {
+      const parts = [`font-family: "${f.family.trim()}"`, `src: url("${f.src.trim()}")`];
+      if (f.weight) parts.push(`font-weight: ${f.weight.trim()}`);
+      if (f.style) parts.push(`font-style: ${f.style.trim()}`);
+      parts.push("font-display: swap");
+      return `@font-face { ${parts.join("; ")}; }`;
+    })
+    .join("\n");
+}
+
+/** Put the event's font rules into the document, or take them out again. */
+function applyFont(css: string | null | undefined) {
+  let style = document.getElementById("theme-font") as HTMLStyleElement | null;
+  if (css) {
+    if (!style) {
+      style = document.createElement("style");
+      style.id = "theme-font";
+      document.head.appendChild(style);
+    }
+    if (style.textContent !== css) style.textContent = css;
+  } else if (style) {
+    style.remove();
+  }
+}
+
 /** Apply theme tokens to :root and inject the optional legacy stylesheet. */
 export function applyTheme(theme: Theme) {
   const root = document.documentElement;
   const merged: Theme = { ...defaultTheme, ...theme, colors: { ...defaultTheme.colors, ...(theme.colors ?? {}) } };
-  for (const [key, cssVar] of Object.entries(varMap) as [keyof Theme["colors"], string][]) {
-    const value = merged.colors[key];
-    if (SAFE_COLOR.test(value)) root.style.setProperty(cssVar, value);
+  for (const [key, cssVar] of Object.entries(varMap) as [BaseColorKey, string][]) {
+    const value = safeColor(merged.colors[key]);
+    if (value) root.style.setProperty(cssVar, value);
+  }
+  // The bars may have colours of their own; a theme that says nothing about
+  // them keeps the surface, so old themes look exactly as they did.
+  for (const [key, cssVar, fallback] of chromeMap) {
+    // Text on a bar the theme coloured: whoever names only the bar gets the
+    // ink that reads on it, the way `primary` works. The bar's colour has to
+    // be one we would paint with, or the ink would be picked for a colour
+    // that never reaches the bar.
+    const bar = key === "headerText" ? safeColor(merged.colors.header) : key === "footerText" ? safeColor(merged.colors.footer) : null;
+    const value = safeColor(merged.colors[key]) ?? (bar ? readableOn(bar) : safeColor(merged.colors[fallback]));
+    if (value) root.style.setProperty(cssVar, value);
   }
   // The Play button paints text on the success colour, which a scheme may
   // choose dark (readable on a light card) or bright (readable on a dark
@@ -144,11 +229,24 @@ export function applyTheme(theme: Theme) {
   if (merged.fontFamily) root.style.setProperty("--font-family", merged.fontFamily.replace(/[;{}<>]/g, ""));
   else root.style.removeProperty("--font-family");
   root.dataset.themeMode = merged.mode;
-  if (merged.backgroundImage && /^(https?:\/\/|data:image\/)/.test(merged.backgroundImage)) {
-    root.style.setProperty("--bg-image", `url("${merged.backgroundImage.replace(/"/g, "")}")`);
+  const hasImage = !!merged.backgroundImage && /^(https?:\/\/|data:image\/)/.test(merged.backgroundImage);
+  if (hasImage) {
+    root.style.setProperty("--bg-image", `url("${(merged.backgroundImage as string).replace(/"/g, "")}")`);
   } else {
     root.style.removeProperty("--bg-image");
   }
+  // The background layer lies behind the body, which is opaque by default;
+  // without this the image and its overlay are never seen.
+  root.toggleAttribute("data-bg-image", hasImage);
+  // A photo behind the content eats the text; the overlay is how an organiser
+  // keeps their picture and the launcher readable at the same time.
+  const overlay = safeColor(merged.backgroundOverlay);
+  if (overlay) {
+    root.style.setProperty("--bg-overlay", overlay);
+  } else {
+    root.style.removeProperty("--bg-overlay");
+  }
+  applyFont(fontFaceCss(merged.fontFaces ?? []));
   // ETI's launcher.css paints `html`; scoped to #bg_layer it only shows when
   // the body lets it through (see app.css, [data-legacy]).
   root.toggleAttribute("data-legacy", !!merged.legacyCss);

@@ -1,6 +1,6 @@
 # NextGen LAN Launcher
 
-A cross-platform successor to the **ETI LAN Launcher** (eti-lan.xyz) for LAN parties: install and
+A cross-platform alternative to the **ETI LAN Launcher** (eti-lan.xyz) for LAN parties: install and
 start games from the existing ETI ecosystem (sync server, `game.db`, `.eti` packages, LANPage) on
 **Windows 10/11, macOS and Linux**, with a modern interface that organisers can re-brand per
 event and with clear instructions whenever something does not work.
@@ -47,6 +47,37 @@ order:
 The key is not in this repository. A PC without an ETI installation and without a LANPage
 therefore needs step 1 once.
 
+## Installing a build
+
+CI and releases publish one artifact per operating system (`bundles-<os>` on the run page); the
+installers sit at the top of the downloaded zip.
+
+* **Windows:** `NextGen LAN Launcher_<version>_x64-setup.exe` (NSIS). The build is not signed, so
+  SmartScreen shows "unknown publisher" — *More info → Run anyway*.
+* **macOS:** the `.dmg`; the app is ad-hoc signed, so the first start goes through
+  *System Settings → Privacy & Security → Open anyway*.
+* **Linux:** three formats of the same build — `.AppImage` (runs anywhere, nothing to install),
+  `.deb` (Debian/Ubuntu/Mint) and `.rpm` (Fedora/openSUSE). Take **one**.
+
+### Steam Deck / SteamOS
+
+SteamOS's system partition is read-only, so `.deb` and `.rpm` cannot be installed there; the
+**AppImage** is the one to use. In desktop mode:
+
+```bash
+cd ~/Downloads
+unzip bundles-ubuntu-22.04.zip -d nextgen      # Dolphin: right-click → Extract → Extract archive here
+chmod +x nextgen/*.AppImage
+./nextgen/NextGen\ LAN\ Launcher_*.AppImage
+```
+
+If Ark shows the zip but extracts nothing, `unzip` in Konsole does the job — GitHub's artifact zips
+carry no folders, and Ark's "open" view is not an extraction. Should the AppImage complain about
+FUSE, start it as `./nextgen/NextGen*.AppImage --appimage-extract-and-run`. For a permanent entry, move the
+file somewhere stable (`~/Applications`) and add it to Steam via *Add a Non-Steam Game*; game
+libraries belong on the SD card or an external SSD, set as the library folder in the launcher's
+settings.
+
 ## Layout
 
 ```
@@ -54,7 +85,7 @@ crates/lanlauncher-core/   Rust library without GUI: catalog, launcher.ini, tran
                            install state machine, UnRAR, launching, diagnostics – 60+ tests
 src-tauri/                 Tauri 2 app (commands, events, sidecar, demo mode)
 src/                       Svelte 5 frontend (German/English, theme engine, browser mock for development)
-manifests/                 Launch profiles for macOS/Linux (initially: amongus, rocket, goldsrc, wc3, quake3, l4d2)
+manifests/                 Launch profiles for macOS/Linux (amongus, rocket, goldsrc, wc3, quake3, l4d2, flat2, cod2)
 assets/covers/             Cover images bundled with the app (from eti-lan/LAN-Launcher, public domain)
 themes/                    Example themes
 tools/dev-lanpage/         Minimal LANPage stand-in for local testing (launcher.ini, launcher.css, stats.php)

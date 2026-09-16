@@ -116,6 +116,11 @@ pub struct Manifest {
     /// Where this manifest came from (filled at load time).
     #[serde(skip)]
     pub origin: ManifestOrigin,
+    /// The entry point was taken from `game_start.cmd` because the manifest
+    /// itself names none (guidance-only profile). What starts is then a guess,
+    /// whatever revisions the notes were written for.
+    #[serde(skip)]
+    pub exe_from_script: bool,
     pub launch: LaunchSpec,
     pub setup: SetupSpec,
     pub platform: BTreeMap<String, PlatformOverride>,
@@ -140,6 +145,7 @@ impl Default for Manifest {
             revisions: Vec::new(),
             source: None,
             origin: ManifestOrigin::Bundled,
+            exe_from_script: false,
             launch: LaunchSpec::default(),
             setup: SetupSpec::default(),
             platform: BTreeMap::new(),
@@ -292,6 +298,50 @@ impl ManifestStore {
             }
         }
         Ok(None)
+    }
+
+    /// The manifest to use for an installed game: the store's, with the
+    /// Windows start script as the fallback — and as the source of the entry
+    /// point for a manifest that carries only guidance (`launch.exe` empty,
+    /// e.g. a game whose working executable nobody has established yet). Both
+    /// the UI and the install manager resolve through this, so "what starts"
+    /// and "can it start" never disagree.
+    pub fn resolve_for(&self, game_id: &str, paths: &crate::paths::GamePaths) -> Option<Manifest> {
+        let from_script = || {
+            std::fs::read_to_string(&paths.start_script)
+                .ok()
+                .and_then(|s| crate::script_probe::ScriptProbe::analyse(&s).to_manifest(game_id))
+        };
+        // The platform's own entry point counts: a profile may name an exe
+        // only under `[platform.macos]`, and that is not guidance-only.
+        let platform = Manifest::current_platform();
+        match self.resolve(game_id, Some(&paths.share_dir)) {
+            Ok(Some(mut m)) if m.launch_for(platform).exe.is_empty() => {
+                if let Some(probe) = from_script() {
+                    m.launch.exe = probe.launch.exe;
+                    m.exe_from_script = !m.launch.exe.is_empty();
+                    if m.launch.args.is_empty() {
+                        m.launch.args = probe.launch.args;
+                    }
+                    if m.launch.required_files.is_empty() {
+                        m.launch.required_files = probe.launch.required_files;
+                    }
+                    // Without these the "choose another executable" list is
+                    // empty for exactly the games whose note says to pick the
+                    // multiplayer binary by hand.
+                    if m.launch.alternatives.is_empty() {
+                        m.launch.alternatives = probe.launch.alternatives;
+                    }
+                }
+                Some(m)
+            }
+            Ok(Some(m)) => Some(m),
+            Ok(None) => from_script(),
+            Err(e) => {
+                log::warn!("manifest for {game_id} could not be read: {e}");
+                from_script()
+            }
+        }
     }
 
     /// List all bundled/user manifests (for the UI's compatibility overview).

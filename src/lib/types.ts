@@ -148,6 +148,22 @@ export interface ThemeColors {
   warning: string;
   danger: string;
   border: string;
+  /** Top bar; missing keeps `surface`. */
+  header?: string | null;
+  /** Text on the top bar; missing keeps `text`. */
+  headerText?: string | null;
+  /** Status bar; missing keeps `surface`. */
+  footer?: string | null;
+  /** Text on the status bar; missing keeps `textMuted`. */
+  footerText?: string | null;
+}
+
+export interface FontFace {
+  family: string;
+  /** http(s) or a data: URI. */
+  src: string;
+  weight?: string | null;
+  style?: string | null;
 }
 
 export interface Theme {
@@ -157,8 +173,12 @@ export interface Theme {
   colors: ThemeColors;
   logo: string | null;
   backgroundImage: string | null;
+  /** Colour over the background image so text stays readable on a photo. */
+  backgroundOverlay?: string | null;
   radius: number;
   fontFamily: string | null;
+  /** Font files of the event; the launcher writes the @font-face rules itself. */
+  fontFaces?: FontFace[];
   icons: Record<string, string>;
   legacyCss: string | null;
 }

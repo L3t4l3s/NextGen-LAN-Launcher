@@ -193,6 +193,9 @@ impl ScriptProbe {
         let mut manifest = Manifest {
             id: game_id.to_string(),
             origin: ManifestOrigin::DerivedFromScript,
+            // Read off the Windows script, never confirmed for a package: the
+            // UI says so rather than showing it as a checked profile.
+            exe_from_script: true,
             source: Some("derived from game_start.cmd".into()),
             ..Default::default()
         };

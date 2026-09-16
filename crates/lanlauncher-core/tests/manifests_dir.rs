@@ -16,19 +16,25 @@ fn bundled_manifests_are_valid() {
         let m = Manifest::parse(&text, &path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         let stem = path.file_stem().unwrap().to_string_lossy();
         assert_eq!(m.id, stem, "manifest id must match file name");
-        assert!(
-            !m.launch.exe.is_empty(),
-            "{}: launch.exe missing",
-            path.display()
-        );
-        assert!(
-            !m.launch.required_files.is_empty(),
-            "{}: required_files missing",
-            path.display()
-        );
-        for platform in ["windows", "macos", "linux"] {
-            let spec = m.launch_for(platform);
-            assert!(!spec.exe.is_empty());
+        // A manifest without an entry point is guidance only: no verified
+        // executable, but setup notes worth showing. Everything else must name
+        // what to start and what proves the extraction complete.
+        if m.launch.exe.is_empty() {
+            assert!(
+                m.setup.notes.contains_key("de") && m.setup.notes.contains_key("en"),
+                "{}: no launch.exe and no setup notes — nothing this manifest could add",
+                path.display()
+            );
+        } else {
+            assert!(
+                !m.launch.required_files.is_empty(),
+                "{}: required_files missing",
+                path.display()
+            );
+            for platform in ["windows", "macos", "linux"] {
+                let spec = m.launch_for(platform);
+                assert!(!spec.exe.is_empty());
+            }
         }
         count += 1;
     }

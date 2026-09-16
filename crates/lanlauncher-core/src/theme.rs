@@ -23,6 +23,19 @@ pub struct ThemeColors {
     pub warning: String,
     pub danger: String,
     pub border: String,
+    /// Top bar; `None` keeps `surface`. A LANPage usually has a band of its
+    /// own colour up there, and matching it is most of "looks like the page".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    /// Text and icons on `header`; `None` keeps `text`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header_text: Option<String>,
+    /// Status bar; `None` keeps `surface`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footer: Option<String>,
+    /// Text on `footer`; `None` keeps `text_muted`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footer_text: Option<String>,
 }
 
 impl Default for ThemeColors {
@@ -40,6 +53,10 @@ impl Default for ThemeColors {
             warning: "#f1c40f".into(),
             danger: "#ff5c5c".into(),
             border: "#2a3140".into(),
+            header: None,
+            header_text: None,
+            footer: None,
+            footer_text: None,
         }
     }
 }
@@ -53,18 +70,113 @@ pub struct Theme {
     /// Dark or light base; affects default contrast choices in the UI.
     pub mode: ThemeMode,
     pub colors: ThemeColors,
-    /// Logo shown in the top bar (URL, data URI or path relative to the theme).
+    /// Logo shown in the top bar: an `http(s)` URL or a `data:image/…` URI.
+    /// A relative path is dropped — the theme is applied inside the launcher,
+    /// which has no idea where the file would sit.
     pub logo: Option<String>,
-    /// Optional background image behind the content.
+    /// Background image behind the content, same rule as `logo`.
     pub background_image: Option<String>,
+    /// Colour laid over `background_image` so text stays readable on a photo
+    /// (`rgba(0,0,0,0.55)`). Ignored without an image.
+    pub background_overlay: Option<String>,
     /// Corner radius token in pixels.
     pub radius: u32,
     /// Font stack override.
     pub font_family: Option<String>,
+    /// Font files the event brings along, named one by one. The launcher
+    /// writes the `@font-face` rules itself from these; a LANPage never hands
+    /// the launcher a stylesheet, so it can bring a font but not a free hand
+    /// at the layout.
+    pub font_faces: Vec<FontFace>,
     /// Override icons by name (`library`, `downloads`, `lan`, ...) with SVG/URL.
     pub icons: BTreeMap<String, String>,
     /// Legacy ETI `launcher.css` to inject as an extra stylesheet, if any.
     pub legacy_css: Option<String>,
+}
+
+/// One font file of the event, as `@font-face` needs it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FontFace {
+    /// The family name `font_family` refers to.
+    pub family: String,
+    /// The file: `http(s)` or a `data:` URI.
+    pub src: String,
+    /// `400`, `700`, `normal`, `bold` — optional.
+    pub weight: Option<String>,
+    /// `normal`, `italic`, `oblique` — optional.
+    pub style: Option<String>,
+}
+
+impl FontFace {
+    /// A family name that can stand between quotes in CSS trouble-free.
+    /// Deliberately the same set as `FONT_FAMILY` in `src/lib/theme.ts`: a
+    /// face the backend accepts and the UI then drops is a font that never
+    /// arrives and nobody hears about.
+    fn family_ok(&self) -> bool {
+        let f = self.family.trim();
+        !f.is_empty()
+            && f.chars().count() <= 64
+            && f.chars()
+                .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '.' | '-' | '_'))
+    }
+
+    /// The file. The value is written into `url("…")`, so nothing that could
+    /// leave those quotes may be in it — for the `data:` form that means an
+    /// explicit character set, not just the prefix.
+    fn src_ok(&self) -> bool {
+        let s = self.src.trim();
+        if let Some(data) = s.strip_prefix("data:font/") {
+            return s.len() <= 2_000_000
+                && !data.is_empty()
+                && data.chars().all(|c| {
+                    c.is_ascii_alphanumeric()
+                        || matches!(c, ';' | ',' | '/' | '+' | '=' | '-' | '.' | '_')
+                });
+        }
+        is_web_url(s)
+    }
+
+    fn weight_ok(&self) -> bool {
+        match self.weight.as_deref().map(str::trim) {
+            None => true,
+            Some(w) => {
+                matches!(w, "normal" | "bold" | "lighter" | "bolder")
+                    || (w.len() <= 3
+                        && w.starts_with(|c: char| c.is_ascii_digit() && c != '0')
+                        && w.chars().all(|c| c.is_ascii_digit()))
+            }
+        }
+    }
+
+    fn style_ok(&self) -> bool {
+        matches!(
+            self.style.as_deref().map(str::trim),
+            None | Some("normal") | Some("italic") | Some("oblique")
+        )
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.family_ok() && self.src_ok() && self.weight_ok() && self.style_ok()
+    }
+
+    /// The rule for this file. Every part was checked first, so nothing here
+    /// can close the block and start one of its own.
+    pub fn to_css(&self) -> String {
+        let mut css = format!(
+            "@font-face {{ font-family: \"{}\"; src: url(\"{}\");",
+            self.family.trim(),
+            self.src.trim()
+        );
+        if let Some(w) = self.weight.as_deref().map(str::trim) {
+            css.push_str(&format!(" font-weight: {w};"));
+        }
+        if let Some(st) = self.style.as_deref().map(str::trim) {
+            css.push_str(&format!(" font-style: {st};"));
+        }
+        css.push_str(" font-display: swap; }");
+        css
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -84,8 +196,10 @@ impl Default for Theme {
             colors: ThemeColors::default(),
             logo: None,
             background_image: None,
+            background_overlay: None,
             radius: 12,
             font_family: None,
+            font_faces: Vec::new(),
             icons: BTreeMap::new(),
             legacy_css: None,
         }
@@ -110,13 +224,18 @@ impl ThemeColors {
             warning: "#854d0e".into(),
             danger: "#dc2626".into(),
             border: "#d3d9e4".into(),
+            header: None,
+            header_text: None,
+            footer: None,
+            footer_text: None,
         }
     }
 }
 
 impl Theme {
     pub fn parse(json: &str) -> crate::Result<Self> {
-        let theme: Theme = serde_json::from_str(json)?;
+        let mut theme: Theme = serde_json::from_str(json)?;
+        theme.drop_unusable();
         theme.validate()?;
         Ok(theme)
     }
@@ -156,6 +275,24 @@ impl Theme {
         let mut primary_text_set = false;
         {
             let c = &mut theme.colors;
+            // The bars of the launcher, so an ini-only LANPage can match its
+            // own header band without hosting a theme.json.
+            for (key, slot) in [
+                ("theme_header", &mut c.header),
+                ("theme_header_text", &mut c.header_text),
+                ("theme_footer", &mut c.footer),
+                ("theme_footer_text", &mut c.footer_text),
+            ] {
+                let Some(value) = extra.get(key).map(|v| v.trim()) else {
+                    continue;
+                };
+                if is_safe_css_color(value) {
+                    *slot = Some(value.to_string());
+                    any = true;
+                } else {
+                    log::warn!("launcher.ini: {key} is not a colour: {value}");
+                }
+            }
             for (key, slot) in [
                 ("theme_background", &mut c.background),
                 ("theme_surface", &mut c.surface),
@@ -198,6 +335,77 @@ impl Theme {
         {
             theme.name = name.to_string();
         }
+        if let Some(value) = extra.get("theme_background_overlay").map(|v| v.trim()) {
+            if is_safe_css_color(value) {
+                theme.background_overlay = Some(value.to_string());
+                any = true;
+            } else {
+                log::warn!("launcher.ini: theme_background_overlay is not a colour: {value}");
+            }
+        }
+        for (key, slot) in [
+            ("theme_background_image", &mut theme.background_image),
+            ("theme_logo", &mut theme.logo),
+        ] {
+            let Some(value) = extra.get(key).map(|v| v.trim()) else {
+                continue;
+            };
+            if is_image_ref(value) {
+                *slot = Some(value.to_string());
+                any = true;
+            } else {
+                log::warn!("launcher.ini: {key} is not an http(s) or data:image URL: {value}");
+            }
+        }
+        // A font stack reaches CSS as is, so it may only name families.
+        if let Some(value) = extra
+            .get("theme_font_family")
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty() && v.len() <= 200)
+        {
+            if value.contains([';', '{', '}', '<', '>', '(', ')']) {
+                log::warn!("launcher.ini: theme_font_family is not a font stack: {value}");
+            } else {
+                theme.font_family = Some(value.to_string());
+                any = true;
+            }
+        }
+        // One font file per ini: `theme_font_src` is the file, the family
+        // comes from `theme_font_family`. A LANPage with more than one weight
+        // is past what three lines in an ini can carry and wants a theme.json.
+        if let Some(src) = extra.get("theme_font_src").map(|v| v.trim()) {
+            match theme.font_family.clone() {
+                None => log::warn!(
+                    "launcher.ini: theme_font_src without theme_font_family, ignored: {src}"
+                ),
+                Some(family) => {
+                    let face = FontFace {
+                        // `"Bebas Neue", sans-serif` is how a font stack is
+                        // written; the family behind it is what @font-face
+                        // needs.
+                        family: family
+                            .split(',')
+                            .next()
+                            .unwrap_or(&family)
+                            .trim()
+                            .trim_matches(['"', '\''])
+                            .to_string(),
+                        src: src.to_string(),
+                        weight: None,
+                        style: None,
+                    };
+                    if face.is_valid() {
+                        theme.font_faces = vec![face];
+                        any = true;
+                    } else {
+                        log::warn!(
+                            "launcher.ini: theme_font_src is not a usable font file for `{}`: {src}",
+                            face.family
+                        );
+                    }
+                }
+            }
+        }
         if let Some(raw) = extra.get("theme_radius").map(|r| r.trim()) {
             match raw.parse::<u32>() {
                 Ok(radius) if radius <= 48 => {
@@ -226,7 +434,14 @@ impl Theme {
             &self.colors.danger,
             &self.colors.border,
         ];
-        for c in all {
+        let optional = [
+            &self.colors.header,
+            &self.colors.header_text,
+            &self.colors.footer,
+            &self.colors.footer_text,
+            &self.background_overlay,
+        ];
+        for c in all.into_iter().chain(optional.into_iter().flatten()) {
             if !is_safe_css_color(c) {
                 return Err(crate::Error::Settings(format!(
                     "invalid colour `{c}` in theme"
@@ -237,6 +452,49 @@ impl Theme {
             return Err(crate::Error::Settings("radius must be <= 48".into()));
         }
         Ok(())
+    }
+
+    /// Drop what the launcher cannot use instead of refusing the theme: a
+    /// relative `logo` has no base to resolve against here, but the colours
+    /// around it are still good. Called after parsing, logged once.
+    fn drop_unusable(&mut self) {
+        self.font_faces.retain(|face| {
+            let ok = face.is_valid();
+            if !ok {
+                log::warn!(
+                    "theme: `{}` is not a usable font file, ignored",
+                    face.family
+                );
+            }
+            ok
+        });
+        self.drop_unusable_images();
+    }
+
+    fn drop_unusable_images(&mut self) {
+        for (name, value) in [
+            ("logo", &mut self.logo),
+            ("backgroundImage", &mut self.background_image),
+        ] {
+            if let Some(v) = value {
+                if !is_image_ref(v) {
+                    log::warn!("theme: {name} is not an http(s) or data:image URL, ignored: {v}");
+                    *value = None;
+                }
+            }
+        }
+    }
+
+    /// The `@font-face` rules for the event's fonts, written by the launcher
+    /// from the checked declarations.
+    pub fn font_face_css(&self) -> Option<String> {
+        let css: Vec<String> = self
+            .font_faces
+            .iter()
+            .filter(|f| f.is_valid())
+            .map(|f| f.to_css())
+            .collect();
+        (!css.is_empty()).then(|| css.join("\n"))
     }
 
     /// Render the theme as CSS custom properties for the `:root` element.
@@ -256,7 +514,28 @@ impl Theme {
         push("color-warning", &c.warning);
         push("color-danger", &c.danger);
         push("color-border", &c.border);
+        // The chrome falls back to the surface rather than to a colour of its
+        // own: a theme that says nothing about the bars keeps looking the way
+        // it did before these keys existed.
+        // Text on a bar the theme coloured: naming only the bar gets the ink
+        // that reads on it, the way `primary` does.
+        let ink_for = |named: Option<&String>, bar: Option<&String>, fallback: &str| -> String {
+            match (named, bar) {
+                (Some(text), _) => text.clone(),
+                (None, Some(bar)) => readable_on(bar).unwrap_or(fallback).to_string(),
+                (None, None) => fallback.to_string(),
+            }
+        };
+        let header_text = ink_for(c.header_text.as_ref(), c.header.as_ref(), &c.text);
+        let footer_text = ink_for(c.footer_text.as_ref(), c.footer.as_ref(), &c.text_muted);
+        push("color-header", c.header.as_deref().unwrap_or(&c.surface));
+        push("color-header-text", &header_text);
+        push("color-footer", c.footer.as_deref().unwrap_or(&c.surface));
+        push("color-footer-text", &footer_text);
         push("radius", &format!("{}px", self.radius));
+        if let Some(overlay) = &self.background_overlay {
+            push("bg-overlay", overlay);
+        }
         if let Some(f) = &self.font_family {
             let cleaned: String = f
                 .chars()
@@ -266,6 +545,37 @@ impl Theme {
         }
         css
     }
+}
+
+/// An image the launcher can show: fetched over the network, or carried in
+/// the theme itself. Anything else (a relative path, `javascript:`) has no
+/// base to resolve against and would render as a broken image.
+pub fn is_image_ref(value: &str) -> bool {
+    let v = value.trim();
+    if let Some(data) = v.strip_prefix("data:image/") {
+        // As for a font file: the value is written into `url("…")`, so the
+        // character set is checked, not only the prefix — otherwise a newline
+        // or a quote costs the image with nothing in the log.
+        return v.len() <= 2_000_000
+            && !data.is_empty()
+            && data.chars().all(|c| {
+                c.is_ascii_alphanumeric()
+                    || matches!(c, ';' | ',' | '/' | '+' | '=' | '-' | '.' | '_')
+            });
+    }
+    is_web_url(v)
+}
+
+/// An `http(s)` URL of a length a stylesheet link can carry. Everything the
+/// theme sends to the browser as a URL goes through this; `javascript:` and
+/// `data:` have no business in a LANPage's font.
+pub fn is_web_url(value: &str) -> bool {
+    let v = value.trim();
+    v.len() <= 512
+        && (v.starts_with("http://") || v.starts_with("https://"))
+        // A URL of ours ends up inside `url("…")` or an `src` attribute; the
+        // quote characters and the CSS escape have no place in one.
+        && !v.contains(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | '\\'))
 }
 
 /// Accept hex colours, `rgb()/rgba()/hsl()/hsla()` and plain CSS colour names.
@@ -424,6 +734,172 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn the_bars_fall_back_to_the_surface_when_a_theme_says_nothing() {
+        let css = Theme::default().to_css_variables();
+        let surface = ThemeColors::default().surface;
+        assert!(
+            css.contains(&format!("--color-header: {surface};")),
+            "{css}"
+        );
+        assert!(
+            css.contains(&format!("--color-footer: {surface};")),
+            "{css}"
+        );
+        assert!(!css.contains("--bg-overlay"), "{css}");
+    }
+
+    #[test]
+    fn a_lanpage_can_dress_the_bars_and_the_background_from_the_ini() {
+        let theme = Theme::from_ini(&ini(&[
+            ("theme_header", "#101820"),
+            ("theme_header_text", "#ffcc00"),
+            ("theme_footer", "rgb(16, 24, 32)"),
+            ("theme_background_image", "http://launcher.lan/bg.jpg"),
+            ("theme_background_overlay", "rgba(0,0,0,0.55)"),
+            ("theme_font_family", "\"Bebas Neue\", sans-serif"),
+            ("theme_font_src", "http://launcher.lan/bebas.woff2"),
+        ]))
+        .expect("a theme");
+        theme.validate().expect("valid");
+        assert_eq!(theme.colors.header.as_deref(), Some("#101820"));
+        assert_eq!(theme.colors.header_text.as_deref(), Some("#ffcc00"));
+        assert_eq!(theme.colors.footer.as_deref(), Some("rgb(16, 24, 32)"));
+        // The footer text was not named, so it keeps the muted text colour.
+        assert_eq!(theme.colors.footer_text, None);
+        assert_eq!(
+            theme.background_image.as_deref(),
+            Some("http://launcher.lan/bg.jpg")
+        );
+        let css = theme.to_css_variables();
+        assert!(css.contains("--color-header: #101820;"), "{css}");
+        assert!(css.contains("--bg-overlay: rgba(0,0,0,0.55);"), "{css}");
+        // The footer text was not named and the footer is dark, so the ink is
+        // the light one rather than the muted body colour.
+        assert!(css.contains("--color-footer-text: #ffffff;"), "{css}");
+        assert!(
+            css.contains("--font-family: \"Bebas Neue\", sans-serif;"),
+            "{css}"
+        );
+        // The quotes belong to the stack, not to the family the file provides.
+        let fonts = theme.font_face_css().expect("font css");
+        assert!(fonts.contains("font-family: \"Bebas Neue\";"), "{fonts}");
+        assert!(
+            fonts.contains("url(\"http://launcher.lan/bebas.woff2\")"),
+            "{fonts}"
+        );
+    }
+
+    #[test]
+    fn urls_and_font_stacks_from_the_ini_are_checked() {
+        // A `javascript:` logo, a font stack carrying a CSS rule and a font
+        // file that is not a file would all end up in the document.
+        let theme = Theme::from_ini(&ini(&[
+            ("theme_logo", "javascript:alert(1)"),
+            ("theme_font_src", "file:///etc/passwd"),
+            ("theme_font_family", "Arial; } body { display: none"),
+            ("theme_primary", "#29b6f6"),
+        ]))
+        .expect("a theme");
+        assert_eq!(theme.logo, None);
+        assert!(theme.font_faces.is_empty());
+        assert_eq!(theme.font_family, None);
+        assert_eq!(theme.colors.primary, "#29b6f6");
+    }
+
+    #[test]
+    fn one_font_file_fits_in_the_ini() {
+        let theme = Theme::from_ini(&ini(&[
+            ("theme_font_family", "Bebas Neue, sans-serif"),
+            ("theme_font_src", "http://launcher.lan/bebas.woff2"),
+        ]))
+        .expect("a theme");
+        let css = theme.font_face_css().expect("font css");
+        assert!(css.contains("font-family: \"Bebas Neue\""), "{css}");
+        assert!(
+            css.contains("url(\"http://launcher.lan/bebas.woff2\")"),
+            "{css}"
+        );
+    }
+
+    #[test]
+    fn a_font_file_becomes_a_rule_the_launcher_writes_itself() {
+        let theme = Theme::parse(
+            r#"{"fontFamily":"LAN, sans-serif","fontFaces":[
+                 {"family":"LAN","src":"http://launcher.lan/lan.woff2","weight":"700"}]}"#,
+        )
+        .expect("a theme");
+        let css = theme.font_face_css().expect("font css");
+        assert!(css.contains("font-family: \"LAN\""), "{css}");
+        assert!(
+            css.contains("url(\"http://launcher.lan/lan.woff2\")"),
+            "{css}"
+        );
+        assert!(css.contains("font-weight: 700"), "{css}");
+    }
+
+    #[test]
+    fn a_font_declaration_cannot_carry_a_rule_of_its_own() {
+        // Everything the launcher writes into the document comes from these
+        // four fields, so each one is checked before it is written — and a
+        // face that fails costs itself, not the theme around it.
+        let bad = |json: &str| {
+            Theme::parse(json)
+                .expect("still a theme")
+                .font_face_css()
+                .is_none()
+        };
+        assert!(bad(
+            r#"{"fontFaces":[{"family":"a\"} body{display:none}","src":"http://l/a.woff2"}]}"#
+        ));
+        assert!(bad(
+            r#"{"fontFaces":[{"family":"LAN","src":"javascript:alert(1)"}]}"#
+        ));
+        assert!(bad(r#"{"fontFaces":[{"family":"LAN","src":"lan.woff2"}]}"#));
+        assert!(bad(
+            r#"{"fontFaces":[{"family":"LAN","src":"http://l/a.woff2","weight":"400; } body{display:none"}]}"#
+        ));
+        assert!(bad(
+            r#"{"fontFaces":[{"family":"LAN","src":"http://l/a.woff2","style":"italic; }"}]}"#
+        ));
+        // A `data:` font is checked character by character, not just by its
+        // prefix: a quote is how a rule of one's own would start.
+        assert!(bad(
+            r#"{"fontFaces":[{"family":"LAN","src":"data:font/woff2;base64,AA\"); } body { display: none } @font-face { src: url(\"x"}]}"#
+        ));
+        assert!(bad(
+            r#"{"fontFaces":[{"family":"LAN","src":"http://l/a.woff2","weight":"0"}]}"#
+        ));
+        // A `data:` font is fine: it carries no address to follow.
+        assert!(Theme::parse(
+            r#"{"fontFaces":[{"family":"LAN","src":"data:font/woff2;base64,AA"}]}"#
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn an_image_the_launcher_cannot_fetch_is_dropped_not_fatal() {
+        // A relative path has no base inside the launcher. Dropping it costs
+        // the image; refusing the file would cost the colours as well.
+        let theme = Theme::parse(r#"{"logo":"logo.png","radius":8}"#).expect("still a theme");
+        assert_eq!(theme.logo, None);
+        assert_eq!(theme.radius, 8);
+        assert_eq!(
+            Theme::parse(r#"{"backgroundImage":"../bg.jpg"}"#)
+                .unwrap()
+                .background_image,
+            None
+        );
+        assert!(Theme::parse(r#"{"logo":"http://launcher.lan/logo.png"}"#)
+            .unwrap()
+            .logo
+            .is_some());
+        assert!(Theme::parse(r#"{"logo":"data:image/png;base64,iVBOR"}"#)
+            .unwrap()
+            .logo
+            .is_some());
     }
 
     #[test]

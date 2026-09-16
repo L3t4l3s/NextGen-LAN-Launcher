@@ -231,7 +231,12 @@
     <section class="launch-info">
       {#if platform !== "windows" && game.manifest}
         <p class="hint">
-          <strong>{t("detail.starts_with")}:</strong> {game.manifest.exe} {game.manifest.args.join(" ")}
+          {#if game.manifest.exe}
+            <strong>{t("detail.starts_with")}:</strong> {game.manifest.exe} {game.manifest.args.join(" ")}
+          {:else}
+            <!-- Guidance-only profile: notes, but no verified entry point. -->
+            <strong>{t("detail.manifest.autodetect")}</strong>
+          {/if}
           <br /><span>{t(`detail.manifest.${game.manifest.origin}`)}</span>
           {#if !game.manifest.verifiedForRevision}<br /><span class="warn-text">{t("detail.manifest.unverified")}</span>{/if}
           {#if game.manifest.notes}<br />{game.manifest.notes}{/if}

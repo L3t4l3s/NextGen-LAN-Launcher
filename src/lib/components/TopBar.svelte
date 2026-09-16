@@ -41,7 +41,8 @@
     align-items: center;
     gap: 1.5rem;
     padding: 0 1.25rem;
-    background: var(--color-surface);
+    background: var(--color-header);
+    color: var(--color-header-text);
     border-bottom: 1px solid var(--color-border);
   }
   .brand {
@@ -66,8 +67,11 @@
     flex-direction: column;
     line-height: 1.15;
   }
+  /* Everything in the bar follows the bar's own text colour; a theme that
+     names `headerText` must not leave the tabs in the body's colour. */
   .titles small {
-    color: var(--color-text-muted);
+    color: inherit;
+    opacity: 0.72;
     font-size: 0.75rem;
   }
   nav {
@@ -80,19 +84,22 @@
     border-color: transparent;
     padding: 0.5em 1.1em;
     font-weight: 600;
-    color: var(--color-text-muted);
+    color: inherit;
+    opacity: 0.72;
     display: inline-flex;
     gap: 0.5em;
     align-items: center;
   }
   .tab:hover:not(:disabled) {
-    color: var(--color-text);
-    background: var(--color-surface-alt);
+    color: inherit;
+    opacity: 1;
+    background: color-mix(in srgb, currentColor 12%, transparent);
     border-color: transparent;
   }
   .tab.active {
-    color: var(--color-text);
-    background: var(--color-surface-alt);
+    color: inherit;
+    opacity: 1;
+    background: color-mix(in srgb, currentColor 12%, transparent);
     box-shadow: inset 0 -3px 0 var(--color-primary);
   }
   .count {

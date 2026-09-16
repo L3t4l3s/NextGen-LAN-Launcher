@@ -1,0 +1,18 @@
+schema = 1
+id = "cod2"
+title = "Call of Duty 2"
+revisions = ["20160922"]
+source = "macETI-LAN v0.6.1 docs (MIT) – research profile, no working setup established"
+
+[launch]
+# Unresearched: no verified entry point. The launcher picks an executable from
+# the package, and the multiplayer binary may have to be chosen by hand.
+exe = ""
+args = []
+
+[platform.macos]
+runner = "crossover"
+
+[setup]
+notes.de = "Für dieses Paket ist unter CrossOver/Wine noch kein funktionierender Start belegt. Für die LAN die Mehrspieler-Datei ausdrücklich auswählen (Startdatei ändern) und Einzel- und Mehrspieler getrennt bewerten. Der alte Tipp gegen hängende Intro-Videos stammt von 2009 und ist auf Apple Silicon ungeprüft."
+notes.en = "No working start under CrossOver/Wine has been established for this package. For a LAN, pick the multiplayer executable explicitly (change the executable) and judge single- and multiplayer separately. The old workaround for a hanging intro movie is from 2009 and untested on Apple silicon."

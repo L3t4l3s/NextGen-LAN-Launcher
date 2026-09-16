@@ -77,7 +77,8 @@ installer of this launcher must provide them at that path (planned in `release.y
   (the body becomes transparent while it is active so the gradient shows through).
 * `GET http://launcher.lan/logo.png` – the event logo the LANPage itself uses (`$logo` default);
   shown in the top bar in automatic theme mode.
-* `GET http://launcher.lan/theme.json` – **new**: full theme (see THEMING.md).
+* `GET http://launcher.lan/theme.json` – **new**: full theme, version 2 adds the colours of the
+  top and status bars, an overlay over the background image and a web font (see THEMING.md).
 * Stats beacon: `GET <stats_url>?hostname&macaddr1&macaddr2&board_manufacturer&baseboard&
   system_product_name&bios_release&cpu&gpu&windows_edition&player_name&current_game`, values
   ISO-8859-15 percent-encoded, response `ok`/`error`. Sent every ~3 minutes when enabled.
@@ -116,4 +117,7 @@ args = ["-window"]
 
 Resolution order: `<data dir>/manifests/<id>.toml` (user) → `<share>/nll-manifest.toml`
 (organiser) → bundled → derived from `game_start.cmd` (`script_probe.rs`).
+A manifest may leave `exe` empty: it then only carries setup notes (`flat2`, `cod2` — games whose
+working entry point nobody has established yet), and the executable still comes from the script
+probe or from the user's choice.
 Arguments may use `%player%`, `%game_lang%`, `%game_id%`, `%game_path%`.

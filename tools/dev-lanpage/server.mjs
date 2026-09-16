@@ -13,7 +13,9 @@ const port = Number(process.argv[2] ?? 8080);
 const ini = readFileSync(path.join(here, "launcher.ini"), "utf8");
 const css = readFileSync(path.join(here, "launcher.css"), "utf8");
 const logo = readFileSync(path.join(here, "logo.png"));
-const theme = readFileSync(path.join(here, "..", "..", "themes", "orange.json"), "utf8");
+// The dev theme uses the v2 keys (bars, logo) so their effect is visible
+// without setting up a real LANPage.
+const theme = readFileSync(path.join(here, "theme.json"), "utf8");
 
 http
   .createServer((req, res) => {

@@ -1,0 +1,19 @@
+schema = 1
+id = "flat2"
+title = "FlatOut 2"
+revisions = ["20160922"]
+source = "macETI-LAN v0.6.1 docs (MIT) – v1.2 profile menu verified on Apple M2 Pro, CrossOver 26.3"
+
+[launch]
+# No verified entry point for this package: the executable and its arguments
+# come from the Windows start script, this file only carries what was learned
+# about running it.
+exe = ""
+args = []
+
+[platform.macos]
+runner = "crossover"
+
+[setup]
+notes.de = "Auflösung und Farbtiefe stellt ein eigenes Fenster ein: Startdatei einmal mit dem Argument '-setup' starten, dort Anzeigemodus mit 32 Bit und passendem Seitenverhältnis wählen, danach das Argument wieder entfernen. Bleibt das Spiel in einem kleinen Fenster, ist meist ein erzwungener virtueller Wine-Desktop schuld. Fehlt d3dx9_30.dll, gehört die offizielle DirectX-Runtime (Juni 2010) in die Bottle. PulseAudio/ALSA-Tipps aus alten Anleitungen betreffen nur Linux."
+notes.en = "Resolution and colour depth live in a separate window: start the executable once with the argument '-setup', pick a display mode with 32-bit colour and a matching aspect ratio, then remove the argument again. A game stuck in a small window usually means a forced Wine virtual desktop. A missing d3dx9_30.dll points at the official DirectX runtime (June 2010) for that bottle. PulseAudio/ALSA tips from old guides are Linux-only."

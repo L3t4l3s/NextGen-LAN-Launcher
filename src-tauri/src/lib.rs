@@ -472,14 +472,7 @@ pub(crate) fn build_manager(
                 .ok()
                 .and_then(|l| l.game_paths(&game.id))
         },
-        move |game, paths| match manifests.resolve(&game.id, Some(&paths.share_dir)) {
-            Ok(Some(m)) => Some(m),
-            _ => std::fs::read_to_string(&paths.start_script)
-                .ok()
-                .and_then(|s| {
-                    lanlauncher_core::script_probe::ScriptProbe::analyse(&s).to_manifest(&game.id)
-                }),
-        },
+        move |game, paths| manifests.resolve_for(&game.id, paths),
         Arc::new(AppSetupHook {
             state: Arc::downgrade(state),
         }),

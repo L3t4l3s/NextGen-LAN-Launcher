@@ -170,6 +170,7 @@ pub async fn fetch_event(host: &str) -> EventBundle {
             bundle.theme = Some(theme);
         }
     }
+
     bundle
 }
 
@@ -193,7 +194,9 @@ pub fn looks_like_theme(body: &str) -> bool {
         "radius",
         "logo",
         "backgroundImage",
+        "backgroundOverlay",
         "fontFamily",
+        "fontFaces",
         "icons",
     ]
     .iter()

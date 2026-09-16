@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- `theme.json` in Version 2: eigene Farben für Kopf- und Statusleiste, eine Überlagerungsfarbe über
+  dem Hintergrundbild und eine Schriftart der LANPage (`fontFamily` samt `fontFaces`, nur http(s)
+  oder `data:`). Alles ist optional und fällt auf die bisherigen Werte zurück; dieselben Angaben gehen
+  auch über `theme_*`-Schlüssel in der `launcher.ini`, wenn eine LANPage keine `theme.json` hat.
+  Die Schriftart nennt ihre Dateien (`fontFaces`), die `@font-face`-Regeln schreibt der Launcher
+  selbst — eine LANPage bekommt eine Schrift in den Launcher, aber kein Stylesheet.
+- Startprofile für FlatOut 2 und Call of Duty 2 aus den macETI-LAN-Notizen. Beide nennen keine
+  Startdatei (die ist für diese Pakete nicht belegt), sondern nur die Hinweise — die Startdatei
+  kommt weiterhin aus dem Windows-Skript oder von Hand.
+- README: Abschnitt „Installing a build" mit den drei Linux-Formaten und dem Weg über das AppImage
+  auf dem Steam Deck.
+
 - Die Statusleiste zeigt die Gesamt-Download- und -Uploadrate über alle Freigaben, auch wenn sie
   null ist: „nichts bewegt sich“ ist ebenfalls eine Antwort.
 - Die Teilnehmerzahl war die Summe über alle Freigaben. Ein Sync-Server, der 28 Freigaben anbietet,

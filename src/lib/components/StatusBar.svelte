@@ -62,7 +62,7 @@
     <span class="sep">·</span>
   {/if}
   {#if app.settings?.playerName}<span>{app.settings.playerName}</span><span class="sep">·</span>{/if}
-  <span class="muted">v{app.bootstrap?.version}{app.bootstrap?.demo ? " · Demo" : ""}</span>
+  <span class="dim">v{app.bootstrap?.version}{app.bootstrap?.demo ? " · Demo" : ""}</span>
 </footer>
 
 <style>
@@ -72,9 +72,9 @@
     gap: 0.5rem;
     padding: 0 1.25rem;
     font-size: 0.82rem;
-    background: var(--color-surface);
+    background: var(--color-footer);
     border-top: 1px solid var(--color-border);
-    color: var(--color-text-muted);
+    color: var(--color-footer-text);
   }
   .sep {
     opacity: 0.5;
@@ -89,5 +89,10 @@
   }
   .link.warn {
     color: var(--color-warning);
+  }
+  /* Not the global `.muted`: that one paints the body's muted colour, which
+     need not read on a status bar the theme coloured. */
+  .dim {
+    opacity: 0.75;
   }
 </style>
