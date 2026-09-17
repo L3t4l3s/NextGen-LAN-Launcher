@@ -38,6 +38,18 @@ before that, or to try it by hand, start the AppImage from a terminal:
 WEBKIT_DISABLE_DMABUF_RENDERER=1 ./NextGen\ LAN\ Launcher_*.AppImage
 ```
 
+Since 0.1.0 the launcher also has a switch for the case where WebKitGTK draws
+nothing whatever the renderer does:
+
+```bash
+./NextGen*.AppImage --safe-graphics     # software rendering, no compositing, X11
+./NextGen*.AppImage --no-safe-graphics  # back to the normal path
+```
+
+The choice is remembered (`~/.config/xyz.nextgen-lan.launcher/safe-graphics`), so it also applies
+when the launcher is started from Steam or a desktop entry afterwards. The log's `webview:` line
+names every setting in force.
+
 Still white? The next levers, one at a time:
 
 ```bash

@@ -19,6 +19,19 @@ pub(crate) async fn run_admin_lines(
     lines: Vec<lanlauncher_core::launch::elevate::BatchLine>,
     cwd: &Path,
 ) -> Result<(), String> {
+    run_admin_lines_at(state, stem, lines, cwd)
+        .await
+        .map(|_| ())
+}
+
+/// As [`run_admin_lines`], returning the transcript file the batch wrote so a
+/// caller can show it. The file exists even when the run succeeded.
+pub(crate) async fn run_admin_lines_at(
+    state: &AppState,
+    stem: &str,
+    lines: Vec<lanlauncher_core::launch::elevate::BatchLine>,
+    cwd: &Path,
+) -> Result<std::path::PathBuf, String> {
     use lanlauncher_core::launch::{apply_args, elevate, LaunchPlan};
     let elevated = elevate::running_elevated() != Some(false);
     if !elevated && !state.settings.read().await.allow_elevation {
@@ -50,7 +63,7 @@ pub(crate) async fn run_admin_lines(
         .await
         .map_err(|e| format!("err.elevation_failed|{e}"))?;
     if out.status.success() {
-        return Ok(());
+        return Ok(log);
     }
     let tail = |b: &[u8]| {
         String::from_utf8_lossy(b)

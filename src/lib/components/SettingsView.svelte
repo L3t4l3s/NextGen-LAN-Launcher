@@ -82,8 +82,8 @@
   const spaceFor = (path: string) => space.find((s) => s.path === path);
 </script>
 
+<!-- No heading: the tab above already says where you are. -->
 <div class="page">
-  <h1>{t("settings.title")}</h1>
 
   {#if draft}
     <div class="stack">

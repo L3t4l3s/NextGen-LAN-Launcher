@@ -66,6 +66,8 @@ pub struct LaunchAttempt {
     pub cwd: String,
     /// The plan asked for administrator rights.
     pub elevated: bool,
+    /// Which entry point was started, for a repeat: `None` is the primary.
+    pub alternative: Option<usize>,
     pub pid: Option<u32>,
     /// Error code (`err.…`) when the start itself failed.
     pub error: Option<String>,
@@ -77,6 +79,10 @@ pub struct LaunchAttempt {
     /// What the program printed, as far as it was captured (the tail of the
     /// log file). Empty when it printed nothing.
     pub output: String,
+    /// Output was written to a file at all. A normal start keeps its own
+    /// console, so "nothing to show" and "nothing printed" are different
+    /// answers and the page says which one it is.
+    pub captured: bool,
     /// The file that output was captured into; `None` when nothing was.
     #[serde(skip)]
     pub log: Option<PathBuf>,
@@ -107,11 +113,13 @@ impl LaunchAttempt {
             command_line,
             cwd: plan.cwd.display().to_string(),
             elevated: plan.needs_elevation,
+            alternative: None,
             pid: None,
             error: None,
             exit_code: None,
             ended: false,
             output: String::new(),
+            captured: false,
             log: None,
         }
     }
@@ -127,6 +135,10 @@ impl AppState {
         outcome: lanlauncher_core::error::Result<(u32, lanlauncher_core::launch::ExitWatch)>,
     ) -> lanlauncher_core::error::Result<u32> {
         let stamp = attempt.at;
+        // Whether a transcript exists, not whether one was asked for: the
+        // file is created when the start begins to capture, so this is the
+        // honest answer for both the ordinary and the elevated path.
+        attempt.captured = log.as_ref().is_some_and(|p| p.is_file());
         attempt.log = log.clone();
         match outcome {
             Ok((pid, watch)) => {
@@ -172,6 +184,22 @@ impl AppState {
     }
 
     /// The tail of one of those files, for the diagnostics page.
+    /// The transcript only when it belongs to this run: a batch that never
+    /// started (no rights, no file written) would otherwise be explained with
+    /// the output of the run before it.
+    pub fn launch_output_since(&self, path: &std::path::Path, started_ms: u64) -> String {
+        let fresh = std::fs::metadata(path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .is_some_and(|d| d.as_millis() as u64 + 2_000 >= started_ms);
+        if fresh {
+            self.launch_output(path)
+        } else {
+            String::new()
+        }
+    }
+
     pub fn launch_output(&self, path: &std::path::Path) -> String {
         use std::io::{Read, Seek, SeekFrom};
         const TAIL: usize = 8 * 1024;

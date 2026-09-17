@@ -262,7 +262,7 @@ pub async fn spawn_for_user_watched(
                 plan.runner
             );
         } else {
-            return spawn_elevated(plan, run_dir).await;
+            return spawn_elevated(plan, run_dir, log).await;
         }
     }
     match spawn(plan, log).await {
@@ -271,7 +271,7 @@ pub async fn spawn_for_user_watched(
                 "{} demands administrator rights itself; retrying elevated",
                 plan.runner
             );
-            spawn_elevated(plan, run_dir).await
+            spawn_elevated(plan, run_dir, log).await
         }
         other => other,
     }
@@ -282,13 +282,21 @@ pub async fn spawn_for_user_watched(
 /// for the batch, so its pid stays alive as long as the game runs; a prompt
 /// the user declines ends PowerShell within moments with a non-zero code,
 /// which is reported as `err.elevation_denied`.
-pub async fn spawn_elevated(plan: &LaunchPlan, run_dir: &Path) -> Result<(u32, ExitWatch)> {
+pub async fn spawn_elevated(
+    plan: &LaunchPlan,
+    run_dir: &Path,
+    log: Option<&Path>,
+) -> Result<(u32, ExitWatch)> {
     let stem = plan.runner.trim_end_matches(".cmd").replace(' ', "-");
-    // No output capture here: an elevated script keeps its own console, and
-    // the ETI scripts that need administrator rights are the ones that print
-    // instructions and wait for a key. Redirecting that would leave the user
-    // in front of a blank window with no way to know what it wants.
-    let batch = elevate::write_batch(run_dir, &stem, &[elevate::batch_line(plan).into()])?;
+    // Without a log the script keeps its own console: the ETI scripts that
+    // need administrator rights are the ones that print instructions and wait
+    // for a key, and a redirect would leave the user in front of a blank
+    // window. With one, the caller asked to read what it prints instead.
+    let line = elevate::batch_line(plan);
+    let batch = match log {
+        None => elevate::write_batch(run_dir, &stem, &[elevate::BatchLine::console(line)])?,
+        Some(path) => elevate::write_batch_logged_to(run_dir, &stem, &[line.into()], Some(path))?.0,
+    };
     log::info!("starting {} elevated via {}", plan.runner, batch.display());
     let runas = elevate::runas_plan(&batch, &plan.cwd);
     let mut cmd = tokio::process::Command::new(&runas.program);
@@ -331,9 +339,12 @@ pub async fn spawn(plan: &LaunchPlan, log: Option<&Path>) -> Result<(u32, ExitWa
     let mut cmd = tokio::process::Command::new(&plan.program);
     cmd.current_dir(&plan.cwd).envs(&plan.env);
     apply_args(&mut cmd, plan);
-    cmd.stdin(std::process::Stdio::null());
-    // Both streams into one file, in the order they were written.
-    match log.and_then(|path| {
+    // Without a log the child keeps the handles it would have had: a console
+    // program started from a windowed one gets its own console, and that is
+    // where an ETI script prints its menu and reads the answer. Redirecting
+    // to null is what turned Doom's start into an empty window that waits.
+    // Nothing to set without a log: inherited handles are that console.
+    if let Some((out, err)) = log.and_then(|path| {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -346,14 +357,9 @@ pub async fn spawn(plan: &LaunchPlan, log: Option<&Path>) -> Result<(u32, ExitWa
             .ok()?;
         Some((file, err))
     }) {
-        Some((out, err)) => {
-            cmd.stdout(std::process::Stdio::from(out))
-                .stderr(std::process::Stdio::from(err));
-        }
-        None => {
-            cmd.stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null());
-        }
+        cmd.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::from(out))
+            .stderr(std::process::Stdio::from(err));
     }
     let child = cmd
         .spawn()

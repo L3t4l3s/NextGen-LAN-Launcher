@@ -57,6 +57,33 @@
   // shows it greyed out while the engine is starting and has no address yet.
   const webUi = $derived(app.health?.kind === "resilio" ? (app.health.web_ui ?? "") : null);
 
+  /// Start the game again with its output captured. The game's own console
+  /// stays empty then, which is the trade for seeing what it printed.
+  async function startWithLog(gameId: string | undefined) {
+    if (!gameId) return;
+    try {
+      // The same entry point as the start that failed, not the primary one.
+      await api.play(gameId, lastLaunch?.alternative ?? undefined, true);
+      app.toast("success", t("diag.launch.retry_started"));
+      setTimeout(() => void api.lastLaunch().then((l) => (lastLaunch = l)), 1500);
+    } catch (e) {
+      app.toast("error", userText(e));
+    }
+  }
+
+  /// The setup keeps its own console so it can ask questions; repeated from
+  /// here it writes everything down instead.
+  async function rerunSetup(gameId: string | undefined) {
+    if (!gameId) return;
+    try {
+      await api.rerunSetup(gameId);
+      app.toast("success", t("toast.fix_done"));
+    } catch (e) {
+      app.toast("error", userText(e));
+    }
+    lastLaunch = await api.lastLaunch().catch(() => lastLaunch);
+  }
+
   async function openWebUi() {
     if (!webUi) return;
     try {
@@ -136,11 +163,21 @@
           <dd class:bad={!!lastLaunch.error || (lastLaunch.ended && lastLaunch.exitCode !== 0)}>{launchResult}</dd>
           <dt>{t("diag.launch.output")}</dt>
           <dd>
+            <!-- Capture is off for a normal start: a script that asks a
+                 question (Doom's package offers Heretic, Hexen or the GZDoom
+                 launcher) would ask it into a window showing nothing. -->
+            {#if lastLaunch.what === "play"}
+              <button class="ghost small" onclick={() => startWithLog(lastLaunch?.gameId)}>{t("diag.launch.retry_logged")}</button>
+            {:else if lastLaunch.what === "setup"}
+              <button class="ghost small" onclick={() => rerunSetup(lastLaunch?.gameId)}>{t("diag.launch.rerun_setup")}</button>
+            {/if}
             <!-- The console window of an ETI script is empty because its
                  output goes into this file; without it there is nothing to
                  go on when a game does not start. -->
             {#if lastLaunch.output}
               <pre>{lastLaunch.output}</pre>
+            {:else if lastLaunch.captured}
+              <span class="muted">{t("diag.launch.output.nothing")}</span>
             {:else if lastLaunch.elevated}
               <span class="muted">{t("diag.launch.output.elevated")}</span>
             {:else}

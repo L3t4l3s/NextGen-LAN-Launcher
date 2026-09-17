@@ -10,6 +10,13 @@ repository.workspace = true
 name = "nextgen_lan_launcher_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# The Tauri CLI turns this on for a production build; with it the webview
+# loads the bundled frontend instead of the dev server. Without the feature a
+# plain `cargo build --release` produces a binary that looks for
+# `http://localhost:1420` and shows a blank window.
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2.6", features = [] }
 

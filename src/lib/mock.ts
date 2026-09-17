@@ -316,6 +316,8 @@ export function createMock() {
       }
       case "run_diagnostics":
         return report;
+      case "frontend_ready":
+        return;
       case "get_last_launch":
         // A failed start is the interesting case for the panel's layout.
         return {
@@ -328,10 +330,12 @@ export function createMock() {
           commandLine: '/S /C ""E:\\LAN\\doom\\game_start.cmd" "E:\\LAN\\doom" doom de "Player""',
           cwd: "E:\\LAN\\doom",
           elevated: false,
+          alternative: null,
           pid: 4711,
           error: null,
           exitCode: 1,
           ended: true,
+          captured: true,
           output: "Der Befehl \"fnr.exe\" ist entweder falsch geschrieben oder\nkonnte nicht gefunden werden.\nDrücken Sie eine beliebige Taste . . .",
         };
       case "set_problem_ignored": {

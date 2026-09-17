@@ -5,10 +5,9 @@
   import GameDetail from "./GameDetail.svelte";
   import { isBusy, isPlayable } from "$lib/phase";
 
-  let query = $state("");
-  let filter = $state<"all" | "installed" | "active">("all");
-  let genre = $state("");
-  let sort = $state<"title" | "players" | "size" | "year">("title");
+  // In the store, not here: this component is destroyed on every tab switch,
+  // and with it went the sort order the user had chosen.
+  const view = $derived(app.libraryView);
 
   /** "8" / "16-32" / "bis 64" → the largest number in the text, 0 when none. */
   function playerCount(value: string | null): number {
@@ -25,18 +24,18 @@
   const genres = $derived([...new Set(app.games.map((g) => g.genre).filter((g): g is string => !!g))].sort());
 
   const visible = $derived.by(() => {
-    const q = query.trim().toLowerCase();
+    const q = view.query.trim().toLowerCase();
     // filter() already returns a fresh array, so sorting it in place is safe.
     return app.games
       .filter((g) => !q || g.title.toLowerCase().includes(q) || g.id.includes(q) || (g.publisher ?? "").toLowerCase().includes(q))
-      .filter((g) => !genre || g.genre === genre)
+      .filter((g) => !view.genre || g.genre === view.genre)
       .filter((g) => {
-        if (filter === "all") return true;
+        if (view.filter === "all") return true;
         const s = app.statusOf(g.id);
-        return filter === "installed" ? isPlayable(s) : isBusy(s) || s?.phase === "failed" || s?.phase === "paused";
+        return view.filter === "installed" ? isPlayable(s) : isBusy(s) || s?.phase === "failed" || s?.phase === "paused";
       })
       .sort((a, b) => {
-        switch (sort) {
+        switch (view.sort) {
           // Descending for the numbers: the biggest, the most players and the
           // newest are what people look for.
           case "players":
@@ -55,19 +54,19 @@
 <div class="library" class:with-detail={!!app.selected}>
   <section class="grid-area">
     <div class="toolbar">
-      <input type="search" placeholder={t("library.search")} bind:value={query} />
+      <input type="search" placeholder={t("library.search")} bind:value={view.query} />
       <div class="segments">
         {#each ["all", "installed", "active"] as f (f)}
-          <button class:active={filter === f} onclick={() => (filter = f as typeof filter)}>{t(`library.filter.${f}`)}</button>
+          <button class:active={view.filter === f} onclick={() => (view.filter = f as typeof view.filter)}>{t(`library.filter.${f}`)}</button>
         {/each}
       </div>
-      <select bind:value={genre} aria-label={t("library.filter.genre")}>
+      <select bind:value={view.genre} aria-label={t("library.filter.genre")}>
         <option value="">{t("library.filter.genre.all")}</option>
         {#each genres as g (g)}
           <option value={g}>{g}</option>
         {/each}
       </select>
-      <select bind:value={sort} aria-label={t("library.sort")}>
+      <select bind:value={view.sort} aria-label={t("library.sort")}>
         {#each ["title", "players", "size", "year"] as option (option)}
           <option value={option}>{t(`library.sort.${option}`)}</option>
         {/each}

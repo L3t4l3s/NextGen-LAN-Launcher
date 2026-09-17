@@ -217,6 +217,13 @@ impl<T: Into<String>> From<T> for BatchLine {
 /// immediately before the run and its content is the user's own request, so
 /// this is the same trust the user grants any script started from a UAC
 /// prompt.
+/// Where [`write_batch_logged`] writes the transcript of `stem`. The name is
+/// derived, so a caller that wants to read it afterwards asks here rather
+/// than building the same string a second time.
+pub fn batch_log_path(dir: &Path, stem: &str) -> PathBuf {
+    dir.join(format!("{}.log", safe_stem(stem)))
+}
+
 pub fn write_batch(dir: &Path, stem: &str, lines: &[BatchLine]) -> Result<PathBuf> {
     write_batch_inner(dir, stem, lines, None).map(|(batch, _)| batch)
 }
@@ -233,7 +240,21 @@ pub fn write_batch_logged(
     stem: &str,
     lines: &[BatchLine],
 ) -> Result<(PathBuf, PathBuf)> {
-    let log = dir.join(format!("{}.log", safe_stem(stem)));
+    write_batch_logged_to(dir, stem, lines, None)
+}
+
+/// As [`write_batch_logged`], with the transcript file named by the caller —
+/// the launcher shows one file per game and start kind on the diagnostics
+/// page and wants an elevated run in the same place as an ordinary one.
+pub fn write_batch_logged_to(
+    dir: &Path,
+    stem: &str,
+    lines: &[BatchLine],
+    log: Option<&Path>,
+) -> Result<(PathBuf, PathBuf)> {
+    let log = log
+        .map(PathBuf::from)
+        .unwrap_or_else(|| batch_log_path(dir, stem));
     // Left over from the previous run; the batch only appends.
     let _ = std::fs::remove_file(&log);
     write_batch_inner(dir, stem, lines, Some(&log))

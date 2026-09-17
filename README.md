@@ -71,11 +71,11 @@ chmod +x nextgen/*.AppImage
 ./nextgen/NextGen\ LAN\ Launcher_*.AppImage
 ```
 
-If the window opens with the right title but stays white, the webview's DMA-BUF renderer is the
-reason (WebKitGTK 2.42+ against several Linux drivers). The launcher switches it off for itself;
-the log's second line says whether a build does. On one that does not, start it as
-`WEBKIT_DISABLE_DMABUF_RENDERER=1 ./NextGen*.AppImage`. More levers in
-[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#a-white-window-on-linux).
+If the window opens with the right title but stays white, that is the webview, not the launcher:
+WebKitGTK 2.42+ against several Linux drivers. The launcher already turns the DMA-BUF renderer off
+for itself; when that is not enough, start it once as `./NextGen*.AppImage --safe-graphics`
+(software rendering, no compositing, X11 — remembered for later starts, `--no-safe-graphics` undoes
+it). More levers in [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#a-white-window-on-linux).
 
 If Ark shows the zip but extracts nothing, `unzip` in Konsole does the job — GitHub's artifact zips
 carry no folders, and Ark's "open" view is not an extraction. Should the AppImage complain about

@@ -444,6 +444,11 @@ pub async fn play_game(
     state: State<'_, Arc<AppState>>,
     game_id: String,
     alternative: Option<usize>,
+    // `capture` writes the program's output to a file instead of its console.
+    // Off by default: an ETI start script may ask a question (Doom's package
+    // offers Heretic, Hexen or the GZDoom launcher), and a script whose
+    // output goes into a file asks it into a window that shows nothing.
+    capture: Option<bool>,
 ) -> Cmd<u32> {
     if state.demo {
         return Err("err.demo_no_play".into());
@@ -467,23 +472,29 @@ pub async fn play_game(
         .game(&game_id)
         .map(|g| g.title.clone())
         .unwrap_or_else(|| game_id.clone());
-    let attempt = crate::state::LaunchAttempt::new(&game_id, &title, "play", &plan);
+    let mut attempt = crate::state::LaunchAttempt::new(&game_id, &title, "play", &plan);
+    attempt.alternative = alternative;
     log::info!(
         "starting {game_id} via {}: {} {}",
         plan.runner,
         plan.program.display(),
         attempt.command_line
     );
-    // The console window of an ETI script shows nothing anyway; captured, at
-    // least the diagnostics page can say what it printed.
-    let log = state.launch_log(&game_id, "play");
-    // An elevated start runs through a batch file and writes nothing here;
-    // the previous run's output must not be shown as this one's.
-    let _ = std::fs::remove_file(&log);
-    let outcome = launch::spawn_for_user_watched(&plan, &state.run_dir(), allow, Some(&log)).await;
+    // With capture the script's console stays empty and everything it prints
+    // lands in the file — for a start that failed, that is the whole point;
+    // for the normal start it would hide a question the script is asking.
+    let log = capture.unwrap_or(false).then(|| {
+        let path = state.launch_log(&game_id, "play");
+        // An elevated start runs through a batch file and writes nothing
+        // here; the previous run's output must not be shown as this one's.
+        let _ = std::fs::remove_file(&path);
+        path
+    });
+    let outcome =
+        launch::spawn_for_user_watched(&plan, &state.run_dir(), allow, log.as_deref()).await;
     let pid = state
         .inner()
-        .record_launch(attempt, Some(log), outcome)
+        .record_launch(attempt, log, outcome)
         .await
         .map_err(err)?;
     let mut running = state.running.write().await;
@@ -539,6 +550,69 @@ pub async fn run_extra(
         .record_launch(attempt, Some(log), outcome)
         .await
         .map_err(err)
+}
+
+/// Run a game's `game_setup.cmd` again, with its output captured.
+///
+/// The setup runs once per install and keeps its own console so it can ask
+/// questions; when it fails, "the setup script reported an error" is all the
+/// user has. Repeated from here everything it prints goes into the transcript
+/// the diagnostics page shows — including the question it may be waiting for,
+/// which is why this does not wait for the script to finish.
+#[tauri::command]
+pub async fn rerun_setup(state: State<'_, Arc<AppState>>, game_id: String) -> Cmd<()> {
+    if !cfg!(target_os = "windows") {
+        return Err("err.windows_only".into());
+    }
+    let settings = state.settings.read().await.clone();
+    let paths = settings
+        .library
+        .game_paths(&game_id)
+        .ok_or("err.no_library")?;
+    let plan = lanlauncher_core::launch::windows::setup_plan(
+        &paths,
+        &game_id,
+        &settings.game_language,
+        &settings.safe_player_name(),
+    )
+    .ok_or("err.extra_missing")?;
+    let stem = format!("{game_id}-setup-log");
+    let log = lanlauncher_core::launch::elevate::batch_log_path(&state.run_dir(), &stem);
+    let mut attempt = crate::state::LaunchAttempt::new(&game_id, &game_id, "setup", &plan);
+    attempt.elevated = true;
+    attempt.captured = true;
+    attempt.log = Some(log.clone());
+    let stamp = attempt.at;
+    *state.last_launch.write().await = Some(attempt);
+    // Not `console`: this run exists to be read. It is also not waited for —
+    // a script asking a question would never return.
+    let line = lanlauncher_core::launch::elevate::batch_line(&plan).into();
+    let st = state.inner().clone();
+    let cwd = paths.share_dir.clone();
+    tauri::async_runtime::spawn(async move {
+        let run = crate::fixes::run_admin_lines_at(&st, &stem, vec![line], &cwd).await;
+        let output = st.launch_output_since(&log, stamp);
+        let mut slot = st.last_launch.write().await;
+        if let Some(rec) = slot.as_mut().filter(|r| r.at == stamp) {
+            rec.ended = true;
+            rec.output = output;
+            if let Err(e) = run {
+                rec.error = Some(e);
+            }
+        }
+    });
+    Ok(())
+}
+
+/// The interface reporting that it is running. Called once, on mount.
+///
+/// Without it the launcher cannot tell a webview that came up from one that
+/// opened a window and never ran anything — the case that leaves a user in
+/// front of a blank rectangle with nothing in the log.
+#[tauri::command]
+pub fn frontend_ready() {
+    crate::FRONTEND_READY.store(true, std::sync::atomic::Ordering::Relaxed);
+    log::info!("interface ready");
 }
 
 /// What the launcher started last and how it went — the diagnostics page's

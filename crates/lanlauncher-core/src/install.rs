@@ -151,14 +151,27 @@ impl Observation {
                 .max(self.partial_len.unwrap_or(0));
         }
         let engine = self.transport.as_ref().map(|t| t.bytes_done).unwrap_or(0);
-        let on_disk = self
-            .share_bytes
-            .max(self.archive_len.unwrap_or(0))
-            .max(self.partial_len.unwrap_or(0));
-        // The larger of the two: the engine's figure is the better one when
-        // it has it, and the web-UI path derives its number from a share size
-        // that reads as a few hundred bytes while the engine is indexing.
+        let on_disk = self.bytes_on_disk_only();
         engine.max(on_disk)
+    }
+
+    /// What this game's own files hold, without the engine's opinion. The
+    /// rate and the stall clock are measured from this: the engine's counter
+    /// jumps when it finishes indexing, and a jump is not a transfer.
+    pub fn bytes_on_disk_only(&self) -> u64 {
+        if let Some(receipt) = &self.receipt {
+            let beyond_installed = self.share_bytes.saturating_sub(receipt.archive_bytes);
+            let swapped_in = self
+                .archive_len
+                .filter(|len| *len != receipt.archive_bytes)
+                .unwrap_or(0);
+            return beyond_installed
+                .max(swapped_in)
+                .max(self.partial_len.unwrap_or(0));
+        }
+        self.share_bytes
+            .max(self.archive_len.unwrap_or(0))
+            .max(self.partial_len.unwrap_or(0))
     }
 
     /// Gather the on-disk part of an observation.
@@ -322,6 +335,12 @@ pub struct Tracker {
     /// When the engine started indexing this share; indexing postpones the
     /// stall warning, but not for ever.
     indexing_since: Option<Instant>,
+    /// Last time the engine's figures went into the log, for the once-a-minute
+    /// comparison while syncing.
+    last_engine_log: Option<Instant>,
+    /// The engine's own byte counter at the previous tick: it moving means
+    /// the share is receiving something, wherever that something lands.
+    last_engine_bytes: Option<u64>,
     /// Last rate sample `(taken at, bytes)`; the transport's own rate is
     /// preferred, this covers engines that report none.
     rate_sample: Option<(Instant, u64)>,
@@ -348,6 +367,8 @@ impl Tracker {
             last_bytes: 0,
             last_progress_at: Instant::now(),
             indexing_since: None,
+            last_engine_log: None,
+            last_engine_bytes: None,
             rate_sample: None,
             rate_bps: 0.0,
             verify_failed_at: None,
@@ -500,7 +521,10 @@ impl Tracker {
         }
 
         // Track byte progress for stall detection and display.
-        let bytes_now = obs.bytes_on_disk();
+        // The engine's figure is for display; the rate and the stall clock
+        // follow this game's own files, which do not jump when the engine
+        // finishes indexing.
+        let bytes_now = obs.bytes_on_disk_only();
         if bytes_now != self.last_bytes {
             self.last_bytes = bytes_now;
             self.last_progress_at = now;
@@ -578,6 +602,29 @@ impl Tracker {
                         return Action::Verify;
                     }
                 }
+                // Once a minute, what the engine says against what the folder
+                // holds. The two disagreeing is how a download that is not
+                // running looks like one that is.
+                if self
+                    .last_engine_log
+                    .is_none_or(|at| now.duration_since(at) >= Duration::from_secs(60))
+                {
+                    self.last_engine_log = Some(now);
+                    if let Some(t) = obs.transport.as_ref() {
+                        log::info!(
+                            "{}: engine {:?} {} of {} at {} B/s, {} peers; folder {} bytes, partial {:?}, archive {:?}",
+                            self.game_id,
+                            t.state,
+                            t.bytes_done,
+                            t.bytes_total,
+                            t.download_bps,
+                            t.peers,
+                            obs.share_bytes,
+                            obs.partial_len,
+                            obs.archive_len
+                        );
+                    }
+                }
                 // The engine gave up on this share — usually a folder that
                 // was removed under it, which it keeps reporting for ever
                 // while the share looks finished. "Repair" re-adds the share,
@@ -610,19 +657,26 @@ impl Tracker {
                 // "nothing is happening" while the engine reports a rate. A
                 // trickle is not a transfer, though, and indexing only counts
                 // for as long as indexing plausibly takes.
-                const MOVING_BPS: u64 = 4096;
                 const INDEXING_GRACE: Duration = Duration::from_secs(600);
                 if let Some(t) = obs.transport.as_ref() {
+                    // The engine's *counter* moving is a sign of life even
+                    // when the bytes land somewhere this launcher cannot see;
+                    // its *rate* is not, it has been seen reporting hundreds
+                    // of MB/s for a share that received nothing.
+                    // The first reading is not progress: it is the first
+                    // reading. Only a change from one tick to the next is.
+                    let previous = self.last_engine_bytes.replace(t.bytes_done);
+                    if previous.is_some_and(|before| before != t.bytes_done) {
+                        self.last_progress_at = now;
+                        self.indexing_since = None;
+                    }
+                    // Indexing is work without bytes, and it can take minutes
+                    // on a big share — but not for ever.
                     if t.state == ShareState::Indexing {
                         let since = *self.indexing_since.get_or_insert(now);
                         if now.duration_since(since) < INDEXING_GRACE {
                             self.last_progress_at = now;
                         }
-                    } else if t.download_bps >= MOVING_BPS {
-                        // Data is moving: whatever indexing there was is over,
-                        // and the next indexing run gets its own grace.
-                        self.indexing_since = None;
-                        self.last_progress_at = now;
                     }
                 }
                 let stalled = now.duration_since(self.last_progress_at) >= policy.stall_after;
@@ -715,14 +769,11 @@ impl Tracker {
             bytes_done: done.min(total),
             bytes_total: total,
             peers: obs.transport.as_ref().map(|t| t.peers).unwrap_or(0),
-            // The engine's own figure when it has one, else what the archive
-            // on disk actually grew by.
-            download_bps: obs
-                .transport
-                .as_ref()
-                .map(|t| t.download_bps)
-                .filter(|b| *b > 0)
-                .unwrap_or_else(|| self.rate_bps.max(0.0).round() as u64),
+            // What this game's folder grew by, not what the engine reports:
+            // a share showing "177 MB/s" next to "577 B of 150.9 GB" is the
+            // engine's own counter for something else, and a rate that does
+            // not belong to the row it stands in is worse than none.
+            download_bps: self.rate_bps.max(0.0).round() as u64,
             installed_revision: obs.receipt.as_ref().map(|r| r.revision.clone()),
             catalog_revision: obs.catalog_revision.clone(),
             stalled: self.phase == Phase::Syncing
@@ -1772,32 +1823,27 @@ mod tests {
     }
 
     #[test]
-    fn a_running_transfer_is_never_called_stalled() {
-        // Resilio counts a file only once it is complete, so a single huge
-        // package shows no bytes for its whole transfer. The rate is what says
-        // it is alive.
+    fn indexing_postpones_the_stall_warning_but_not_for_ever() {
+        // Indexing a big share is work without bytes; the engine's own rate
+        // is not consulted, it has been seen reporting hundreds of MB/s for a
+        // share that received nothing at all.
         let mut t = Tracker::new("bf4");
         t.request_install();
         let t0 = Instant::now();
         let mut o = obs(None, Some(1600), None, Some(0));
         if let Some(tr) = o.transport.as_mut() {
+            tr.state = ShareState::Indexing;
             tr.download_bps = 179_000_000;
             tr.peers = 1;
         }
         assert_eq!(t.step(&o, &policy(), t0), Action::None);
-        assert_eq!(t.phase, Phase::Syncing);
-        // Ten minutes later, still not a byte more on disk — and still no
-        // "download stalled", because the engine is moving data.
         assert_eq!(
-            t.step(&o, &policy(), t0 + Duration::from_secs(600)),
+            t.step(&o, &policy(), t0 + Duration::from_secs(300)),
             Action::None
         );
         assert!(t.problem.is_none(), "{:?}", t.problem);
-        // The moment the rate drops to zero the clock starts again.
-        if let Some(tr) = o.transport.as_mut() {
-            tr.download_bps = 0;
-        }
-        t.step(&o, &policy(), t0 + Duration::from_secs(600));
+        // Ten minutes of indexing is where the patience ends.
+        t.step(&o, &policy(), t0 + Duration::from_secs(700));
         t.step(&o, &policy(), t0 + Duration::from_secs(900));
         assert_eq!(
             t.problem.as_ref().map(|p| p.code.as_str()),
@@ -1909,9 +1955,10 @@ mod tests {
 
     #[test]
     fn measures_the_download_rate_from_the_archive_on_disk() {
-        // The documented Resilio API reports no rate, so the growth of the
-        // file on disk is measured; two samples are needed before a rate
-        // exists, and the engine's own figure wins when it has one.
+        // The rate is measured from the growth of this game's own files: two
+        // samples are needed before there is one, and the engine's figure is
+        // not used — it has been seen reporting hundreds of MB/s next to a
+        // folder holding a few hundred bytes.
         let policy = policy();
         let mut t = Tracker::new("g");
         t.request_install();
@@ -1946,7 +1993,11 @@ mod tests {
             upload_bps: 0,
             error: None,
         });
-        assert_eq!(t.status(&o, &policy, t2, false).download_bps, 9000);
+        assert_eq!(
+            t.status(&o, &policy, t2, false).download_bps,
+            140,
+            "the engine's number belongs to the engine, not to this row"
+        );
     }
 
     #[test]

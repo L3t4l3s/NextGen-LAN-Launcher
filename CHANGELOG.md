@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Linux: `--safe-graphics` schaltet Software-Rendering, kein Compositing und X11 ein und merkt sich
+  das (`--no-safe-graphics` nimmt es zurück) — für Geräte, auf denen WebKitGTK sonst ein weißes
+  Fenster zeigt. Die Oberfläche meldet sich außerdem beim Start beim Kern; bleibt diese Meldung aus,
+  startet der Launcher sich einmal mit den sicheren Einstellungen neu und sagt danach per
+  Meldungsfenster Bescheid.
+- Das leere cmd-Fenster beim Spielstart war hausgemacht: Der Launcher hat Aus- und Eingabe des
+  Skripts nach NUL geleitet. Jetzt behält ein Startskript seine Konsole — Doom fragt dort wieder,
+  ob Heretic, Hexen oder der GZDoom-Launcher starten soll, und wartet auf die Antwort. Wer die
+  Ausgabe stattdessen schriftlich braucht, nimmt auf der Diagnoseseite „Mit Protokoll starten"
+  (dann bleibt das Fenster des Spiels leer).
+- Diagnose: Schlägt die Einrichtung eines Spiels fehl, steht sie jetzt als „Letzter Start" da —
+  mit Skript, Befehlszeile und dem, was das Protokoll hergab — und lässt sich mit
+  „Einrichtung mit Protokoll wiederholen" nachvollziehen.
+- Die Laderate einer Zeile kommt jetzt aus dem, was der Spielordner wächst, nicht aus der Zahl des
+  Sync-Dienstes: „177 MB/s" neben „577 B von 150,9 GB" war dessen Zähler für etwas anderes. Einmal
+  pro Minute stehen beide Zahlen im Log nebeneinander.
+- Passt ein Spiel in keinen Bibliotheksordner, wählt der Launcher den mit dem meisten freien Platz
+  statt des Standardordners.
+- Sortierung, Suche und Filter der Bibliothek bleiben erhalten, wenn man auf einen anderen Reiter
+  wechselt. Die Überschrift „Einstellungen" entfällt wie die der anderen Seiten.
+
 - Linux: Das Fenster blieb auf SteamOS (Steam Deck) weiß — WebKitGTK 2.42+ zeichnet über DMA-BUF,
   was etliche Grafikstacks mit einem leeren Fenster beantworten. Der Launcher schaltet den
   DMA-BUF-Renderer für sich ab (`WEBKIT_DISABLE_DMABUF_RENDERER=1`, außer der Benutzer setzt den

@@ -25,6 +25,14 @@ class AppStore {
   games = $state<GameView[]>([]);
   statuses = $state<Record<string, GameStatus>>({});
   health = $state<TransportHealth | null>(null);
+  /** What the library is showing: search, filters and sort order live here so
+   *  a look at Downloads and back does not reset them. */
+  libraryView = $state({
+    query: "",
+    filter: "all" as "all" | "installed" | "active",
+    genre: "",
+    sort: "title" as "title" | "players" | "size" | "year",
+  });
   event = $state<EventBundle | null>(null);
   selectedId = $state<string | null>(null);
   toasts = $state<Toast[]>([]);

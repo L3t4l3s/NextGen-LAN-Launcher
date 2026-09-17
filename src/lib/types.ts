@@ -234,6 +234,8 @@ export interface LaunchAttempt {
   commandLine: string;
   cwd: string;
   elevated: boolean;
+  /** Which entry point was started; null is the primary one. */
+  alternative: number | null;
   pid: number | null;
   /** Error code when the start itself failed. */
   error: string | null;
@@ -241,6 +243,8 @@ export interface LaunchAttempt {
   ended: boolean;
   /** What the program printed (tail of the captured output). */
   output: string;
+  /** Output was captured at all; a normal start keeps its own console. */
+  captured: boolean;
 }
 
 export interface BootstrapInfo {

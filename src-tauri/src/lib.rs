@@ -97,13 +97,28 @@ impl SetupHook for AppSetupHook {
         if lines.is_empty() {
             return Ok(());
         }
-        let run = crate::fixes::run_admin_lines(
+        let run = crate::fixes::run_admin_lines_at(
             &state,
             &format!("{game_id}-setup"),
             lines,
             &paths.share_dir,
         )
         .await;
+        // What ran, and what the transcript holds: "the setup script reported
+        // an error" without either is a dead end for the user.
+        // Only a failure: a setup that worked has nothing to explain, and the
+        // panel belongs to whatever the user started last.
+        if let (Some(plan), Err(e)) = (&setup, &run) {
+            let log = elevate::batch_log_path(&state.run_dir(), &format!("{game_id}-setup"));
+            let mut attempt = crate::state::LaunchAttempt::new(game_id, game_id, "setup", plan);
+            attempt.elevated = true;
+            attempt.ended = true;
+            attempt.error = Some(e.clone());
+            attempt.output = state.launch_output_since(&log, attempt.at);
+            attempt.captured = !attempt.output.is_empty();
+            *state.last_launch.write().await = Some(attempt);
+        }
+        let run = run.map(|_| ());
         match run {
             Ok(()) => {
                 if !rules.is_empty() {
@@ -506,12 +521,173 @@ fn prefer_a_renderer_that_draws() {
     if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
+    // The window opens, the interface runs, and the machine still paints
+    // nothing: no program can see that from the inside, so this one is a
+    // switch. `--safe-graphics` turns everything off that a graphics stack
+    // can fail at and is remembered, `--no-safe-graphics` forgets it again.
+    let asked = std::env::args().any(|a| a == "--safe-graphics");
+    let cancelled = std::env::args().any(|a| a == "--no-safe-graphics");
+    let marker = safe_graphics_marker();
+    if let Some(marker) = &marker {
+        if asked {
+            if let Some(dir) = marker.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::write(marker, "Started with --safe-graphics.\n");
+        } else if cancelled {
+            let _ = std::fs::remove_file(marker);
+        }
+    }
+    let remembered = marker.map(|m| m.is_file()).unwrap_or(false);
+    if (asked || remembered) && !cancelled {
+        for (key, value) in safe_rendering_env() {
+            std::env::set_var(key, value);
+        }
+        log::info!("safe graphics: software rendering, no compositing");
+    }
+}
+
+/// Where the `--safe-graphics` choice is remembered. Written before the Tauri
+/// paths exist, so the XDG location is built by hand — the same directory
+/// Tauri's `app_config_dir()` returns for this identifier.
+#[cfg(target_os = "linux")]
+fn safe_graphics_marker() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
+        })?;
+    Some(base.join("xyz.nextgen-lan.launcher").join("safe-graphics"))
+}
+
+/// Set when the interface has reported for duty (`frontend_ready`). The
+/// webview's own "page loaded" is no use for this: it fires for the error
+/// page too, so a launcher whose interface never ran would look fine.
+pub(crate) static FRONTEND_READY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Marks the run that already took the safe rendering path, so the restart
+/// below happens once and never turns into a loop.
+#[cfg(target_os = "linux")]
+const FALLBACK_MARKER: &str = "NLL_WEBVIEW_FALLBACK";
+
+/// Everything that makes WebKitGTK draw on a machine where it otherwise does
+/// not — accelerated rendering off, software GL, X11 rather than Wayland.
+/// Slow, and it does not matter: this is a page of text and boxes, and the
+/// alternative is a white window.
+#[cfg(target_os = "linux")]
+fn safe_rendering_env() -> Vec<(&'static str, String)> {
+    let mut env = vec![
+        ("WEBKIT_DISABLE_DMABUF_RENDERER", "1".to_string()),
+        ("WEBKIT_DISABLE_COMPOSITING_MODE", "1".to_string()),
+        ("LIBGL_ALWAYS_SOFTWARE", "1".to_string()),
+        (FALLBACK_MARKER, "1".to_string()),
+    ];
+    // Only with an X server to fall back to: forcing x11 in a pure Wayland
+    // session without XWayland would not start at all.
+    if std::env::var_os("DISPLAY").is_some() {
+        env.push(("GDK_BACKEND", "x11".to_string()));
+    }
+    env
+}
+
+/// Start this launcher again with the safe rendering settings. `Some` once
+/// the new process is on its way; the caller then ends this one.
+#[cfg(target_os = "linux")]
+fn restart_with_safe_rendering() -> Option<()> {
+    let exe = std::env::current_exe().ok()?;
+    // Inside an AppImage the extracted binary is gone once this process ends;
+    // the AppImage itself is the thing to start again.
+    let program = std::env::var_os("APPIMAGE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or(exe);
+    let mut cmd = std::process::Command::new(&program);
+    cmd.args(std::env::args().skip(1));
+    for (key, value) in safe_rendering_env() {
+        cmd.env(key, value);
+    }
+    match cmd.spawn() {
+        Ok(child) => {
+            log::warn!(
+                "restarted as {} (pid {}) with software rendering",
+                program.display(),
+                child.id()
+            );
+            Some(())
+        }
+        Err(e) => {
+            log::error!("could not restart {}: {e}", program.display());
+            None
+        }
+    }
+}
+
+/// Watch for a webview that never shows anything.
+///
+/// The window is there, the title is right, the page never arrives: on Linux
+/// that is the webview's renderer or its web process, and the user sees white.
+/// The launcher then starts itself once more with everything that makes
+/// WebKitGTK draw, and only says so when that did not help either — a message
+/// box comes from the window manager rather than from the webview, so it is
+/// visible even then.
+fn warn_about_a_blank_window(app: &tauri::AppHandle) {
+    use std::sync::atomic::Ordering;
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // Long enough for a cold start on a slow disk and for the retries of
+        // the report itself: anything shorter risks restarting a launcher
+        // that was merely still starting.
+        for _ in 0..30 {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            if FRONTEND_READY.load(Ordering::Relaxed) {
+                return;
+            }
+        }
+        log::error!("the interface did not report for duty within 30 s");
+        #[cfg(target_os = "linux")]
+        if std::env::var_os(FALLBACK_MARKER).is_none() {
+            // The successor shares the sync engine's folder, pid file and
+            // port, so this one lets go of the engine first — a successor
+            // that finds it still running would kill it as an orphan instead
+            // of letting it shut down through its API. The window is blank
+            // either way, so nothing is lost if the restart then fails.
+            if let Some(state) = app.try_state::<Arc<AppState>>() {
+                if let Some(transport) = state.transport.write().await.take() {
+                    let _ = transport.stop().await;
+                }
+            }
+            if restart_with_safe_rendering().is_some() {
+                app.exit(0);
+                return;
+            }
+        }
+        let hint = if cfg!(target_os = "linux") {
+            "The window stayed empty: the webview (WebKitGTK) did not render, \
+             not even with software rendering. Start the launcher from a \
+             terminal to see its messages; docs/TROUBLESHOOTING.md lists what \
+             else to try."
+        } else {
+            "The window stayed empty: the webview did not load the interface. \
+             The log folder holds the details."
+        };
+        use tauri_plugin_dialog::DialogExt;
+        app.dialog()
+            .message(hint)
+            .title("NextGen LAN Launcher")
+            .blocking_show();
+    });
 }
 
 pub fn run() {
     #[cfg(target_os = "linux")]
     prefer_a_renderer_that_draws();
     tauri::Builder::default()
+        .on_page_load(|window, payload| {
+            // Which URL the webview actually loaded — a production build
+            // serves `tauri://localhost`, a dev build the vite server; the
+            // difference explains an empty window on its own.
+            log::info!("webview loaded {} in {}", payload.url(), window.label());
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -540,13 +716,19 @@ pub fn run() {
                 app_version(),
                 dirs.logs.display()
             );
+            warn_about_a_blank_window(app.handle());
             // A white window on Linux is almost always the webview's DMA-BUF
             // renderer; the log should say which way this run went.
             #[cfg(target_os = "linux")]
             log::info!(
-                "webview: WEBKIT_DISABLE_DMABUF_RENDERER={}, session {}",
+                "webview: WEBKIT_DISABLE_DMABUF_RENDERER={}, compositing={}, software GL={}, \
+                 session {}, backend {}, safe-mode restart {}",
                 std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").unwrap_or_else(|_| "unset".into()),
-                std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".into())
+                std::env::var("WEBKIT_DISABLE_COMPOSITING_MODE").unwrap_or_else(|_| "unset".into()),
+                std::env::var("LIBGL_ALWAYS_SOFTWARE").unwrap_or_else(|_| "unset".into()),
+                std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".into()),
+                std::env::var("GDK_BACKEND").unwrap_or_else(|_| "default".into()),
+                std::env::var("NLL_WEBVIEW_FALLBACK").unwrap_or_else(|_| "no".into())
             );
             for d in [&dirs.config, &dirs.data, &dirs.cache] {
                 let _ = std::fs::create_dir_all(d);
@@ -637,7 +819,9 @@ pub fn run() {
             commands::set_exe_override,
             commands::get_settings,
             commands::save_settings,
+            commands::frontend_ready,
             commands::get_last_launch,
+            commands::rerun_setup,
             commands::run_diagnostics,
             commands::set_problem_ignored,
             commands::apply_fix,

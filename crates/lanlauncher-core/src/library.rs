@@ -152,8 +152,9 @@ impl Library {
     }
 
     /// Root to use for a new install: where the game already is, else the
-    /// default root when `needed_bytes` fit there, else the root with the
-    /// most free space that fits, else the default root anyway.
+    /// default root when `needed_bytes` fit there, else the root with the most
+    /// free space that fits — and when it fits nowhere, the roomiest root
+    /// there is (the default one on a tie).
     ///
     /// Enumerates the volumes, so this belongs on the install path, not in a
     /// loop: everything that only wants to know where a game *is* takes
@@ -197,12 +198,24 @@ impl Library {
             }
         }
         if best.is_none() {
-            // Nothing fits anywhere. The game goes to the default root and the
-            // state machine says so with the numbers; silently picking the
-            // biggest of several too-small disks would only hide it.
+            // Nothing fits anywhere: then the roomiest disk is the best of the
+            // bad options — the default root may be the smallest of them, and
+            // the state machine still says what is missing.
+            // On equal free space the default root wins: two roots on the
+            // same disk would otherwise send the game to whichever was added
+            // last.
+            let roomiest = self
+                .roots
+                .iter()
+                .filter_map(|r| free_for(&r.path).map(|free| (r, free)))
+                .max_by_key(|(r, free)| (*free, r.is_default));
             log::warn!(
-                "{game_id} needs {needed_bytes} bytes and no library root has room; using the default"
+                "{game_id} needs {needed_bytes} bytes and no library root has room; using {}",
+                roomiest
+                    .map(|(r, free)| format!("{} ({free} bytes free)", r.path.display()))
+                    .unwrap_or_else(|| "the default".into())
             );
+            return roomiest.map(|(r, _)| r).or_else(|| self.default_root());
         }
         best.map(|(r, _)| r).or_else(|| self.default_root())
     }
@@ -277,10 +290,10 @@ mod tests {
         let chosen = lib.choose_root_with("unknown", 5, free).unwrap();
         assert_eq!(chosen.path, small);
 
-        // Nothing fits anywhere: the default root is still where it goes, and
-        // the disk check says the rest.
+        // Nothing fits anywhere: the roomiest disk is the least bad place,
+        // and the disk check says the rest.
         let chosen = lib.choose_root_with("unknown", u64::MAX, free).unwrap();
-        assert_eq!(chosen.path, small);
+        assert_eq!(chosen.path, big);
     }
     use super::*;
 

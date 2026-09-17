@@ -51,7 +51,8 @@ export const api = {
   pause: (gameId: string, paused: boolean) => invoke<void>("pause_game", { gameId, paused }),
   cancelDownload: (gameId: string) => invoke<boolean>("cancel_download", { gameId }),
   uninstall: (gameId: string) => invoke<void>("uninstall_game", { gameId }),
-  play: (gameId: string, alternative?: number) => invoke<number>("play_game", { gameId, alternative: alternative ?? null }),
+  play: (gameId: string, alternative?: number, capture = false) =>
+    invoke<number>("play_game", { gameId, alternative: alternative ?? null, capture }),
   runExtra: (gameId: string, extra: Extra) => invoke<number>("run_extra", { gameId, extra }),
   prereqInstaller: () => invoke<string | null>("get_prereq_installer"),
   runPrereqInstaller: () => invoke<number>("run_prereq_installer"),
@@ -61,7 +62,21 @@ export const api = {
   settings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { settings }),
   diagnostics: () => invoke<Report>("run_diagnostics"),
+  /** Tell the backend the interface is running. Retried: one failed call
+   *  would otherwise look like a window that never came up. */
+  ready: async () => {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        await invoke<void>("frontend_ready");
+        return;
+      } catch (e) {
+        console.warn("frontend_ready failed", e);
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+  },
   lastLaunch: () => invoke<LaunchAttempt | null>("get_last_launch"),
+  rerunSetup: (gameId: string) => invoke<void>("rerun_setup", { gameId }),
   applyFix: (fix: FixAction) => invoke<string>("apply_fix", { fix }),
   setProblemIgnored: (key: string, ignored: boolean) => invoke<void>("set_problem_ignored", { key, ignored }),
   health: () => invoke<TransportHealth | null>("get_transport_health"),
