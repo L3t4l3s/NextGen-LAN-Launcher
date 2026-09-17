@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Diagnose: „Fremde Sync-Prozesse laufen" meldete unter Linux dauerhaft die eigene Engine.
+  `sysinfo` listet pro Thread einen Eintrag, und ein Thread heißt wie sein Prozess — auf dem Steam
+  Deck waren das 21 angeblich fremde `rslsync` mit lückenlosen PIDs, in Wahrheit die Threads der
+  verwalteten Instanz. Die Warnung ließ sich nie wegklicken (die Fix-Aktion startet die eigene
+  Engine neu) und verdeckte den Fall, für den sie gedacht ist: ein echtes zweites Resilio. Alle
+  Stellen, die die Prozesstabelle durchsuchen, filtern Threads jetzt heraus — auch das Aufräumen
+  verwaister Engines beim Start, das sonst Thread-IDs abzuschießen versuchte.
+- Release-Workflow: Bauen und Hochladen sind getrennt, damit das AppImage dazwischen noch
+  entbündelt werden kann; ein manueller Lauf legt die Installer als Artefakt ab, statt aus einem
+  Branch-Namen ein Release zu erzeugen.
 - **Linux: Das weiße Fenster auf dem Steam Deck ist gelöst — und die Ursache war unsere eigene
   Einstellung.** Das Gerät zeichnet auf der Sprosse `native`, also mit gar nichts erzwungen
   (`graphics.json`: `{"good":"native"}`, Logzeile `forced []`). Vier Builds lang wurde

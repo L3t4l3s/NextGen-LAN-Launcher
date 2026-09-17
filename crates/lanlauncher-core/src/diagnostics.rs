@@ -438,9 +438,7 @@ pub fn check_clock(server_time: Option<chrono::DateTime<chrono::Utc>>) -> Vec<Pr
 /// Orphaned sync engine processes not started by this launcher instance.
 pub fn check_orphans(our_pid: Option<u32>) -> Vec<Problem> {
     let sys = crate::transport::resilio::scan_processes();
-    let strangers: Vec<String> = sys
-        .processes()
-        .iter()
+    let strangers: Vec<String> = crate::transport::resilio::real_processes(&sys)
         .filter(|(pid, p)| {
             Some(pid.as_u32()) != our_pid && crate::transport::resilio::is_sync_engine(p.name())
         })

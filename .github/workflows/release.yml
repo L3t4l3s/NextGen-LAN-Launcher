@@ -50,14 +50,53 @@ jobs:
       - name: Fetch Resilio Sync binary
         shell: bash
         run: node tools/fetch-resilio.mjs ${{ matrix.platform }} src-tauri/resources/resilio
-      - name: Build and publish installers
+      # Build and upload are two steps on purpose: the AppImage has to be
+      # opened up again in between, and tauri-action publishes from inside the
+      # same step it builds in, which would be too late.
+      - name: Build installers
         uses: tauri-apps/tauri-action@v0
+        with:
+          args: ${{ matrix.args }}
+      # Same reason as in ci.yml: linuxdeploy packs all four Wayland libraries,
+      # libwayland-client included although the AppImage exclude list names it,
+      # while Mesa comes from the machine. See
+      # tools/appimage-unbundle-wayland.mjs.
+      - name: Take the Wayland libraries back out of the AppImage
+        if: matrix.os == 'ubuntu-22.04'
+        shell: bash
+        run: node tools/appimage-unbundle-wayland.mjs target/release/bundle/appimage
+      # Flat, so the release assets are not buried under bundle/nsis/ and so
+      # the publish step below can name them with one glob.
+      - name: Collect installers
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p installers
+          for root in target/release/bundle target/universal-apple-darwin/release/bundle; do
+            [ -d "$root" ] || continue
+            find "$root" -type f \
+              \( -name '*.exe' -o -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) \
+              -exec cp {} installers/ \;
+          done
+          ls -l installers
+      # Only for a tag. A manual run builds and leaves the installers as a
+      # workflow artifact instead of inventing a release from a branch name.
+      - name: Publish to the draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "NextGen LAN Launcher ${{ github.ref_name }}"
-          releaseBody: "Siehe CHANGELOG.md. Windows: Setup.exe doppelklicken. macOS: DMG öffnen. Linux: AppImage ausführbar machen."
-          releaseDraft: true
+          tag_name: ${{ github.ref_name }}
+          name: "NextGen LAN Launcher ${{ github.ref_name }}"
+          body: "Siehe CHANGELOG.md. Windows: Setup.exe doppelklicken. macOS: DMG öffnen. Linux: AppImage ausführbar machen."
+          draft: true
           prerelease: true
-          args: ${{ matrix.args }}
+          files: installers/*
+      - name: Upload bundles
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: bundles-${{ matrix.os }}
+          if-no-files-found: warn
+          path: installers/*

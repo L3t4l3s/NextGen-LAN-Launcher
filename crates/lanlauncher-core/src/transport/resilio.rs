@@ -925,7 +925,7 @@ impl ResilioTransport {
             .ok()
             .and_then(|s| s.trim().parse().ok());
         let sys = scan_processes();
-        for (pid, proc_) in sys.processes() {
+        for (pid, proc_) in real_processes(&sys) {
             let from_our_storage = proc_.cmd().iter().any(|a| {
                 a.to_string_lossy()
                     .contains(&*self.config.storage_dir.to_string_lossy())
@@ -1099,7 +1099,7 @@ pub fn engine_scan(binary: &Path, own_pid: Option<u32>) -> EngineScan {
         sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always),
     );
     let mut scan = EngineScan::default();
-    for (pid, p) in sys.processes() {
+    for (pid, p) in real_processes(&sys) {
         if Some(pid.as_u32()) == own_pid {
             continue;
         }
@@ -1615,10 +1615,36 @@ pub fn scan_processes() -> sysinfo::System {
     )
 }
 
+/// The process table with its threads left out.
+///
+/// On Linux `sysinfo` reports a task per thread next to the one per process,
+/// and a thread carries its process's name — measured on one machine: 121
+/// entries, of which 108 were threads. Every check in this file asks "is
+/// something like this running", so counting threads turns a single sync
+/// engine into twenty. That is what a Steam Deck's Diagnose panel showed:
+/// "Fremde Sync-Prozesse laufen" listing 21 consecutive pids, all of them
+/// threads of the launcher's own engine, which no `own_pid` test can exclude
+/// because each thread has an id of its own.
+///
+/// Every caller that walks the table goes through here.
+pub fn real_processes(
+    sys: &sysinfo::System,
+) -> impl Iterator<Item = (&sysinfo::Pid, &sysinfo::Process)> {
+    sys.processes()
+        .iter()
+        .filter(|(_, p)| p.thread_kind().is_none())
+}
+
 /// Process table refreshed with exactly the fields the caller reads.
+///
+/// `without_tasks` spares most of the walk through `/proc/<pid>/task/<tid>/`:
+/// measured on one machine, 121 entries and 108 threads become 80 and 67, and
+/// a scan takes half as long. It does **not** leave every thread out, so it is
+/// an economy and not the fix — [`real_processes`] is what the callers must go
+/// through.
 pub fn scan_processes_with(kind: sysinfo::ProcessRefreshKind) -> sysinfo::System {
     let mut sys = sysinfo::System::new();
-    sys.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, kind);
+    sys.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, kind.without_tasks());
     sys
 }
 
@@ -1626,9 +1652,8 @@ pub fn scan_processes_with(kind: sysinfo::ProcessRefreshKind) -> sysinfo::System
 /// reliable hint where an installation lives.
 pub fn running_binaries() -> Vec<PathBuf> {
     let sys = scan_processes();
-    let mut out: Vec<PathBuf> = sys
-        .processes()
-        .values()
+    let mut out: Vec<PathBuf> = real_processes(&sys)
+        .map(|(_, p)| p)
         .filter(|p| is_sync_engine(p.name()))
         .filter_map(|p| p.exe().map(Path::to_path_buf))
         .collect();
@@ -1881,6 +1906,89 @@ mod tests {
         let mut plain = cfg.clone();
         plain.api_key = None;
         assert!(plain.to_json()["webui"].get("api_key").is_none());
+    }
+
+    /// The bug this guards against, seen on a Steam Deck: the Diagnose panel
+    /// reported 21 "foreign" `rslsync` processes with consecutive pids, which
+    /// were the threads of the launcher's own engine. Excluding `our_pid`
+    /// cannot help — every thread has an id of its own.
+    ///
+    /// Linux names a thread after its process unless it says otherwise, and
+    /// Rust's named threads do say otherwise, so threads carrying the name of
+    /// a sync engine can be made here on purpose. The table is built with
+    /// tasks on, which is what `scan_processes` now turns off, so that this
+    /// tests the filter rather than the scan.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn threads_named_like_a_sync_engine_are_not_taken_for_processes() {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut threads = Vec::new();
+        for _ in 0..4 {
+            let stop = stop.clone();
+            threads.push(
+                std::thread::Builder::new()
+                    // What the engine is called on Linux, and short enough for
+                    // the 15 characters a thread name may have.
+                    .name("rslsync".into())
+                    .spawn(move || {
+                        while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                        }
+                    })
+                    .expect("thread"),
+            );
+        }
+        // Let the names reach the kernel before the table is read.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        let mut sys = sysinfo::System::new();
+        sys.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::All,
+            true,
+            sysinfo::ProcessRefreshKind::nothing(),
+        );
+        let with_threads = sys
+            .processes()
+            .values()
+            .filter(|p| is_sync_engine(p.name()))
+            .count();
+        let without_threads = real_processes(&sys)
+            .filter(|(_, p)| is_sync_engine(p.name()))
+            .count();
+
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        for t in threads {
+            let _ = t.join();
+        }
+
+        // Counted as a difference, not as an absolute: a machine that really
+        // is running Resilio (a developer with the launcher open) has engines
+        // of its own, and those must still be counted.
+        assert!(
+            with_threads >= without_threads + 4,
+            "the four threads just made should be in the raw table and gone from the \
+             filtered one, but it went from {with_threads} to {without_threads}"
+        );
+    }
+
+    /// Nothing that comes out of the filter is a thread, and this process
+    /// appears exactly once rather than once per thread it happens to run.
+    ///
+    /// Note what is *not* asserted: that the raw scan holds no threads.
+    /// `ProcessRefreshKind::without_tasks` was measured to remove only some of
+    /// them (108 down to 67 on one machine), so the filter is what carries
+    /// this, and a test that assumed otherwise would be testing a wish.
+    #[test]
+    fn the_filtered_table_holds_processes_only() {
+        let sys = scan_processes();
+        assert!(real_processes(&sys).all(|(_, p)| p.thread_kind().is_none()));
+        let me = std::process::id();
+        assert_eq!(
+            real_processes(&sys)
+                .filter(|(pid, _)| pid.as_u32() == me)
+                .count(),
+            1
+        );
     }
 
     #[test]

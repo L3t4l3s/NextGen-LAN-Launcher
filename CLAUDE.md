@@ -124,10 +124,12 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   siehe unten. Der Schritt bleibt, weil die Ausschlussliste recht hat (Mesa und die Wayland-
   Bibliotheken, gegen die es gelinkt ist, gehören demselben Rechner), nicht weil er ein Symptom
   geheilt hätte.
-  **Nur `ci.yml` ruft es auf; `release.yml` nicht** — dort baut und lädt `tauri-action` in einem
-  Schritt hoch, das müsste erst getrennt werden. Bis dahin liefert ein Release die
-  Nichtübereinstimmung weiter aus. Prüfen lässt sich das hier nur strukturell (die Dateien sind
-  weg, das Abbild startet und zeichnet weiterhin) — ob es das Deck heilt, zeigt erst das Gerät.
+  `ci.yml` und `release.yml` rufen es auf. In `release.yml` sind Bauen und Hochladen dafür getrennt
+  (`tauri-action` baut, das Skript läuft, `softprops/action-gh-release` lädt hoch); ein manueller
+  Lauf legt die Installer als Workflow-Artefakt ab, statt aus einem Branch-Namen ein Release zu
+  machen. Prüfen lässt sich das hier nur strukturell (die Dateien sind weg, das Abbild startet und
+  zeichnet weiterhin); die Upload-Hälfte von `release.yml` ist ungetestet, ein Tag lässt sich von
+  hier nicht schieben.
 - **`WEBKIT_DISABLE_DMABUF_RENDERER=1` war die Ursache, nicht die Lösung — auf dem Steam Deck
   bestätigt.** Das Gerät zeichnet auf der Sprosse `native`, also mit **gar nichts** erzwungen
   (`graphics.json`: `{"good":"native"}`, Logzeile: `forced []`, Sitzung Wayland, Backend x11,
@@ -231,6 +233,18 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   samt der Firewall-Regeln aus `game_start.cmd` einmal beim Setup, Startskripte nur, wenn sie
   HKLM schreiben (`script_needs_admin`), Server-Skripte, Diagnose-Reparaturen, Programme mit
   eigenem Admin-Manifest (Fehler 740). Einstellung `allowElevation=false` unterdrückt jede Abfrage.
+- **Prozesstabelle enthält Threads:** `sysinfo` listet unter Linux pro Thread einen Eintrag neben
+  dem des Prozesses, und ein Thread trägt den Namen seines Prozesses (hier gemessen: 121 Einträge,
+  davon 108 Threads). Wer die Tabelle nach „läuft so etwas?" durchsucht, macht aus einer
+  Sync-Engine zwanzig — auf dem Steam Deck meldete die Diagnose 21 „fremde" `rslsync`-Prozesse mit
+  lückenlosen PIDs, allesamt Threads der eigenen Engine. Ein `own_pid`-Ausschluss hilft nicht, jeder
+  Thread hat eine eigene ID. **Die Tabelle immer über `resilio::real_processes(&sys)` durchlaufen,
+  nie über `sys.processes()` direkt.** `ProcessRefreshKind::without_tasks` ist dabei nur eine
+  Sparmaßnahme, kein Ersatz: gemessen wurden damit 80 statt 121 Einträge und 67 statt 108 Threads
+  bei halber Scan-Zeit — ein Teil der Threads bleibt also drin. Regressionstest:
+  `threads_named_like_a_sync_engine_are_not_taken_for_processes` erzeugt Threads namens `rslsync`
+  und prüft die Differenz zwischen roher und gefilterter Tabelle (kein absoluter Wert, sonst
+  scheitert er auf einem Rechner, auf dem wirklich Resilio läuft).
 - **Clippy:** In `resilio.rs` müssen alle Items vor `mod tests` stehen (`items_after_test_module`).
 - **Fehlertexte:** Tauri-Commands und Fix-Aktionen geben keine deutschen Sätze zurück, sondern Codes
   (`err.<name>` bzw. `msg.<name>`, optional mit `|detail`). Das Frontend übersetzt sie mit

@@ -155,9 +155,11 @@ again.
   on the device, see below — so it stands on the exclude list's own reasoning rather than on a
   symptom: a machine's Mesa and the Wayland libraries it links belong to the same machine. Verified
   here only that the files are in the image, that they are gone afterwards, and that the repacked
-  image still starts and renders. **`release.yml` does not run it yet:** `tauri-action` builds and
-  uploads in one step, so adding it means splitting that into a build and an upload, which has not
-  been done. A release before that still ships the mismatch.
+  image still starts and renders. `release.yml` runs it too since the build and the upload were split
+  apart there (`tauri-action` builds, the script runs, `softprops/action-gh-release` uploads) — a
+  manual run of that workflow now leaves the installers as a workflow artifact instead of making a
+  release out of a branch name. The upload half has only been reasoned about; nothing here can push
+  a tag to try it.
 - **A white window on SteamOS — answered, by the device:** the launcher's own ladder found it. A
   Steam Deck (SteamOS, Wayland session, X11 window) draws on the `native` rung: **nothing forced at
   all**. `graphics.json` reads `{"good":"native"}` and the log line says `forced []`.
