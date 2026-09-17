@@ -105,6 +105,25 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   Einstellungen der Sprosse davor. (2) Ein Wert, den der Benutzer selbst gesetzt hat, bleibt
   stehen; Ausnahme ist `GDK_BACKEND`/`GTK_THEME` unter einem AppImage, denn die setzt der
   linuxdeploy-Hook ungefragt (`is_a_choice`).
+- **Wayland-Bibliotheken im AppImage (halb mitgeliefert):** Die AppImage-Ausschlussliste
+  (`pkg2appimage/excludelist`) nennt `libwayland-client.so.0`, `libEGL`, `libGL`, `libgbm`,
+  `libdrm` — die kommen also vom Rechner. `libwayland-server.so.0`, `libwayland-egl.so.1` und
+  `libwayland-cursor.so.0` stehen **nicht** darauf und werden von `libwebkit2gtk-4.1` bzw.
+  `libgdk-3` hereingezogen, landen also im Image. Ergebnis: `libwayland-client` vom Rechner,
+  `libwayland-server` aus dem Image — obwohl beide aus demselben Paket stammen und zusammen
+  versioniert sind. Mesas `libEGL_mesa` bindet `libwayland-server`; passt die Version nicht,
+  scheitert schon das Laden, und zwar **unabhängig von `EGL_PLATFORM` und von
+  `LIBGL_ALWAYS_SOFTWARE`**. Genau dieses Muster zeigt das Deck-Log (Sitzung Wayland, Backend x11,
+  EGL-Plattform x11, Software-GL — und trotzdem „Could not create default EGL display:
+  EGL_BAD_PARAMETER"). An einem hier gebauten Abbild nachgemessen: Es sind **alle vier**
+  Wayland-Bibliotheken drin, `libwayland-client` eingeschlossen — und die ist der einzige Eintrag
+  der ganzen Ausschlussliste, den Tauris eigener linuxdeploy-Build falsch behandelt.
+  `tools/appimage-unbundle-wayland.mjs` entfernt alle vier nach dem Bundling wieder und bricht ab,
+  wenn es weniger als vier findet (sonst ginge die Nichtübereinstimmung unbemerkt wieder mit raus).
+  **Nur `ci.yml` ruft es auf; `release.yml` nicht** — dort baut und lädt `tauri-action` in einem
+  Schritt hoch, das müsste erst getrennt werden. Bis dahin liefert ein Release die
+  Nichtübereinstimmung weiter aus. Prüfen lässt sich das hier nur strukturell (die Dateien sind
+  weg, das Abbild startet und zeichnet weiterhin) — ob es das Deck heilt, zeigt erst das Gerät.
 - **EGL auf Linux:** WebKitGTK bricht ab („Could not create default EGL display …"), wenn
   `eglGetDisplay` scheitert — das Fenster bleibt weiß, im Log steht nur, dass sich die Oberfläche
   nie gemeldet hat. Wichtig beim Lesen: Das ist der *Default*-Display, den der Pfad **ohne**

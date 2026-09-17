@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Linux/AppImage: Die vier Wayland-Bibliotheken werden nicht mehr mitgeliefert
+  (`tools/appimage-unbundle-wayland.mjs`, in `ci.yml` eingehängt). An einem gebauten Abbild
+  gemessen: `libEGL`, `libGL`, `libgbm` und `libdrm` kommen korrekt vom Rechner, aber
+  `libwayland-client`, `-server`, `-egl` und `-cursor` lagen im Image — `libwayland-client` steht
+  sogar ausdrücklich auf der AppImage-Ausschlussliste und ist deren einziger Eintrag, den Tauris
+  eigener linuxdeploy-Build falsch behandelt. Damit lief Mesa vom Rechner gegen ein Wayland aus
+  Ubuntu, und `LD_LIBRARY_PATH` gab dem Image den Vorrang. Mesas `libEGL_mesa` bindet
+  `libwayland-client` und `-server`; passt die Version nicht, lässt es sich gar nicht laden, und
+  dann scheitert *jedes* `eglGetDisplay` mit EGL_BAD_PARAMETER — unabhängig von `EGL_PLATFORM` und
+  von `LIBGL_ALWAYS_SOFTWARE`. Genau das meldet das Steam Deck: Wayland-Sitzung, X11-Fenster,
+  `EGL_PLATFORM=x11`, Software-GL — und trotzdem kein Display. Hier geprüft: die Dateien sind im
+  Abbild, nach dem Entfernen startet und zeichnet es weiterhin. Ob es das Deck heilt, zeigt das
+  Gerät.
 - Linux: Der Launcher probiert die Renderer-Einstellungen jetzt selbst durch, statt sich auf eine
   festzulegen. Vier Versionen lang wurde je eine Vermutung ausgeliefert und auf dem Steam Deck
   getestet — jede Runde kostete ein Release, und keine hat getroffen. Stattdessen gibt es eine

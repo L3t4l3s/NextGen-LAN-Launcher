@@ -146,6 +146,18 @@ again.
 
 ## Open items
 
+- **Wayland libraries in the AppImage:** measured on a built image — `libEGL`, `libGL`, `libgbm`
+  and `libdrm` are correctly left to the machine, but all four Wayland libraries were packed, and
+  `libwayland-client.so.0` is on the AppImage exclude list (the one entry of the whole list that
+  Tauri's own linuxdeploy build gets wrong). The machine's Mesa then ran against Ubuntu's Wayland,
+  which is a plausible reason for an `eglGetDisplay` that fails whatever the platform and whether
+  or not software rendering is on — the Deck's symptom exactly.
+  `tools/appimage-unbundle-wayland.mjs` takes all four back out and `ci.yml` runs it. Verified here
+  only that the files are in the image and that it still starts and renders once they are gone;
+  whether it is what the Deck needed has to be tried there. **`release.yml` does not run it yet:**
+  `tauri-action` builds and uploads in one step, so adding it means splitting that into a build and
+  an upload, which is not something to change untested alongside this. A release before that is
+  done still ships the mismatch.
 - **A white window on SteamOS:** still open, and no longer approached by guessing. Four builds each
   shipped one hypothesis (DMA-BUF off, the helper processes, `bwrap`, the EGL platform) and each
   had to be tried on the Deck; the last one, `EGL_PLATFORM=x11`, missed like the others. Two of

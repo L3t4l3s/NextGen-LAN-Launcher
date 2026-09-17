@@ -114,6 +114,29 @@ The one exception is `GDK_BACKEND` (and `GTK_THEME`) under an AppImage: the imag
 sets them for every session, unasked, so they are not treated as anyone's choice — and taking the
 forced `GDK_BACKEND=x11` back is precisely what the `wayland` step is for.
 
+### When the AppImage brings its own Wayland
+
+Measured on a built image: `libEGL`, `libGL`, `libgbm` and `libdrm` are correctly left out, so
+they come from the machine — but `libwayland-client`, `-server`, `-egl` and `-cursor` were packed
+into it, and `LD_LIBRARY_PATH` puts the image first. The machine's Mesa then runs against Ubuntu's
+Wayland. `libEGL_mesa` links two of those libraries; where the packed ones are older it cannot be
+loaded at all, and then every `eglGetDisplay` fails — no matter what `EGL_PLATFORM` says and
+whether or not software rendering is on. No renderer setting can help with that, which is why the
+ladder alone may not be enough.
+
+CI builds have the four taken back out again since this change
+(`tools/appimage-unbundle-wayland.mjs`); **release builds do not yet**, so an AppImage from a
+GitHub release still carries them. On any build that does, the same thing by hand — and this is
+the check worth running, because it is what confirms the cause:
+
+```bash
+./NextGen*.AppImage --appimage-extract
+rm squashfs-root/usr/lib/libwayland-*
+./squashfs-root/AppRun
+```
+
+If that draws and the AppImage does not, this was it.
+
 ### One failure with a name of its own
 
 ```

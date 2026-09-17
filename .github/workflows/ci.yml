@@ -119,6 +119,18 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         with:
           args: ${{ matrix.args }}
+      # linuxdeploy packs all four Wayland libraries, libwayland-client
+      # included although the AppImage exclude list names it, while libEGL and
+      # the rest of Mesa correctly come from the machine. Mesa cannot load
+      # against that mix. Tauri's bundler is a prebuilt binary with no hook
+      # between linuxdeploy and the finished image, so the image is opened
+      # again here. The script expects to find all four and fails if it does
+      # not: that means the bundler changed, not that the step is unnecessary.
+      # See tools/appimage-unbundle-wayland.mjs.
+      - name: Take the Wayland libraries back out of the AppImage
+        if: matrix.os == 'ubuntu-22.04'
+        shell: bash
+        run: node tools/appimage-unbundle-wayland.mjs target/release/bundle/appimage
       # upload-artifact keeps the folders the matched files sit in, which
       # buries Setup.exe under release/bundle/nsis/ in the downloaded zip.
       # Copying the installers flat first puts them at the top of it.
