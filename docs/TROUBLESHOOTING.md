@@ -62,9 +62,29 @@ The log's second line records which renderer setting was in force and whether th
 or Wayland, so a report of a white window can say which combination it was. To keep the
 accelerated path on a machine where it works, set `WEBKIT_DISABLE_DMABUF_RENDERER=0`.
 
-If none of it helps — the Steam Deck is the open case — the interesting messages are the ones
-WebKitGTK writes to the terminal when its web process gives up. They do not reach `launcher.log`,
-so run it once like this and keep the file:
+One failure has a name of its own. If the terminal shows
+
+```
+Could not create default EGL display: EGL_BAD_PARAMETER. Aborting...
+```
+
+then WebKitGTK gave up before drawing anything: it could not get an EGL display at all. Mesa picks
+the EGL platform from the environment, and `WAYLAND_DISPLAY` makes it choose Wayland even where the
+window is an X11 one — which is what the AppImage arranges (its GTK hook sets `GDK_BACKEND=x11`),
+and the Wayland libraries it then uses are the ones inside the image rather than the machine's.
+Since 0.1.0 the launcher sets `EGL_PLATFORM=x11` itself for that combination — an X11 window
+(`GDK_BACKEND=x11`, which the AppImage sets) in a Wayland session. The `webview:` line in the log
+names the platform in force, and a platform set by hand is left alone, which is also how to undo
+it:
+
+```bash
+EGL_PLATFORM=x11 ./NextGen*.AppImage        # by hand, on an older build
+EGL_PLATFORM=wayland ./NextGen*.AppImage    # or the other way, to try Wayland's
+```
+
+If none of it helps, the interesting messages are the ones WebKitGTK writes to the terminal when
+its web process gives up. They do not reach `launcher.log`, so run it once like this and keep the
+file:
 
 ```bash
 ./NextGen*.AppImage --safe-graphics 2>&1 | tee ~/nll-terminal.log

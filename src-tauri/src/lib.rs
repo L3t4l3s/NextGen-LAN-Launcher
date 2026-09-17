@@ -566,11 +566,19 @@ pub(crate) fn build_manager(
 /// machine draws fine sets `WEBKIT_DISABLE_DMABUF_RENDERER=0` and keeps it.
 ///
 /// Called first thing in [`run`], before the webview exists and while the
-/// process is still single-threaded.
+/// process is still single-threaded — and before the log plugin exists, so
+/// nothing here logs; what it decided is in the `webview:` line at startup.
 #[cfg(target_os = "linux")]
 fn prefer_a_renderer_that_draws() {
+    // What is forced here belongs to this window only. A game started later
+    // must not inherit it, so every name lands in `NLL_FORCED_ENV` together
+    // with the value it had, and the launch code puts that value back into a
+    // child's environment. The record starts with what a previous run of this
+    // launcher forced on this one (the restart after a blank window hands it
+    // over): by then everything is set, so it could not be worked out again.
+    let mut forced = forced_so_far();
     if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        force("WEBKIT_DISABLE_DMABUF_RENDERER", "1", &mut forced);
     }
     // The window opens, the interface runs, and the machine still paints
     // nothing: no program can see that from the inside, so this one is a
@@ -592,10 +600,72 @@ fn prefer_a_renderer_that_draws() {
     let remembered = marker.map(|m| m.is_file()).unwrap_or(false);
     if (asked || remembered) && !cancelled {
         for (key, value) in safe_rendering_env() {
-            std::env::set_var(key, value);
+            force(key, &value, &mut forced);
         }
-        log::info!("safe graphics: software rendering, no compositing");
     }
+    // After the backend is decided: the EGL platform follows the window.
+    match_the_egl_platform_to_the_window(&mut forced);
+    remember_what_was_forced(&forced);
+}
+
+/// What this launcher (or the one that started it) has already changed for
+/// its own window: name and the value that was there before.
+#[cfg(target_os = "linux")]
+fn forced_so_far() -> std::collections::BTreeMap<String, Option<String>> {
+    lanlauncher_core::launch::forced_env().into_iter().collect()
+}
+
+/// Set a variable for this process and note what it replaced — but only the
+/// first time, so the value a game gets back is the one from before the
+/// launcher ever touched it, not one of its own settings.
+#[cfg(target_os = "linux")]
+fn force(key: &str, value: &str, forced: &mut std::collections::BTreeMap<String, Option<String>>) {
+    let before = std::env::var(key).ok();
+    if before.as_deref() != Some(value) {
+        forced.entry(key.to_string()).or_insert(before);
+    }
+    std::env::set_var(key, value);
+}
+
+#[cfg(target_os = "linux")]
+fn remember_what_was_forced(forced: &std::collections::BTreeMap<String, Option<String>>) {
+    if forced.is_empty() {
+        return;
+    }
+    if let Ok(json) = serde_json::to_string(forced) {
+        std::env::set_var(lanlauncher_core::launch::FORCED_ENV, json);
+    }
+}
+
+/// Tell EGL to use the same platform the window uses.
+///
+/// WebKitGTK gives up when `eglGetDisplay(EGL_DEFAULT_DISPLAY)` fails — on a
+/// Steam Deck it prints "Could not create default EGL display:
+/// EGL_BAD_PARAMETER. Aborting..." and the window stays white with nothing in
+/// it, whatever the renderer settings say. Mesa reads the platform from the
+/// environment, and `WAYLAND_DISPLAY` makes it choose Wayland even where the
+/// window is an X11 one (which is what an AppImage does: its GTK hook sets
+/// `GDK_BACKEND=x11`). The Wayland libraries it then uses are the ones the
+/// AppImage brought along, and those need not fit the compositor of the
+/// machine. Where the window is X11, EGL is pointed at X11 as well.
+///
+/// Only when the user has not chosen a platform themselves, and only with an
+/// X server to point at.
+#[cfg(target_os = "linux")]
+fn match_the_egl_platform_to_the_window(
+    forced: &mut std::collections::BTreeMap<String, Option<String>>,
+) {
+    if std::env::var_os("EGL_PLATFORM").is_some() {
+        return;
+    }
+    let window_is_x11 = std::env::var("GDK_BACKEND")
+        .map(|b| b.split(',').next() == Some("x11"))
+        .unwrap_or(false);
+    let session_is_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+    if !window_is_x11 || !session_is_wayland || std::env::var_os("DISPLAY").is_none() {
+        return;
+    }
+    force("EGL_PLATFORM", "x11", forced);
 }
 
 /// Where the `--safe-graphics` choice is remembered. Written before the Tauri
@@ -654,8 +724,20 @@ fn restart_with_safe_rendering() -> Option<()> {
         .unwrap_or(exe);
     let mut cmd = std::process::Command::new(&program);
     cmd.args(std::env::args().skip(1));
+    // The successor gets the settings and the list of what was forced on it:
+    // it cannot work that out for itself (everything is already set by the
+    // time it looks), and without the list a game started from it would
+    // inherit software rendering.
+    let mut forced = forced_so_far();
     for (key, value) in safe_rendering_env() {
+        let before = std::env::var(key).ok();
+        if before.as_deref() != Some(value.as_str()) {
+            forced.entry(key.to_string()).or_insert(before);
+        }
         cmd.env(key, value);
+    }
+    if let Ok(json) = serde_json::to_string(&forced) {
+        cmd.env(lanlauncher_core::launch::FORCED_ENV, json);
     }
     match cmd.spawn() {
         Ok(child) => {
@@ -714,9 +796,10 @@ fn warn_about_a_blank_window(app: &tauri::AppHandle) {
         }
         let hint = if cfg!(target_os = "linux") {
             "The window stayed empty: the webview (WebKitGTK) did not render, \
-             not even with software rendering. Start the launcher from a \
-             terminal to see its messages; docs/TROUBLESHOOTING.md lists what \
-             else to try."
+             not even with software rendering. What it says about it goes to \
+             the terminal, not to the log: start the launcher from one and \
+             keep the output (a line about EGL, libGL or GL names the piece \
+             that failed). docs/TROUBLESHOOTING.md lists what else to try."
         } else {
             "The window stayed empty: the webview did not load the interface. \
              The log folder holds the details."
@@ -773,13 +856,19 @@ pub fn run() {
             #[cfg(target_os = "linux")]
             log::info!(
                 "webview: WEBKIT_DISABLE_DMABUF_RENDERER={}, compositing={}, software GL={}, \
-                 session {}, backend {}, safe-mode restart {}",
+                 session {}, backend {}, EGL platform {}, safe-mode restart {}, forced [{}]",
                 std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").unwrap_or_else(|_| "unset".into()),
                 std::env::var("WEBKIT_DISABLE_COMPOSITING_MODE").unwrap_or_else(|_| "unset".into()),
                 std::env::var("LIBGL_ALWAYS_SOFTWARE").unwrap_or_else(|_| "unset".into()),
                 std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".into()),
                 std::env::var("GDK_BACKEND").unwrap_or_else(|_| "default".into()),
-                std::env::var("NLL_WEBVIEW_FALLBACK").unwrap_or_else(|_| "no".into())
+                std::env::var("EGL_PLATFORM").unwrap_or_else(|_| "auto".into()),
+                std::env::var("NLL_WEBVIEW_FALLBACK").unwrap_or_else(|_| "no".into()),
+                lanlauncher_core::launch::forced_env()
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
             #[cfg(target_os = "linux")]
             log::info!(

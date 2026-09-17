@@ -142,19 +142,29 @@ again.
 
 ## Open items
 
-- **A white window on SteamOS:** unsolved. The launcher turns the webview's DMA-BUF renderer off,
-  and `--safe-graphics` adds software rendering, no compositing and X11 — the documented causes of
-  a window that opens with the right title and stays blank. On a Steam Deck none of it helped.
-  The AppImage was checked here under Xvfb, including two suspicions that turned out not to be
-  it: it renders with the system's `webkit2gtk-4.1` helper directory removed (WebKitGTK finds the
-  copies inside the AppImage by itself) and with `bwrap` gone. It carries its own GTK, WebKit,
-  glib and soup, so what differs on the Deck is the graphics stack below them. What is needed to
-  get further is the output of `./NextGen*.AppImage 2>&1 | tee nll-terminal.log` from the device:
-  the messages WebKit prints when its web process gives up are not in `launcher.log`.
+- **A white window on SteamOS:** the Deck's terminal named it — WebKitGTK aborts with "Could not
+  create default EGL display: EGL_BAD_PARAMETER", with and without `--safe-graphics`, so nothing
+  was ever drawn. Mesa chooses the EGL platform from `WAYLAND_DISPLAY` and takes Wayland although
+  the window is an X11 one, and inside the AppImage the Wayland libraries are Ubuntu's, not the
+  device's. The launcher now sets `EGL_PLATFORM=x11` where its window is an X11 one
+  (`GDK_BACKEND=x11`, which the AppImage's own GTK hook sets — the Deck's log shows it) in a
+  Wayland session, and leaves a platform the user chose alone. Verified here
+  only in that the AppImage still renders with the variable set (the failure itself needs a real
+  Wayland compositor and cannot be reproduced under Xvfb), so whether it is what the Deck needed
+  has to be tried there. Two earlier suspicions were ruled out by test: the AppImage renders with
+  the system's `webkit2gtk-4.1` helper directory removed (WebKitGTK finds its own copies) and with
+  `bwrap` gone.
 - **Installer and a running launcher:** the NSIS hook now closes the launcher first and its sync
   engine second, because the launcher restarts an engine it sees dying — and the installer's own
   "close the application?" prompt only comes after the hook. It then waits (up to ten seconds)
   until nothing runs from the install folder any more. Built, not yet run against a real upgrade.
+- **The environment a game is started in:** what the launcher forces on itself to get its own
+  window drawn (software rendering, an X11 backend, an EGL platform) is put back to the value it
+  had before, and under an AppImage every path into the mount plus the image's own `GDK_BACKEND`
+  and `GTK_THEME` are taken out of the child's environment. The rules are covered by tests; that a
+  game actually starts better for it has only been reasoned, not run — there is no Linux game here
+  to start. The sync engine is deliberately left as it is: it runs from the same AppImage and does
+  so successfully on the Deck.
 - **Icon after an upgrade:** the executable carries the right icon (the preview pane proves it),
   but the shell caches icons per path. The NSIS hook calling `SHChangeNotify` is meant to clear
   that on upgrade; whether it does for Explorer, the desktop shortcut and a pinned taskbar entry

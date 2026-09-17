@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Linux: Das weiße Fenster auf dem Steam Deck hatte einen Namen — WebKitGTK bricht mit
+  „Could not create default EGL display: EGL_BAD_PARAMETER. Aborting…" ab, bevor irgendetwas
+  gezeichnet wird. Mesa wählt die EGL-Plattform nach `WAYLAND_DISPLAY`, nimmt also Wayland,
+  während das Fenster über X11 läuft — und die Wayland-Bibliotheken kommen im AppImage von
+  Ubuntu, nicht vom Gerät. Der Launcher setzt deshalb `EGL_PLATFORM=x11`, wenn sein Fenster ein
+  X11-Fenster in einer Wayland-Sitzung ist (außer der Benutzer hat die Variable selbst gesetzt).
+  Die `webview:`-Zeile im Log nennt die Plattform mit.
+- Ein Spiel erbt die Umgebung des Launchers nicht mehr: `--safe-graphics` schaltet für dessen
+  eigenes Fenster Software-Rendering ein, ein damit gestartetes Spiel lief bisher ebenfalls auf der
+  CPU. Der Launcher merkt sich, was er selbst gesetzt hat — samt dem Wert, der vorher galt — und
+  stellt genau das beim Spielstart wieder her. Ebenso fallen die Pfade des AppImage weg
+  (`LD_LIBRARY_PATH`, `XDG_DATA_DIRS`, `GTK_PATH` …): sonst lädt ein Spiel die Ubuntu-Bibliotheken
+  aus dem Abbild statt die des Rechners.
+
 - Ein Paket, das die Engine anlegt, bevor sie es lädt, gilt nicht mehr als fertig: Resilio legt die
   Zieldatei sofort in voller Größe an (85,8 GB auf der Platte, 8 Byte angekommen), der Launcher hat
   daraus „fertig" gelesen und ist in eine endlose Prüfung gelaufen. Sobald die Engine die Freigabe

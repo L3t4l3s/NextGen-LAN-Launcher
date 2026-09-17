@@ -337,7 +337,12 @@ pub async fn spawn_elevated(
 
 pub async fn spawn(plan: &LaunchPlan, log: Option<&Path>) -> Result<(u32, ExitWatch)> {
     let mut cmd = tokio::process::Command::new(&plan.program);
-    cmd.current_dir(&plan.cwd).envs(&plan.env);
+    cmd.current_dir(&plan.cwd);
+    // Before the plan's own environment: a manifest may set one of these
+    // deliberately for a game, and that value is the one that counts.
+    restore_what_the_launcher_forced(&mut cmd);
+    leave_the_appimage_behind(&mut cmd);
+    cmd.envs(&plan.env);
     apply_args(&mut cmd, plan);
     // Without a log the child keeps the handles it would have had: a console
     // program started from a windowed one gets its own console, and that is
@@ -365,6 +370,125 @@ pub async fn spawn(plan: &LaunchPlan, log: Option<&Path>) -> Result<(u32, ExitWa
         .spawn()
         .map_err(|e| Error::Launch(format!("cannot start {}: {e}", plan.program.display())))?;
     Ok(watch(child))
+}
+
+/// The environment variable in which the launcher records what it forced on
+/// itself, as JSON: every name it changed with the value that was there
+/// before (`null` where there was none).
+pub const FORCED_ENV: &str = "NLL_FORCED_ENV";
+
+/// Apply [`without_appimage_paths`] to a child's environment.
+///
+/// Only variables that are text: one that is not stays as it is, because
+/// nothing in an AppImage's paths needs to be compared against bytes that are
+/// not a path.
+fn leave_the_appimage_behind(cmd: &mut tokio::process::Command) {
+    let Some(appdir) = std::env::var_os("APPDIR") else {
+        return;
+    };
+    // A name the launcher forced was already answered for by the restore,
+    // with the value that was there before it: that decision stands.
+    let forced: Vec<String> = forced_env().into_iter().map(|(name, _)| name).collect();
+    let vars = std::env::vars_os()
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)));
+    for (name, value) in without_appimage_paths(vars, &appdir.to_string_lossy()) {
+        if !is_appimage_marker(&name) && forced.contains(&name) {
+            continue;
+        }
+        match value {
+            Some(value) => cmd.env(&name, value),
+            None => cmd.env_remove(&name),
+        };
+    }
+}
+
+/// Give a child back the environment the launcher changed for itself.
+///
+/// To draw at all on some Linux machines the launcher forces software
+/// rendering, an X11 backend and an EGL platform on itself. A game must not
+/// inherit that — `LIBGL_ALWAYS_SOFTWARE=1` would run it on the CPU — and
+/// must not lose a setting of the user's either, so each of those variables
+/// goes back to the value it had before the launcher touched it.
+fn restore_what_the_launcher_forced(cmd: &mut tokio::process::Command) {
+    for (name, before) in forced_env() {
+        match before {
+            Some(value) => cmd.env(&name, value),
+            None => cmd.env_remove(&name),
+        };
+    }
+    cmd.env_remove(FORCED_ENV);
+}
+
+/// Take the AppImage's own environment out of a child's.
+///
+/// An AppImage starts the launcher with `LD_LIBRARY_PATH`, `PATH`,
+/// `XDG_DATA_DIRS` and a row of GTK variables pointing into its mount. A game
+/// that inherits them loads the image's libraries — Ubuntu's — instead of the
+/// machine's, which on a Steam Deck is a different distribution altogether.
+/// Every path entry under `appdir` is dropped, a variable that consists of
+/// nothing else goes away, and the image's own markers go with them.
+///
+/// Returns only what changes: the new value, or `None` to remove it.
+/// Names an AppImage sets for itself whatever their value is: its own
+/// markers, and the two settings its GTK hook makes that are not paths
+/// (`GDK_BACKEND=x11` unconditionally, `GTK_THEME` from the host). They exist
+/// for the launcher's window, so they never belong to a game — not even when
+/// the launcher recorded one of them as something it forced, because what it
+/// found there was the image's value too.
+pub fn is_appimage_marker(name: &str) -> bool {
+    matches!(
+        name,
+        "APPDIR" | "APPIMAGE" | "ARGV0" | "OWD" | "GDK_BACKEND" | "GTK_THEME"
+    )
+}
+
+pub fn without_appimage_paths(
+    vars: impl Iterator<Item = (String, String)>,
+    appdir: &str,
+) -> Vec<(String, Option<String>)> {
+    let prefix = appdir.trim_end_matches('/');
+    // `/` as the mount would make every absolute path an entry to strip, and
+    // the child would start with no PATH at all.
+    if prefix.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for (name, value) in vars {
+        if is_appimage_marker(&name) {
+            out.push((name, None));
+            continue;
+        }
+        if !value.contains(prefix) {
+            continue;
+        }
+        let kept: Vec<&str> = value
+            .split(':')
+            .filter(|part| {
+                let part = part.trim_end_matches('/');
+                // An empty entry is nothing to keep — `"$APPDIR/usr/lib:"`
+                // with an unset base would leave the variable set to "".
+                !part.is_empty() && part != prefix && !part.starts_with(&format!("{prefix}/"))
+            })
+            .collect();
+        if kept.len() == value.split(':').count() {
+            continue;
+        }
+        out.push((name, (!kept.is_empty()).then(|| kept.join(":"))));
+    }
+    out
+}
+
+/// The contents of [`FORCED_ENV`]: names with the value they had before.
+pub fn forced_env() -> Vec<(String, Option<String>)> {
+    forced_env_in(&std::env::var(FORCED_ENV).unwrap_or_default())
+}
+
+fn forced_env_in(json: &str) -> Vec<(String, Option<String>)> {
+    serde_json::from_str::<BTreeMap<String, Option<String>>>(json)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(name, _)| !name.is_empty())
+        .collect()
 }
 
 /// Apply a plan's arguments: on Windows the verbatim command line when set
@@ -440,6 +564,87 @@ fn is_unix_executable(_m: &std::fs::Metadata) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_game_does_not_inherit_the_appimage() {
+        // The image's own paths in front of the machine's: a game that keeps
+        // them loads Ubuntu's libraries on an Arch system. What the user put
+        // in those variables stays.
+        let vars = [
+            ("LD_LIBRARY_PATH", "/tmp/.mount_x/usr/lib:/home/deck/lib"),
+            ("XDG_DATA_DIRS", "/tmp/.mount_x/usr/share"),
+            ("GTK_PATH", "/tmp/.mount_x/usr/lib/gtk-3.0"),
+            ("APPDIR", "/tmp/.mount_x"),
+            ("PATH", "/usr/bin:/bin"),
+            ("STEAM_COMPAT_DATA_PATH", "/home/deck/compat"),
+        ];
+        let changes = without_appimage_paths(
+            vars.iter().map(|(k, v)| (k.to_string(), v.to_string())),
+            "/tmp/.mount_x",
+        );
+        assert_eq!(
+            changes,
+            vec![
+                (
+                    "LD_LIBRARY_PATH".to_string(),
+                    Some("/home/deck/lib".to_string())
+                ),
+                ("XDG_DATA_DIRS".to_string(), None),
+                ("GTK_PATH".to_string(), None),
+                ("APPDIR".to_string(), None),
+            ],
+            "the image's entries go, the user's stay, and untouched variables \
+             are not reported at all"
+        );
+        // A path that only looks like the mount is not inside it.
+        assert!(without_appimage_paths(
+            std::iter::once((
+                "LD_LIBRARY_PATH".to_string(),
+                "/tmp/.mount_xyz/lib".to_string()
+            )),
+            "/tmp/.mount_x",
+        )
+        .is_empty());
+        // The GTK hook's own choices are the launcher's, not the game's.
+        assert_eq!(
+            without_appimage_paths(
+                std::iter::once(("GDK_BACKEND".to_string(), "x11".to_string())),
+                "/tmp/.mount_x",
+            ),
+            vec![("GDK_BACKEND".to_string(), None)]
+        );
+        // A mount of "/" would take every absolute path with it, so nothing
+        // is touched at all.
+        assert!(without_appimage_paths(
+            vars.iter().map(|(k, v)| (k.to_string(), v.to_string())),
+            "/",
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn a_game_gets_back_what_the_launcher_changed_for_itself() {
+        // What the launcher set on itself to get its own window drawn: a game
+        // inheriting `LIBGL_ALWAYS_SOFTWARE=1` would run on the CPU. Where
+        // the user had a value of their own, that one goes back — removing it
+        // would take their setting away with ours.
+        let list = forced_env_in(
+            r#"{"LIBGL_ALWAYS_SOFTWARE":null,"GDK_BACKEND":"wayland","EGL_PLATFORM":null}"#,
+        );
+        assert_eq!(
+            list,
+            vec![
+                ("EGL_PLATFORM".to_string(), None),
+                ("GDK_BACKEND".to_string(), Some("wayland".to_string())),
+                ("LIBGL_ALWAYS_SOFTWARE".to_string(), None),
+            ]
+        );
+        // Nothing forced, and nothing to go wrong over: no list, an empty
+        // one, or something that is not JSON at all.
+        assert!(forced_env_in("").is_empty());
+        assert!(forced_env_in("{}").is_empty());
+        assert!(forced_env_in("LIBGL_ALWAYS_SOFTWARE").is_empty());
+    }
 
     #[test]
     fn prereq_installer_requires_a_complete_settled_file() {

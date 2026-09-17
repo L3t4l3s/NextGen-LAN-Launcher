@@ -91,6 +91,18 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   (`NLL_RC` im erzeugten Batch). Zeilen, die scheitern dürfen, sind `elevate::BatchLine::optional`
   — `netsh … delete rule` endet mit 1, wenn keine Regel passte. Neue Zeilen ohne diese
   Kennzeichnung gelten als Pflicht.
+- **EGL auf Linux:** WebKitGTK bricht ab („Could not create default EGL display …"), wenn
+  `eglGetDisplay` scheitert — das Fenster bleibt weiß, im Log steht nur, dass sich die Oberfläche
+  nie gemeldet hat; die Meldung geht ins Terminal. Mesa wählt die Plattform nach `WAYLAND_DISPLAY`,
+  im AppImage läuft GTK aber über X11 (`GDK_BACKEND=x11` aus dem linuxdeploy-Hook) und die
+  Wayland-Bibliotheken stammen aus dem Image. Deshalb setzt `match_the_egl_platform_to_the_window`
+  in `src-tauri/src/lib.rs` `EGL_PLATFORM=x11` für genau diese Kombination.
+- **Umgebung beim Spielstart:** Was der Launcher für sein eigenes Fenster setzt, steht als JSON in
+  `NLL_FORCED_ENV` (`launch::FORCED_ENV`, Name → vorheriger Wert) und wird beim Spielstart wieder
+  hergestellt — sonst läuft ein Spiel mit `LIBGL_ALWAYS_SOFTWARE=1` auf der CPU. Unter einem
+  AppImage entfernt `without_appimage_paths` zusätzlich alle Pfade unter `$APPDIR`, sonst lädt das
+  Spiel die Bibliotheken aus dem Abbild. `prefer_a_renderer_that_draws` läuft vor dem Log-Plugin:
+  dort loggen bringt nichts, die `webview:`-Zeile beim Start sagt, was gilt.
 - **Vorbelegte Zieldatei:** Resilio legt die Datei sofort in voller Größe an und füllt sie dann.
   Der Ordner meldet also 85 GB, während acht Byte angekommen sind. Nur die Zahl der Engine taugt
   als Fortschritt, sobald sie die Freigabe eingelesen hat (`bytes_total` passt dann zur
