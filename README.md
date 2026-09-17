@@ -72,10 +72,14 @@ chmod +x nextgen/*.AppImage
 ```
 
 If the window opens with the right title but stays white, that is the webview, not the launcher:
-WebKitGTK 2.42+ against several Linux drivers. The launcher already turns the DMA-BUF renderer off
-for itself; when that is not enough, start it once as `./NextGen*.AppImage --safe-graphics`
-(software rendering, no compositing, X11 — remembered for later starts, `--no-safe-graphics` undoes
-it). More levers in [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#a-white-window-on-linux).
+WebKitGTK 2.42+ against several Linux drivers. Leave it running — the launcher works through its
+renderer settings by itself, restarting once per setting until one draws, and remembers the one
+that did. That takes up to two minutes on the first start of a machine that needs it and nothing
+at all afterwards. If every setting comes up white, a message box says so and names the file that
+holds what WebKitGTK said about it; send that along.
+`--safe-graphics` skips straight to the last setting on the list, `--no-safe-graphics` forgets the
+machine again. More levers in
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#a-white-window-on-linux).
 
 If Ark shows the zip but extracts nothing, `unzip` in Konsole does the job — GitHub's artifact zips
 carry no folders, and Ark's "open" view is not an extraction. Should the AppImage complain about
@@ -142,18 +146,23 @@ again.
 
 ## Open items
 
-- **A white window on SteamOS:** the Deck's terminal named it — WebKitGTK aborts with "Could not
-  create default EGL display: EGL_BAD_PARAMETER", with and without `--safe-graphics`, so nothing
-  was ever drawn. Mesa chooses the EGL platform from `WAYLAND_DISPLAY` and takes Wayland although
-  the window is an X11 one, and inside the AppImage the Wayland libraries are Ubuntu's, not the
-  device's. The launcher now sets `EGL_PLATFORM=x11` where its window is an X11 one
-  (`GDK_BACKEND=x11`, which the AppImage's own GTK hook sets — the Deck's log shows it) in a
-  Wayland session, and leaves a platform the user chose alone. Verified here
-  only in that the AppImage still renders with the variable set (the failure itself needs a real
-  Wayland compositor and cannot be reproduced under Xvfb), so whether it is what the Deck needed
-  has to be tried there. Two earlier suspicions were ruled out by test: the AppImage renders with
-  the system's `webkit2gtk-4.1` helper directory removed (WebKitGTK finds its own copies) and with
-  `bwrap` gone.
+- **A white window on SteamOS:** still open, and no longer approached by guessing. Four builds each
+  shipped one hypothesis (DMA-BUF off, the helper processes, `bwrap`, the EGL platform) and each
+  had to be tried on the Deck; the last one, `EGL_PLATFORM=x11`, missed like the others. Two of
+  them were ruled out for good by test here: the AppImage renders with the system's
+  `webkit2gtk-4.1` helper directory removed (WebKitGTK finds its own copies) and with `bwrap` gone.
+  So the launcher now climbs a ladder of renderer settings itself
+  (`crates/lanlauncher-core/src/graphics.rs`) and remembers the rung that draws — the machine
+  finds the answer in about two minutes instead of a release per guess. The ladder's own logic is
+  covered by tests, and the climb was run end to end here against a build whose interface can
+  never load; what it cannot do is say which rung a Steam Deck lands on. Three rungs are new and
+  none had been tried on the Deck: `native` (WebKitGTK's own DMA-BUF renderer, which every build so
+  far switched off unconditionally — the reported abort, "Could not create default EGL display",
+  is the call the path *without* it makes, so the standing fix is itself a candidate for the
+  cause), `wayland` (takes back the `GDK_BACKEND=x11` the AppImage forces on every session), and
+  `software-surfaceless` (an EGL display that needs no display server at all). If even that draws
+  nothing, `<log folder>/webview.log` now holds what WebKitGTK said — new in this version, and
+  the reason the next report will not need the launcher re-run from a terminal.
 - **Installer and a running launcher:** the NSIS hook now closes the launcher first and its sync
   engine second, because the launcher restarts an engine it sees dying — and the installer's own
   "close the application?" prompt only comes after the hook. It then waits (up to ten seconds)

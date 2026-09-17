@@ -34,3 +34,8 @@ tracing.workspace = true
 log = "0.4"
 async-trait = "0.1"
 rusqlite = { version = "0.40", features = ["bundled"] }
+
+# Only for sending this process's standard error to a file: what WebKitGTK
+# says about a renderer it cannot use never reaches the Tauri log.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

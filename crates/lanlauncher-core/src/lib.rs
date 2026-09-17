@@ -12,6 +12,8 @@
 //! * [`install`] is the install state machine that decides when a game is playable
 //!   based on what is actually on disk, never on what the sync engine reports.
 //! * [`extract`] verifies and extracts `.eti` (RAR) archives.
+//! * [`graphics`] holds the order in which the Linux shell tries to get its own
+//!   window drawn.
 //! * [`launch`] starts games per platform.
 //! * [`lanpage`] talks to the ETI LANPage (launcher.ini, stats beacon).
 //! * [`diagnostics`] runs environment checks and produces actionable problems.
@@ -20,6 +22,7 @@ pub mod catalog;
 pub mod diagnostics;
 pub mod error;
 pub mod extract;
+pub mod graphics;
 pub mod install;
 pub mod lanpage;
 pub mod launch;

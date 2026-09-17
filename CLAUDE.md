@@ -91,12 +91,32 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   (`NLL_RC` im erzeugten Batch). Zeilen, die scheitern dürfen, sind `elevate::BatchLine::optional`
   — `netsh … delete rule` endet mit 1, wenn keine Regel passte. Neue Zeilen ohne diese
   Kennzeichnung gelten als Pflicht.
+- **Weißes Fenster auf Linux — nicht raten:** Vier Releases lang wurde je eine Vermutung
+  ausgeliefert und auf dem Steam Deck getestet; keine hat getroffen. Hier ist das Problem nicht
+  reproduzierbar (es braucht einen echten Compositor, unter Xvfb zeichnet WebKitGTK). Deshalb gibt
+  es die Leiter in `crates/lanlauncher-core/src/graphics.rs`: eine geordnete Liste von
+  Renderer-Einstellungen, die der Launcher selbst durchprobiert. Meldet sich die Oberfläche nicht
+  (`FRONTEND_READY`, 30 s beim ersten Start, danach 15 s), startet er sich auf der nächsten Sprosse
+  neu; die Sprosse, die zeichnet, landet in `~/.config/xyz.nextgen-lan.launcher/graphics.json`.
+  **Neue Erkenntnisse gehören als Sprosse in diese Liste, nicht als neuer Sonderfall in
+  `lib.rs`.** Zwei Details, die beim Ändern leicht kaputtgehen: (1) Der Neustart stellt *alle*
+  Namen aus `graphics::touched_names()` auf ihren Wert von vor dem Launcher zurück und lässt erst
+  dann das Kind die neue Sprosse anwenden — sonst erbt `native` (die Sprosse, die nichts setzt) die
+  Einstellungen der Sprosse davor. (2) Ein Wert, den der Benutzer selbst gesetzt hat, bleibt
+  stehen; Ausnahme ist `GDK_BACKEND`/`GTK_THEME` unter einem AppImage, denn die setzt der
+  linuxdeploy-Hook ungefragt (`is_a_choice`).
 - **EGL auf Linux:** WebKitGTK bricht ab („Could not create default EGL display …"), wenn
   `eglGetDisplay` scheitert — das Fenster bleibt weiß, im Log steht nur, dass sich die Oberfläche
-  nie gemeldet hat; die Meldung geht ins Terminal. Mesa wählt die Plattform nach `WAYLAND_DISPLAY`,
-  im AppImage läuft GTK aber über X11 (`GDK_BACKEND=x11` aus dem linuxdeploy-Hook) und die
-  Wayland-Bibliotheken stammen aus dem Image. Deshalb setzt `match_the_egl_platform_to_the_window`
-  in `src-tauri/src/lib.rs` `EGL_PLATFORM=x11` für genau diese Kombination.
+  nie gemeldet hat. Wichtig beim Lesen: Das ist der *Default*-Display, den der Pfad **ohne**
+  DMA-BUF-Renderer anfordert. `WEBKIT_DISABLE_DMABUF_RENDERER=1` — bis dahin das Gegenmittel gegen
+  weiße Fenster — kommt damit als Ursache genau dieses Abbruchs infrage; darum steht `native` an
+  zweiter Stelle der Leiter.
+- **Terminal-Meldungen des Webviews:** Der Web-Prozess schreibt sie auf Standardfehler, nicht ins
+  Tauri-Log; ein über Desktop-Symbol oder Steam gestarteter Launcher hat kein Terminal, und genau
+  deshalb musste bisher jeder Bericht von Hand aus einer Shell wiederholt werden.
+  `keep_what_the_webview_says` in `src-tauri/src/lib.rs` hängt Standardfehler per `dup2` an
+  `<Log-Ordner>/webview.log` — außer auf einem TTY, dort bleibt die Ausgabe sichtbar. Läuft nach
+  `prefer_a_renderer_that_draws` (die Kopfzeile nennt die Sprosse) und vor dem Tauri-Builder.
 - **Umgebung beim Spielstart:** Was der Launcher für sein eigenes Fenster setzt, steht als JSON in
   `NLL_FORCED_ENV` (`launch::FORCED_ENV`, Name → vorheriger Wert) und wird beim Spielstart wieder
   hergestellt — sonst läuft ein Spiel mit `LIBGL_ALWAYS_SOFTWARE=1` auf der CPU. Unter einem

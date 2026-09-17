@@ -18,7 +18,7 @@ the background.
 | Status bar shows "N Hinweise" but Downloads looks empty | Playable games with a warning were filtered out. | Downloads has a "Hinweise" section listing playable games with a problem card. |
 | No covers | `eti_launcher/update/assets.eti` missing, unreadable, or not a (gzip) tar. | Extraction result is logged (`covers: …`); Diagnose shows `catalog.covers_missing` when the file exists but the cache is empty. |
 | Game starts but LAN browser empty (Mac) | Bonjour service inside the bottle, firewall. | See manifest notes (e.g. wc3). |
-| Window opens with the right title but stays white (Linux, e.g. SteamOS) | WebKitGTK 2.42+ draws through DMA-BUF, which several drivers answer with nothing. | The launcher sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` for itself before the window is created; the log's second line says so. See below when it is still white. |
+| Window opens with the right title but stays white (Linux, e.g. SteamOS) | WebKitGTK and the machine's graphics stack disagree, in one of several ways. | The launcher works through its renderer settings by itself, restarting on the next one each time the interface fails to report, and remembers the one that draws. See below. |
 
 Logs: **Diagnose → Log-Ordner öffnen**. Windows: `%LOCALAPPDATA%\xyz.nextgen-lan.launcher\logs\launcher.log`
 (not the Roaming folder that holds `settings.json`), macOS: `~/Library/Logs/xyz.nextgen-lan.launcher/`,
@@ -27,71 +27,104 @@ Linux: `~/.local/share/xyz.nextgen-lan.launcher/logs/`. The first line names ver
 ## A white window on Linux
 
 The window appears, the title is right, the content never comes. That is the webview, not the
-launcher: WebKitGTK 2.42 and newer render through DMA-BUF, and several Linux graphics stacks
-(SteamOS on the Steam Deck among them) show nothing at all through that path.
+launcher, and which setting gets WebKitGTK to draw depends on the driver, the session and — in an
+AppImage — on which libraries the image brought along. There is no single answer to ship, so the
+launcher looks for one on the machine itself.
 
-The launcher sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` for itself at start. Whether a given build
-does is in the log's second line (`webview: WEBKIT_DISABLE_DMABUF_RENDERER=…`); on a build from
-before that, or to try it by hand, start the AppImage from a terminal:
+### What it does on its own
 
-```bash
-WEBKIT_DISABLE_DMABUF_RENDERER=1 ./NextGen\ LAN\ Launcher_*.AppImage
+Each start applies one set of renderer settings. If the interface has not reported for duty within
+30 seconds (15 on every start after the first), the launcher restarts itself with the next set. It
+works down this ladder:
+
+| Step | What it does |
+|---|---|
+| `no-dmabuf` | WebKitGTK's DMA-BUF renderer off. Fixes the majority of white GTK webviews. |
+| `native` | Nothing forced at all — WebKitGTK's own renderer on the session's own backend. |
+| `wayland` | Window and EGL both on Wayland, which undoes the `GDK_BACKEND=x11` the AppImage forces on every session. Only in a Wayland session. |
+| `x11` | Window and EGL both on X11. Only with an X server. |
+| `software` | No compositing, software GL (llvmpipe) on X11. Only with an X server. |
+| `software-surfaceless` | The same, plus an EGL display that needs no display server. Always available, so the ladder always ends here. |
+
+The step that draws is remembered in `~/.config/xyz.nextgen-lan.launcher/graphics.json` and used
+directly on every later start, so the climb costs its couple of minutes once per machine. Such a
+remembered step gets 60 seconds rather than 30 before the launcher gives up on it, so one slow
+morning does not push a machine that works down the ladder; and a remembered step that really has
+stopped drawing — a driver update, a different session — sends the climb back to the top rather
+than one rung further down.
+
+A step can also fail harder than white: settings that make GTK or the driver give up take the
+process down before there is any window, and then nothing is left running to notice. The launcher
+writes down which step it is about to try before it tries it, and clears that note the moment a
+window exists — so a step that killed the last run is left out of the next one (`graphics step …
+left out` in the log), while a window the user simply closed early counts as a normal run and
+costs nothing.
+
+The `webview:` line in `launcher.log` names the step in force; a `graphics step … drew nothing`
+line marks each restart.
+
+If the whole ladder draws nothing, a message box says so — it comes from the window manager rather
+than from the webview, so it is visible even then — and names the file described below. The
+climb is then forgotten rather than pinned at the bottom, so a machine that is fixed later starts
+over from the top by itself.
+
+### What WebKitGTK says about it
+
+Those messages never reached `launcher.log`: the web process writes them to standard error, and a
+launcher started from a desktop entry or from Steam has no terminal. Since 0.1.0 they are kept in
+
+```
+~/.local/share/xyz.nextgen-lan.launcher/logs/webview.log
 ```
 
-Since 0.1.0 the launcher also has a switch for the case where WebKitGTK draws
-nothing whatever the renderer does:
+with a header per step of the climb, so one white-window run produces the whole record. **That file
+plus `launcher.log` from the same folder is what a report needs.** Started from a terminal the
+output stays in the terminal instead, unchanged:
 
 ```bash
-./NextGen*.AppImage --safe-graphics     # software rendering, no compositing, X11
-./NextGen*.AppImage --no-safe-graphics  # back to the normal path
+./NextGen*.AppImage 2>&1 | tee ~/nll-terminal.log
 ```
 
-The choice is remembered (`~/.config/xyz.nextgen-lan.launcher/safe-graphics`), so it also applies
-when the launcher is started from Steam or a desktop entry afterwards. The log's `webview:` line
-names every setting in force.
+`libGL`, `EGL`, `Gdk` and `WebKit` lines in there name the piece that fails.
 
-Still white? The next levers, one at a time:
+### Steering it by hand
 
 ```bash
-WEBKIT_DISABLE_COMPOSITING_MODE=1 ./NextGen*.AppImage   # older WebKitGTK, same symptom
-GDK_BACKEND=x11 ./NextGen*.AppImage                     # on a Wayland session
-./NextGen*.AppImage --appimage-extract-and-run          # when FUSE is the problem
+./NextGen*.AppImage --safe-graphics     # straight to the bottom of the ladder
+./NextGen*.AppImage --no-safe-graphics  # forget this machine, climb again from the top
 ```
 
-The log's second line records which renderer setting was in force and whether the session is X11
-or Wayland, so a report of a white window can say which combination it was. To keep the
-accelerated path on a machine where it works, set `WEBKIT_DISABLE_DMABUF_RENDERER=0`.
+The choice is remembered, so it also applies when the launcher is started from Steam or a desktop
+entry afterwards. Any of the variables a step sets can also be set by hand, and such a value is
+left alone:
 
-One failure has a name of its own. If the terminal shows
+```bash
+WEBKIT_DISABLE_DMABUF_RENDERER=0 ./NextGen*.AppImage   # keep the accelerated path
+EGL_PLATFORM=wayland ./NextGen*.AppImage               # pin the EGL platform
+./NextGen*.AppImage --appimage-extract-and-run         # when FUSE is the problem
+```
+
+A pin does not silently disable half a step: a step that wants one of the pinned variables set to
+something else is **skipped whole**, and the climb goes on to the next. Half of `x11` would be a
+window on X11 with EGL left on Wayland, which is the mismatch the ladder exists to undo. Pinning
+`WEBKIT_DISABLE_DMABUF_RENDERER=0` therefore leaves `native` as the only step on the ladder, which
+is exactly what "keep the accelerated path" should mean.
+
+The one exception is `GDK_BACKEND` (and `GTK_THEME`) under an AppImage: the image's own GTK hook
+sets them for every session, unasked, so they are not treated as anyone's choice — and taking the
+forced `GDK_BACKEND=x11` back is precisely what the `wayland` step is for.
+
+### One failure with a name of its own
 
 ```
 Could not create default EGL display: EGL_BAD_PARAMETER. Aborting...
 ```
 
-then WebKitGTK gave up before drawing anything: it could not get an EGL display at all. Mesa picks
-the EGL platform from the environment, and `WAYLAND_DISPLAY` makes it choose Wayland even where the
-window is an X11 one — which is what the AppImage arranges (its GTK hook sets `GDK_BACKEND=x11`),
-and the Wayland libraries it then uses are the ones inside the image rather than the machine's.
-Since 0.1.0 the launcher sets `EGL_PLATFORM=x11` itself for that combination — an X11 window
-(`GDK_BACKEND=x11`, which the AppImage sets) in a Wayland session. The `webview:` line in the log
-names the platform in force, and a platform set by hand is left alone, which is also how to undo
-it:
-
-```bash
-EGL_PLATFORM=x11 ./NextGen*.AppImage        # by hand, on an older build
-EGL_PLATFORM=wayland ./NextGen*.AppImage    # or the other way, to try Wayland's
-```
-
-If none of it helps, the interesting messages are the ones WebKitGTK writes to the terminal when
-its web process gives up. They do not reach `launcher.log`, so run it once like this and keep the
-file:
-
-```bash
-./NextGen*.AppImage --safe-graphics 2>&1 | tee ~/nll-terminal.log
-```
-
-`libGL`, `EGL`, `Gdk` and `WebKit` lines in there name the piece that fails; `launcher.log` on its
-own only shows that the interface never reported for duty (no `interface ready` line).
+WebKitGTK gave up before drawing anything: it could not get an EGL display at all. Worth knowing
+when reading it — this is the *default* display, which is what the path **without** the DMA-BUF
+renderer asks for. A launcher that turns that renderer off to avoid a white window can therefore be
+the reason for this particular abort, which is why `native` sits second on the ladder: it is the
+only step that leaves WebKitGTK's own renderer alone.
 
 ## Folder mode
 

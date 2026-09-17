@@ -554,58 +554,200 @@ pub(crate) fn build_manager(
     Arc::new(manager)
 }
 
-/// WebKitGTK 2.42 and newer draw through DMA-BUF. Several Linux graphics
-/// stacks answer that with nothing at all: the window appears, with the right
-/// title, and stays white — seen on SteamOS on a Steam Deck, and reported for
-/// the same combination by every other GTK webview app.
+/// Get the window drawn, and find out how if the first try does not.
 ///
-/// Turning the DMA-BUF renderer off is the fix, and it is applied everywhere
-/// on Linux rather than guessed per machine: a white window makes the
-/// launcher useless, while the cost is accelerated compositing — noticeable
-/// at most on the preview video of a game's detail page. Whoever knows their
-/// machine draws fine sets `WEBKIT_DISABLE_DMABUF_RENDERER=0` and keeps it.
+/// A white window is the one failure the launcher cannot see from the inside:
+/// the window exists, the title is right, and WebKitGTK paints nothing.
+/// Which renderer settings work depends on the driver, the session and — in
+/// an AppImage — on which libraries the image brought along, so there is no
+/// single answer to bake in. Guessing one per release costs a release per
+/// guess, and on a Steam Deck four of them have missed.
+///
+/// So the launcher climbs [`lanlauncher_core::graphics::STEPS`] itself: it
+/// starts on the first step the session allows, and each time the interface
+/// fails to report for duty it restarts on the next one (see
+/// [`warn_about_a_blank_window`]). The step that draws is remembered, so the
+/// wait happens once per machine. `--safe-graphics` jumps straight to the
+/// bottom of the ladder, `--no-safe-graphics` forgets everything again.
 ///
 /// Called first thing in [`run`], before the webview exists and while the
 /// process is still single-threaded — and before the log plugin exists, so
 /// nothing here logs; what it decided is in the `webview:` line at startup.
 #[cfg(target_os = "linux")]
 fn prefer_a_renderer_that_draws() {
+    use lanlauncher_core::graphics::{self, Session};
+
+    let session = Session::from_env();
+    let mut memory = read_graphics_memory();
+    // The window opens, the interface runs, and the machine still paints
+    // nothing: `--safe-graphics` goes straight to the step that asks the
+    // graphics stack for as little as anything can, `--no-safe-graphics`
+    // forgets every memory of this machine and starts the climb again.
+    let asked = std::env::args().any(|a| a == "--safe-graphics");
+    let cancelled = std::env::args().any(|a| a == "--no-safe-graphics");
+    if cancelled {
+        memory = graphics::GraphicsMemory::default();
+        write_graphics_memory(&memory);
+    } else if asked {
+        memory.good = None;
+        memory.trying = Some(graphics::safest(session).name.to_string());
+        write_graphics_memory(&memory);
+    }
+    // A restart names the step in the environment, and that wins: the state
+    // file may be unwritable (a read-only home), and the climb has to get on
+    // without it rather than try the same step for ever.
+    let from_a_restart = std::env::var(STEP_ENV)
+        .ok()
+        .and_then(|name| graphics::step(&name));
+    let wanted = from_a_restart.unwrap_or_else(|| memory.step_to_use(session));
+    // A step whose settings somebody has pinned to something else is skipped
+    // whole rather than applied in part — and so is one that took the last run
+    // down before it had a window, which no watchdog inside that run could
+    // have noticed.
+    let usable =
+        |s| graphics::blocked_by(s, &pinned).is_none() && !memory.took_the_last_run_down(s.name);
+    let step = if usable(wanted) {
+        wanted
+    } else {
+        next_usable_after(wanted.name, session).unwrap_or_else(|| first_usable(session))
+    };
+    if memory.took_the_last_run_down(wanted.name) {
+        // Nothing logs yet — the log plugin comes later — so the note goes
+        // where the `webview:` line can pick it up.
+        let _ = SKIPPED_A_KILLER.set(wanted.name);
+    }
+
     // What is forced here belongs to this window only. A game started later
     // must not inherit it, so every name lands in `NLL_FORCED_ENV` together
     // with the value it had, and the launch code puts that value back into a
-    // child's environment. The record starts with what a previous run of this
-    // launcher forced on this one (the restart after a blank window hands it
-    // over): by then everything is set, so it could not be worked out again.
+    // child's environment.
     let mut forced = forced_so_far();
-    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
-        force("WEBKIT_DISABLE_DMABUF_RENDERER", "1", &mut forced);
+    for (name, value) in step.env {
+        force(name, value, &mut forced);
     }
-    // The window opens, the interface runs, and the machine still paints
-    // nothing: no program can see that from the inside, so this one is a
-    // switch. `--safe-graphics` turns everything off that a graphics stack
-    // can fail at and is remembered, `--no-safe-graphics` forgets it again.
-    let asked = std::env::args().any(|a| a == "--safe-graphics");
-    let cancelled = std::env::args().any(|a| a == "--no-safe-graphics");
-    let marker = safe_graphics_marker();
-    if let Some(marker) = &marker {
-        if asked {
-            if let Some(dir) = marker.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            let _ = std::fs::write(marker, "Started with --safe-graphics.\n");
-        } else if cancelled {
-            let _ = std::fs::remove_file(marker);
-        }
-    }
-    let remembered = marker.map(|m| m.is_file()).unwrap_or(false);
-    if (asked || remembered) && !cancelled {
-        for (key, value) in safe_rendering_env() {
-            force(key, &value, &mut forced);
-        }
-    }
-    // After the backend is decided: the EGL platform follows the window.
-    match_the_egl_platform_to_the_window(&mut forced);
     remember_what_was_forced(&forced);
+    let _ = CURRENT_STEP.set(step);
+    // A step this machine is known to draw on has earned more patience than
+    // the next guess of a climb: see `warn_about_a_blank_window`.
+    let _ = STEP_CAME_FROM_MEMORY
+        .set(from_a_restart.is_none() && memory.good.as_deref() == Some(step.name));
+    // Before the window: if the settings above are fatal, this is what is
+    // left behind to say which step it was.
+    memory.attempted = Some(step.name.to_string());
+    write_graphics_memory(&memory);
+}
+
+/// A step left out because it had already killed a run. Named in the
+/// `webview:` line, since nothing can log this early.
+#[cfg(target_os = "linux")]
+static SKIPPED_A_KILLER: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
+/// The window exists, so whatever the step did, it was not fatal. Clearing
+/// the note here and not later is the point: a user who closes a white window
+/// after five seconds must not be read as a crash and pushed down the ladder.
+#[cfg(target_os = "linux")]
+fn mark_the_window_came_up() {
+    let mut memory = read_graphics_memory();
+    if memory.attempted.is_none() {
+        return;
+    }
+    memory.attempted = None;
+    write_graphics_memory(&memory);
+}
+
+/// What somebody pinned a variable to before the launcher started, or `None`
+/// when the launcher is free to set it.
+///
+/// Read before anything is forced, the environment still holds the values the
+/// session came with; read afterwards, `NLL_FORCED_ENV` names what this
+/// process changed, and those are not pins.
+#[cfg(target_os = "linux")]
+fn pinned(name: &str) -> Option<String> {
+    if !is_a_choice(name) || forced_so_far().contains_key(name) {
+        return None;
+    }
+    std::env::var(name).ok()
+}
+
+/// The first step of the ladder nothing stands in the way of. `native` sets
+/// nothing and can never be blocked, so there is always one.
+#[cfg(target_os = "linux")]
+fn first_usable(
+    session: lanlauncher_core::graphics::Session,
+) -> &'static lanlauncher_core::graphics::RenderStep {
+    use lanlauncher_core::graphics;
+
+    let first = graphics::first(session);
+    if is_usable(first) {
+        return first;
+    }
+    next_usable_after(first.name, session).unwrap_or(first)
+}
+
+/// Whether a step can be applied at all: nothing pinned against it, and it
+/// did not take the last run down before that run had a window.
+#[cfg(target_os = "linux")]
+fn is_usable(step: &lanlauncher_core::graphics::RenderStep) -> bool {
+    use lanlauncher_core::graphics;
+
+    graphics::blocked_by(step, &pinned).is_none()
+        && !read_graphics_memory().took_the_last_run_down(step.name)
+}
+
+/// The next step after this one that the session allows and nothing blocks.
+#[cfg(target_os = "linux")]
+fn next_usable_after(
+    name: &str,
+    session: lanlauncher_core::graphics::Session,
+) -> Option<&'static lanlauncher_core::graphics::RenderStep> {
+    use lanlauncher_core::graphics;
+
+    let mut at = name.to_string();
+    while let Some(next) = graphics::next_after(&at, session) {
+        if is_usable(next) {
+            return Some(next);
+        }
+        at = next.name.to_string();
+    }
+    None
+}
+
+/// The step this run is climbing on. Set once, before the window exists.
+#[cfg(target_os = "linux")]
+static CURRENT_STEP: std::sync::OnceLock<&'static lanlauncher_core::graphics::RenderStep> =
+    std::sync::OnceLock::new();
+
+/// Whether that step is one this machine has drawn on before, rather than the
+/// next guess of a climb.
+#[cfg(target_os = "linux")]
+static STEP_CAME_FROM_MEMORY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+#[cfg(target_os = "linux")]
+fn current_step() -> &'static lanlauncher_core::graphics::RenderStep {
+    CURRENT_STEP
+        .get()
+        .copied()
+        .unwrap_or_else(|| lanlauncher_core::graphics::first(Default::default()))
+}
+
+/// Names the restart hands to its successor: which step to climb on, and that
+/// this is no longer the first, slower start.
+#[cfg(target_os = "linux")]
+const STEP_ENV: &str = "NLL_GRAPHICS_STEP";
+#[cfg(target_os = "linux")]
+const RETRY_ENV: &str = "NLL_GRAPHICS_RETRY";
+
+/// Whether a value already in the environment is somebody's decision, which
+/// the climb respects, or something that came with the packaging.
+///
+/// An AppImage's GTK hook sets `GDK_BACKEND=x11` and a theme on every session
+/// it starts, whether or not that fits the compositor. That is the image's
+/// opinion rather than a choice, and undoing it is exactly what two of the
+/// steps are for.
+#[cfg(target_os = "linux")]
+fn is_a_choice(name: &str) -> bool {
+    let from_the_image = matches!(name, "GDK_BACKEND" | "GTK_THEME");
+    !(from_the_image && std::env::var_os("APPDIR").is_some())
 }
 
 /// What this launcher (or the one that started it) has already changed for
@@ -637,48 +779,144 @@ fn remember_what_was_forced(forced: &std::collections::BTreeMap<String, Option<S
     }
 }
 
-/// Tell EGL to use the same platform the window uses.
-///
-/// WebKitGTK gives up when `eglGetDisplay(EGL_DEFAULT_DISPLAY)` fails — on a
-/// Steam Deck it prints "Could not create default EGL display:
-/// EGL_BAD_PARAMETER. Aborting..." and the window stays white with nothing in
-/// it, whatever the renderer settings say. Mesa reads the platform from the
-/// environment, and `WAYLAND_DISPLAY` makes it choose Wayland even where the
-/// window is an X11 one (which is what an AppImage does: its GTK hook sets
-/// `GDK_BACKEND=x11`). The Wayland libraries it then uses are the ones the
-/// AppImage brought along, and those need not fit the compositor of the
-/// machine. Where the window is X11, EGL is pointed at X11 as well.
-///
-/// Only when the user has not chosen a platform themselves, and only with an
-/// X server to point at.
-#[cfg(target_os = "linux")]
-fn match_the_egl_platform_to_the_window(
-    forced: &mut std::collections::BTreeMap<String, Option<String>>,
-) {
-    if std::env::var_os("EGL_PLATFORM").is_some() {
-        return;
-    }
-    let window_is_x11 = std::env::var("GDK_BACKEND")
-        .map(|b| b.split(',').next() == Some("x11"))
-        .unwrap_or(false);
-    let session_is_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
-    if !window_is_x11 || !session_is_wayland || std::env::var_os("DISPLAY").is_none() {
-        return;
-    }
-    force("EGL_PLATFORM", "x11", forced);
-}
-
-/// Where the `--safe-graphics` choice is remembered. Written before the Tauri
+/// Where what this machine needs is remembered. Written before the Tauri
 /// paths exist, so the XDG location is built by hand — the same directory
 /// Tauri's `app_config_dir()` returns for this identifier.
 #[cfg(target_os = "linux")]
-fn safe_graphics_marker() -> Option<std::path::PathBuf> {
+fn graphics_memory_file() -> Option<std::path::PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(std::path::PathBuf::from)
         .or_else(|| {
             std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
         })?;
-    Some(base.join("xyz.nextgen-lan.launcher").join("safe-graphics"))
+    Some(base.join("xyz.nextgen-lan.launcher").join("graphics.json"))
+}
+
+#[cfg(target_os = "linux")]
+fn read_graphics_memory() -> lanlauncher_core::graphics::GraphicsMemory {
+    use lanlauncher_core::graphics::{self, GraphicsMemory};
+
+    let Some(path) = graphics_memory_file() else {
+        return GraphicsMemory::default();
+    };
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        return GraphicsMemory::parse(&text);
+    }
+    // Builds before the ladder remembered one bit — that `--safe-graphics`
+    // had been asked for. What it meant then is the `software` step, name for
+    // name, so that is where such a machine picks up — as a climb in progress
+    // rather than as a settled answer, so the step below it is still to come
+    // if `software` no longer does the job.
+    let old = path.with_file_name("safe-graphics");
+    if old.is_file() {
+        return GraphicsMemory {
+            good: None,
+            trying: graphics::step("software").map(|s| s.name.to_string()),
+            attempted: None,
+        };
+    }
+    GraphicsMemory::default()
+}
+
+#[cfg(target_os = "linux")]
+fn write_graphics_memory(memory: &lanlauncher_core::graphics::GraphicsMemory) {
+    let Some(path) = graphics_memory_file() else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&path, memory.to_json());
+    // The switch the ladder replaces: leaving it behind would send the next
+    // build that reads it back to the bottom of the ladder.
+    let _ = std::fs::remove_file(path.with_file_name("safe-graphics"));
+}
+
+/// The interface reported for duty, so this step draws on this machine. Later
+/// starts use it directly instead of climbing again.
+#[cfg(target_os = "linux")]
+fn remember_that_it_drew() {
+    let step = current_step().name;
+    let mut memory = read_graphics_memory();
+    if memory.good.as_deref() == Some(step) && memory.trying.is_none() {
+        return; // Nothing new to say; no need to touch the disk on every start.
+    }
+    memory.good = Some(step.to_string());
+    memory.trying = None;
+    write_graphics_memory(&memory);
+}
+
+/// Where the messages WebKitGTK writes to its standard error are kept.
+///
+/// They never reach `launcher.log` — the web process writes them to the
+/// terminal, and a launcher started from a desktop entry or from Steam has
+/// none, which is why every report so far had to be re-run by hand from a
+/// shell. The same directory the log plugin's `LogDir` target uses.
+#[cfg(target_os = "linux")]
+fn webview_message_file() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
+        })?;
+    Some(
+        base.join("xyz.nextgen-lan.launcher")
+            .join("logs")
+            .join("webview.log"),
+    )
+}
+
+/// Send this process's standard error to that file, so what the webview says
+/// about a failure survives the run that saw it.
+///
+/// Every step of the climb appends, because the interesting lines are the
+/// ones from the step that just failed while the next one is already running.
+/// A terminal is left alone: there the output is in front of whoever started
+/// it, and taking it away would make a report harder, not easier.
+#[cfg(target_os = "linux")]
+fn keep_what_the_webview_says() {
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+
+    if unsafe { libc::isatty(libc::STDERR_FILENO) } == 1 {
+        return;
+    }
+    let Some(path) = webview_message_file() else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    // Appending for ever would fill the disk of a machine that logs a line
+    // per frame, so the file starts again once it is bigger than a report
+    // anyone would read.
+    let too_big = std::fs::metadata(&path)
+        .map(|m| m.len() > 256 * 1024)
+        .unwrap_or(false);
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).write(true);
+    if too_big {
+        options.truncate(true);
+    } else {
+        options.append(true);
+    }
+    let Ok(mut file) = options.open(&path) else {
+        return;
+    };
+    let step = current_step();
+    let _ = writeln!(
+        file,
+        "\n--- NextGen LAN Launcher {} on graphics step {} ({}) ---",
+        app_version(),
+        step.name,
+        step.what
+    );
+    let _ = file.flush();
+    // `dup2` copies the descriptor, so dropping the handle below closes only
+    // the original one and standard error keeps pointing at the file.
+    unsafe {
+        libc::dup2(file.as_raw_fd(), libc::STDERR_FILENO);
+    }
 }
 
 /// Set when the interface has reported for duty (`frontend_ready`). The
@@ -687,35 +925,12 @@ fn safe_graphics_marker() -> Option<std::path::PathBuf> {
 pub(crate) static FRONTEND_READY: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-/// Marks the run that already took the safe rendering path, so the restart
-/// below happens once and never turns into a loop.
+/// Start this launcher again on the next step of the ladder. `Some` once the
+/// new process is on its way; the caller then ends this one.
 #[cfg(target_os = "linux")]
-const FALLBACK_MARKER: &str = "NLL_WEBVIEW_FALLBACK";
+fn restart_on(step: &lanlauncher_core::graphics::RenderStep) -> Option<()> {
+    use lanlauncher_core::graphics;
 
-/// Everything that makes WebKitGTK draw on a machine where it otherwise does
-/// not — accelerated rendering off, software GL, X11 rather than Wayland.
-/// Slow, and it does not matter: this is a page of text and boxes, and the
-/// alternative is a white window.
-#[cfg(target_os = "linux")]
-fn safe_rendering_env() -> Vec<(&'static str, String)> {
-    let mut env = vec![
-        ("WEBKIT_DISABLE_DMABUF_RENDERER", "1".to_string()),
-        ("WEBKIT_DISABLE_COMPOSITING_MODE", "1".to_string()),
-        ("LIBGL_ALWAYS_SOFTWARE", "1".to_string()),
-        (FALLBACK_MARKER, "1".to_string()),
-    ];
-    // Only with an X server to fall back to: forcing x11 in a pure Wayland
-    // session without XWayland would not start at all.
-    if std::env::var_os("DISPLAY").is_some() {
-        env.push(("GDK_BACKEND", "x11".to_string()));
-    }
-    env
-}
-
-/// Start this launcher again with the safe rendering settings. `Some` once
-/// the new process is on its way; the caller then ends this one.
-#[cfg(target_os = "linux")]
-fn restart_with_safe_rendering() -> Option<()> {
     let exe = std::env::current_exe().ok()?;
     // Inside an AppImage the extracted binary is gone once this process ends;
     // the AppImage itself is the thing to start again.
@@ -724,27 +939,39 @@ fn restart_with_safe_rendering() -> Option<()> {
         .unwrap_or(exe);
     let mut cmd = std::process::Command::new(&program);
     cmd.args(std::env::args().skip(1));
-    // The successor gets the settings and the list of what was forced on it:
-    // it cannot work that out for itself (everything is already set by the
-    // time it looks), and without the list a game started from it would
-    // inherit software rendering.
+    // The successor starts from the environment this machine had before the
+    // launcher touched it and applies the next step to that. Handing on what
+    // this run forced instead would leave `native` — the step that forces
+    // nothing — with the settings of the step before it.
     let mut forced = forced_so_far();
-    for (key, value) in safe_rendering_env() {
-        let before = std::env::var(key).ok();
-        if before.as_deref() != Some(value.as_str()) {
-            forced.entry(key.to_string()).or_insert(before);
+    for name in graphics::touched_names() {
+        match forced.remove(name) {
+            Some(Some(before)) => {
+                cmd.env(name, before);
+            }
+            Some(None) => {
+                cmd.env_remove(name);
+            }
+            // Never touched by this launcher: whatever it holds is not ours
+            // to restore.
+            None => {}
         }
-        cmd.env(key, value);
     }
-    if let Ok(json) = serde_json::to_string(&forced) {
+    if forced.is_empty() {
+        cmd.env_remove(lanlauncher_core::launch::FORCED_ENV);
+    } else if let Ok(json) = serde_json::to_string(&forced) {
         cmd.env(lanlauncher_core::launch::FORCED_ENV, json);
     }
+    cmd.env(STEP_ENV, step.name);
+    cmd.env(RETRY_ENV, "1");
     match cmd.spawn() {
         Ok(child) => {
             log::warn!(
-                "restarted as {} (pid {}) with software rendering",
+                "restarted as {} (pid {}) on graphics step {} ({})",
                 program.display(),
-                child.id()
+                child.id(),
+                step.name,
+                step.what
             );
             Some(())
         }
@@ -759,51 +986,154 @@ fn restart_with_safe_rendering() -> Option<()> {
 ///
 /// The window is there, the title is right, the page never arrives: on Linux
 /// that is the webview's renderer or its web process, and the user sees white.
-/// The launcher then starts itself once more with everything that makes
-/// WebKitGTK draw, and only says so when that did not help either — a message
-/// box comes from the window manager rather than from the webview, so it is
-/// visible even then.
+/// The launcher then starts itself again on the next step of the ladder, and
+/// only says so once the ladder runs out — a message box comes from the window
+/// manager rather than from the webview, so it is visible even then.
 fn warn_about_a_blank_window(app: &tauri::AppHandle) {
     use std::sync::atomic::Ordering;
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        // Long enough for a cold start on a slow disk and for the retries of
-        // the report itself: anything shorter risks restarting a launcher
-        // that was merely still starting.
-        for _ in 0..30 {
+        // A cold start on a slow disk needs the long wait, and so do the
+        // retries of the report itself; anything shorter risks restarting a
+        // launcher that was merely still starting. Every start of a climb
+        // after the first is warm, and the climb would otherwise take
+        // minutes. A step this machine has drawn on before gets the longest
+        // wait of all: there the cost of being wrong is not one more restart
+        // but demoting a machine that works down the ladder over a single
+        // slow morning.
+        #[cfg(target_os = "linux")]
+        let patience = if std::env::var_os(RETRY_ENV).is_some() {
+            15
+        } else if STEP_CAME_FROM_MEMORY.get().copied().unwrap_or(false) {
+            60
+        } else {
+            30
+        };
+        #[cfg(not(target_os = "linux"))]
+        let patience = 30;
+        for _ in 0..patience {
             tokio::time::sleep(Duration::from_secs(1)).await;
             if FRONTEND_READY.load(Ordering::Relaxed) {
+                #[cfg(target_os = "linux")]
+                remember_that_it_drew();
                 return;
             }
         }
-        log::error!("the interface did not report for duty within 30 s");
+        log::error!("the interface did not report for duty within {patience} s");
+        // Only set where the ladder had somewhere to go and getting there
+        // failed, which is a different message from having tried everything.
         #[cfg(target_os = "linux")]
-        if std::env::var_os(FALLBACK_MARKER).is_none() {
-            // The successor shares the sync engine's folder, pid file and
-            // port, so this one lets go of the engine first — a successor
-            // that finds it still running would kill it as an orphan instead
-            // of letting it shut down through its API. The window is blank
-            // either way, so nothing is lost if the restart then fails.
-            if let Some(state) = app.try_state::<Arc<AppState>>() {
-                if let Some(transport) = state.transport.write().await.take() {
-                    let _ = transport.stop().await;
+        let mut could_not_restart = false;
+        #[cfg(target_os = "linux")]
+        {
+            use lanlauncher_core::graphics::Session;
+
+            let session = Session::from_env();
+            let current = current_step();
+            let mut memory = read_graphics_memory();
+            // A step that drew on this machine before and does not now says
+            // the machine changed, not that this step is too high on the
+            // ladder: a driver update, a different session, a Wayland
+            // compositor where there was an X one. So the climb starts again
+            // from the top rather than walking down from a rung that is no
+            // longer the right place to begin. `good` is cleared first, so
+            // the next failure takes the ordinary path and the climb ends.
+            let drew_here_before = memory.good.as_deref() == Some(current.name);
+            let top = first_usable(session);
+            let next = if drew_here_before && top.name != current.name {
+                Some(top)
+            } else {
+                next_usable_after(current.name, session)
+            };
+            if let Some(next) = next {
+                log::warn!(
+                    "graphics step {} drew nothing; next is {} ({})",
+                    current.name,
+                    next.name,
+                    next.what
+                );
+                memory.good = None;
+                memory.trying = Some(next.name.to_string());
+                write_graphics_memory(&memory);
+                // The successor shares the sync engine's folder, pid file and
+                // port, so this one lets go of the engine first — a successor
+                // that finds it still running would kill it as an orphan
+                // instead of letting it shut down through its API. The window
+                // is blank either way, so nothing is lost if the restart then
+                // fails.
+                if let Some(state) = app.try_state::<Arc<AppState>>() {
+                    if let Some(transport) = state.transport.write().await.take() {
+                        let _ = transport.stop().await;
+                    }
                 }
-            }
-            if restart_with_safe_rendering().is_some() {
-                app.exit(0);
-                return;
+                if restart_on(next).is_some() {
+                    app.exit(0);
+                    // `exit` asks the event loop to wind up, and an event loop
+                    // whose webview never came up does not always answer: the
+                    // first process of a climb was seen carrying on with its
+                    // white window and its two WebKit processes while its
+                    // successor was already running. One predecessor too many
+                    // is not cosmetic — they share the sync engine's folder,
+                    // pid file and port, and the next step of the ladder would
+                    // find an engine it thinks is an orphan. The transport is
+                    // already stopped above, so leaving now costs nothing.
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    log::warn!("the event loop did not wind up; leaving anyway");
+                    std::process::exit(0);
+                }
+                could_not_restart = true;
+            } else {
+                log::error!("every graphics step drew nothing; the ladder is exhausted");
+                // Nothing is being tried any more, so nothing is in progress.
+                // Leaving `trying` at the bottom rung would send every later
+                // start straight there and never climb again — not even once
+                // a driver update has made the machine draw. A step that is
+                // known to draw stays: reaching this line from one slow start
+                // on such a step must not cost the machine its answer.
+                memory.trying = None;
+                write_graphics_memory(&memory);
             }
         }
-        let hint = if cfg!(target_os = "linux") {
-            "The window stayed empty: the webview (WebKitGTK) did not render, \
-             not even with software rendering. What it says about it goes to \
-             the terminal, not to the log: start the launcher from one and \
-             keep the output (a line about EGL, libGL or GL names the piece \
-             that failed). docs/TROUBLESHOOTING.md lists what else to try."
-        } else {
-            "The window stayed empty: the webview did not load the interface. \
-             The log folder holds the details."
+        #[cfg(target_os = "linux")]
+        let hint = {
+            let folder = webview_message_file()
+                .and_then(|p| p.parent().map(|d| d.display().to_string()))
+                .unwrap_or_else(|| "the log folder".into());
+            let opening = if could_not_restart {
+                "The window stayed empty, and the launcher could not start \
+                 itself again to try the next renderer."
+                    .to_string()
+            } else {
+                // Not "every renderer there is": pinned variables leave out
+                // the steps that disagree with them, and a message that
+                // claims more than was tried sends the next report off course.
+                let pins: Vec<&str> = lanlauncher_core::graphics::touched_names()
+                    .into_iter()
+                    .filter(|name| pinned(name).is_some())
+                    .collect();
+                let mut opening = "The window stayed empty. The launcher tried every renderer \
+                     setting available on this machine, and WebKitGTK drew \
+                     nothing on any of them."
+                    .to_string();
+                if !pins.is_empty() {
+                    opening.push_str(&format!(
+                        " Settings that disagree with {} were left out, because \
+                         that was set from outside the launcher.",
+                        pins.join(", ")
+                    ));
+                }
+                opening
+            };
+            format!(
+                "{opening}\n\nWhat the webview said about it is in webview.log, \
+                 and what the launcher did is in launcher.log — both in\n{folder}\n\n\
+                 Send both; docs/TROUBLESHOOTING.md lists what else to try."
+            )
         };
+        #[cfg(not(target_os = "linux"))]
+        let hint = "The window stayed empty: the webview did not load the interface. \
+             The log folder holds the details."
+            .to_string();
         use tauri_plugin_dialog::DialogExt;
         app.dialog()
             .message(hint)
@@ -814,7 +1144,12 @@ fn warn_about_a_blank_window(app: &tauri::AppHandle) {
 
 pub fn run() {
     #[cfg(target_os = "linux")]
-    prefer_a_renderer_that_draws();
+    {
+        prefer_a_renderer_that_draws();
+        // Only once the step is decided: the file gets a header naming it,
+        // and everything WebKitGTK says from here on lands underneath.
+        keep_what_the_webview_says();
+    }
     tauri::Builder::default()
         .on_page_load(|window, payload| {
             // Which URL the webview actually loaded — a production build
@@ -850,25 +1185,46 @@ pub fn run() {
                 app_version(),
                 dirs.logs.display()
             );
+            // A window exists, so this run's renderer settings were at worst
+            // ineffective, not fatal; the note the next run would have read
+            // as a crash goes now.
+            #[cfg(target_os = "linux")]
+            mark_the_window_came_up();
             warn_about_a_blank_window(app.handle());
-            // A white window on Linux is almost always the webview's DMA-BUF
-            // renderer; the log should say which way this run went.
+            // A white window on Linux is the renderer; the log has to say
+            // which step of the ladder this run is on, because the next
+            // report is read without the machine in the room.
             #[cfg(target_os = "linux")]
             log::info!(
-                "webview: WEBKIT_DISABLE_DMABUF_RENDERER={}, compositing={}, software GL={}, \
-                 session {}, backend {}, EGL platform {}, safe-mode restart {}, forced [{}]",
+                "webview: step {} ({}), DMA-BUF renderer off={}, compositing off={}, \
+                 software GL={}, session {}, backend {}, EGL platform {}, forced [{}]",
+                current_step().name,
+                current_step().what,
                 std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").unwrap_or_else(|_| "unset".into()),
                 std::env::var("WEBKIT_DISABLE_COMPOSITING_MODE").unwrap_or_else(|_| "unset".into()),
                 std::env::var("LIBGL_ALWAYS_SOFTWARE").unwrap_or_else(|_| "unset".into()),
                 std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".into()),
                 std::env::var("GDK_BACKEND").unwrap_or_else(|_| "default".into()),
                 std::env::var("EGL_PLATFORM").unwrap_or_else(|_| "auto".into()),
-                std::env::var("NLL_WEBVIEW_FALLBACK").unwrap_or_else(|_| "no".into()),
                 lanlauncher_core::launch::forced_env()
                     .into_iter()
                     .map(|(name, _)| name)
                     .collect::<Vec<_>>()
                     .join(", ")
+            );
+            #[cfg(target_os = "linux")]
+            if let Some(skipped) = SKIPPED_A_KILLER.get() {
+                log::warn!(
+                    "graphics step {skipped} left out: it took the previous run \
+                     down before that run had a window"
+                );
+            }
+            #[cfg(target_os = "linux")]
+            log::info!(
+                "webview messages go to {}",
+                webview_message_file()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "the terminal only".into())
             );
             #[cfg(target_os = "linux")]
             log::info!(

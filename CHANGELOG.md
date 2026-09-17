@@ -2,13 +2,31 @@
 
 ## Unreleased
 
-- Linux: Das weiße Fenster auf dem Steam Deck hatte einen Namen — WebKitGTK bricht mit
-  „Could not create default EGL display: EGL_BAD_PARAMETER. Aborting…" ab, bevor irgendetwas
-  gezeichnet wird. Mesa wählt die EGL-Plattform nach `WAYLAND_DISPLAY`, nimmt also Wayland,
-  während das Fenster über X11 läuft — und die Wayland-Bibliotheken kommen im AppImage von
-  Ubuntu, nicht vom Gerät. Der Launcher setzt deshalb `EGL_PLATFORM=x11`, wenn sein Fenster ein
-  X11-Fenster in einer Wayland-Sitzung ist (außer der Benutzer hat die Variable selbst gesetzt).
-  Die `webview:`-Zeile im Log nennt die Plattform mit.
+- Linux: Der Launcher probiert die Renderer-Einstellungen jetzt selbst durch, statt sich auf eine
+  festzulegen. Vier Versionen lang wurde je eine Vermutung ausgeliefert und auf dem Steam Deck
+  getestet — jede Runde kostete ein Release, und keine hat getroffen. Stattdessen gibt es eine
+  Leiter (`no-dmabuf` → `native` → `wayland` → `x11` → `software` → `software-surfaceless`): Meldet
+  sich die Oberfläche nicht, startet sich der Launcher auf der nächsten Sprosse neu, und die
+  Sprosse, die zeichnet, wird gemerkt (`~/.config/xyz.nextgen-lan.launcher/graphics.json`). Die
+  Wartezeit fällt damit einmal pro Rechner an statt einmal pro Release. `--safe-graphics` springt
+  ans untere Ende der Leiter, `--no-safe-graphics` vergisst alles wieder.
+  Neu sind dabei drei Sprossen, die es vorher nicht gab: `native` lässt WebKitGTK seinen eigenen
+  DMA-BUF-Renderer benutzen — genau den hat der Launcher bisher überall abgeschaltet, und der
+  Abbruch „Could not create default EGL display" betrifft den Pfad *ohne* ihn, das bisherige
+  „Gegenmittel" kommt also als Ursache infrage; `wayland` nimmt das `GDK_BACKEND=x11` zurück, das
+  das AppImage jeder Sitzung aufzwingt; `software-surfaceless` kommt ganz ohne Display-Server für
+  EGL aus.
+  Eine Sprosse kann auch härter scheitern als weiß: Einstellungen, an denen GTK oder der Treiber
+  ganz abbricht, nehmen den Prozess mit, bevor es ein Fenster gibt — dann läuft nichts mehr, das es
+  merken könnte. Der Launcher notiert deshalb vor dem Fenster, welche Sprosse er versucht, und
+  löscht die Notiz, sobald ein Fenster da ist; eine Sprosse, die den letzten Start umgebracht hat,
+  fällt beim nächsten aus. Ein vom Benutzer früh geschlossenes Fenster zählt dagegen als normaler
+  Lauf und kostet nichts.
+- Linux: Was WebKitGTK über einen Renderer sagt, den es nicht benutzen kann, landet jetzt in
+  `<Log-Ordner>/webview.log`. Diese Meldungen gingen bisher nur ins Terminal, und ein über ein
+  Desktop-Symbol oder über Steam gestarteter Launcher hat keins — deshalb musste jeder Bericht von
+  Hand aus einer Shell wiederholt werden. Wird der Launcher aus einem Terminal gestartet, bleibt
+  die Ausgabe dort. Jede Sprosse der Leiter hängt ihre Zeilen an, mit Kopfzeile.
 - Ein Spiel erbt die Umgebung des Launchers nicht mehr: `--safe-graphics` schaltet für dessen
   eigenes Fenster Software-Rendering ein, ein damit gestartetes Spiel lief bisher ebenfalls auf der
   CPU. Der Launcher merkt sich, was er selbst gesetzt hat — samt dem Wert, der vorher galt — und
