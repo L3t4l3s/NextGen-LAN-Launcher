@@ -221,6 +221,35 @@ pub fn safest(session: Session) -> &'static RenderStep {
         .unwrap_or(&STEPS[STEPS.len() - 1])
 }
 
+/// Lines on which WebKitGTK has given up, rather than merely complained.
+///
+/// The web process says so and then stops; nothing is ever drawn, and no
+/// amount of further waiting changes that. Recognising the line is what lets
+/// the climb move to the next step in a second instead of sitting out the
+/// watchdog's full patience in front of a window that is already dead.
+///
+/// Narrow on purpose. `libEGL warning: DRI3 error: Could not get DRI3 device`
+/// appears on a machine that then renders perfectly well through software, so
+/// "EGL" and "error" in a line mean nothing by themselves; only a line saying
+/// the display could not be created at all, or WebKit's own parting word,
+/// counts.
+const GAVE_UP: &[&str] = &[
+    // The Steam Deck's line, verbatim from its terminal:
+    // "Could not create default EGL display: EGL_BAD_PARAMETER. Aborting..."
+    "Could not create default EGL display",
+    "Could not create EGL display",
+    // What WebKit prints just before it takes the web process down.
+    "Aborting...",
+    // GTK could not reach the display server at all.
+    "cannot open display",
+    "Failed to initialize GTK",
+];
+
+/// Whether this line from the webview's standard error says it has given up.
+pub fn looks_fatal(line: &str) -> bool {
+    GAVE_UP.iter().any(|marker| line.contains(marker))
+}
+
 /// What the launcher remembers about this machine's graphics, between runs.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -454,6 +483,25 @@ mod tests {
         };
         assert_eq!(memory.step_to_use(X_ONLY).name, "no-dmabuf");
         assert_eq!(memory.step_to_use(BOTH).name, "wayland");
+    }
+
+    #[test]
+    fn the_decks_own_line_reads_as_fatal_and_ordinary_grumbling_does_not() {
+        assert!(looks_fatal(
+            "Could not create default EGL display: EGL_BAD_PARAMETER. Aborting..."
+        ));
+        assert!(looks_fatal("Gdk-ERROR **: cannot open display: :0"));
+        // Seen on a machine that went on to draw the interface without a
+        // complaint from anyone: warnings are not failures.
+        for line in [
+            "libEGL warning: DRI3 error: Could not get DRI3 device",
+            "libEGL warning: Ensure your X server supports DRI3 to get accelerated rendering",
+            "** (nextgen-lan-launcher:19871): WARNING **: atk-bridge: get_device_events_reply:              unknown signature",
+            "MESA-INTEL: warning: Performance support disabled, consider sysctl",
+            "",
+        ] {
+            assert!(!looks_fatal(line), "{line:?} must not count as fatal");
+        }
     }
 
     #[test]

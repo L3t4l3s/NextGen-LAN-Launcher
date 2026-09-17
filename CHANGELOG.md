@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Linux: Der Launcher liest jetzt mit, was der Webview auf die Standardfehlerausgabe schreibt, und
+  steigt sofort auf die nächste Sprosse, wenn dort steht, dass aufgegeben wurde („Could not create
+  default EGL display … Aborting…"). Vorher wartete er stur 30 Sekunden vor einem Fenster, das
+  längst tot war — ein Steam-Deck-Test wurde nach 28 Sekunden abgebrochen, zwei Sekunden bevor die
+  Leiter überhaupt losgestiegen wäre. Die Ausgabe geht dabei weiterhin unverändert ins Terminal,
+  falls eins da ist, und zusätzlich nach `webview.log`. Harmlose Meldungen (etwa
+  `libEGL warning: DRI3 error`) gelten ausdrücklich nicht als Aufgeben.
 - Linux/AppImage: Die vier Wayland-Bibliotheken werden nicht mehr mitgeliefert
   (`tools/appimage-unbundle-wayland.mjs`, in `ci.yml` eingehängt). An einem gebauten Abbild
   gemessen: `libEGL`, `libGL`, `libgbm` und `libdrm` kommen korrekt vom Rechner, aber

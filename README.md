@@ -72,13 +72,14 @@ chmod +x nextgen/*.AppImage
 ```
 
 If the window opens with the right title but stays white, that is the webview, not the launcher:
-WebKitGTK 2.42+ against several Linux drivers. Leave it running — the launcher works through its
-renderer settings by itself, restarting once per setting until one draws, and remembers the one
-that did. That takes up to two minutes on the first start of a machine that needs it and nothing
-at all afterwards. If every setting comes up white, a message box says so and names the file that
-holds what WebKitGTK said about it; send that along.
-`--safe-graphics` skips straight to the last setting on the list, `--no-safe-graphics` forgets the
-machine again. More levers in
+WebKitGTK 2.42+ against several Linux drivers. **Leave it running** — the launcher works through
+its renderer settings by itself, restarting once per setting until one draws, and remembers the one
+that did. The window closes and reopens for each attempt; where the webview says outright that it
+gave up, the next attempt follows within a second. Under two minutes in the worst case on the
+first start of a machine that needs it, and nothing at all afterwards. If every setting comes up
+white, a message box says so and names the file that holds what WebKitGTK said about it; send that
+along. `--safe-graphics` skips straight to the last setting on the list, `--no-safe-graphics`
+forgets the machine again. More levers in
 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#a-white-window-on-linux).
 
 If Ark shows the zip but extracts nothing, `unzip` in Konsole does the job — GitHub's artifact zips

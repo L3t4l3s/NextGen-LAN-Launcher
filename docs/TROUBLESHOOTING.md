@@ -33,8 +33,12 @@ launcher looks for one on the machine itself.
 
 ### What it does on its own
 
-Each start applies one set of renderer settings. If the interface has not reported for duty within
-30 seconds (15 on every start after the first), the launcher restarts itself with the next set. It
+Each start applies one set of renderer settings. The launcher then restarts itself with the next
+set — at once where the webview has said it gave up (WebKitGTK prints a line such as "Could not
+create default EGL display … Aborting…" within a second and never draws again), otherwise after 30
+seconds, or 15 on every start after the first. **Let it run.** A whole climb takes well under two
+minutes and the window closes and reopens for each step; closing it early is how one Steam Deck
+test ended 28 seconds into the first 30-second wait, before the ladder had climbed anything. It
 works down this ladder:
 
 | Step | What it does |

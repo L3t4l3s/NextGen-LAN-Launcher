@@ -866,30 +866,159 @@ fn webview_message_file() -> Option<std::path::PathBuf> {
     )
 }
 
-/// Send this process's standard error to that file, so what the webview says
-/// about a failure survives the run that saw it.
+/// Read this process's standard error, keep it, and watch it.
+///
+/// Three jobs at once, and all of them matter here:
+///
+/// * **Keep it.** These messages never reach `launcher.log` — the web process
+///   writes them to standard error — and a launcher started from a desktop
+///   entry or from Steam has no terminal to write to, which is why every
+///   report so far had to be re-run by hand from a shell.
+/// * **Pass it on.** Whatever standard error already pointed at still gets
+///   every line, so running the launcher from a terminal looks exactly as it
+///   did. Redirecting instead of duplicating would have taken the output away
+///   from the one place someone was already reading it.
+/// * **Watch it.** A step that ends in [`graphics::looks_fatal`] has failed
+///   for good within a second of starting, and the climb can move on at once
+///   rather than let the watchdog sit out its full patience in front of a
+///   window that is already dead. That patience is what a tester ran out of:
+///   a Steam Deck was closed 28 seconds into a 30-second wait, so the ladder
+///   never climbed a single step.
+///
+/// Called from [`run`] once the step is decided, and while the process is
+/// still single-threaded but for the reader this starts.
+#[cfg(target_os = "linux")]
+fn keep_what_the_webview_says() {
+    use std::io::{BufRead, Write};
+    use std::os::fd::FromRawFd;
+
+    // Where standard error pointed until now: a terminal, a pipe, or nothing.
+    // It keeps getting every line, and the successor of a restart is handed
+    // this rather than the pipe — see `restart_on`. Close-on-exec, so no child
+    // of this process gets it by accident.
+    let original = unsafe { libc::fcntl(libc::STDERR_FILENO, libc::F_DUPFD_CLOEXEC, 0) };
+    if original < 0 {
+        return;
+    }
+    let _ = ORIGINAL_STDERR.set(original);
+    let Ok(passed_on) = dup_of(original) else {
+        return;
+    };
+    let mut passed_on = std::fs::File::from(passed_on);
+
+    let mut ends = [0 as libc::c_int; 2];
+    // Close-on-exec on both ends. The read end must not reach the successor of
+    // a restart, the sync engine or a game: a reader nobody reads from fills
+    // up, and the thread below would then block in `write_all` for ever and
+    // stop both the log and the watchdog's fast path. File descriptor 2 is
+    // exempt because `dup2` clears the flag — which is the point, since the
+    // web process has to inherit it.
+    if unsafe { libc::pipe2(ends.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return;
+    }
+    let [reading, writing] = ends;
+    // Standard error becomes the pipe, for this process and for every child
+    // WebKitGTK starts from it — which is where the interesting lines are.
+    if unsafe { libc::dup2(writing, libc::STDERR_FILENO) } < 0 {
+        unsafe {
+            libc::close(reading);
+            libc::close(writing);
+        }
+        return;
+    }
+    // The pipe's write end lives on as file descriptor 2; this copy is done.
+    unsafe { libc::close(writing) };
+
+    let mut file = open_the_webview_log();
+    if let Some(file) = file.as_mut() {
+        let step = current_step();
+        let _ = writeln!(
+            file,
+            "\n--- NextGen LAN Launcher {} on graphics step {} ({}) ---",
+            app_version(),
+            step.name,
+            step.what
+        );
+        let _ = file.flush();
+    }
+
+    // A line printed microseconds before this process dies may not reach the
+    // reader thread in time, and a panic during start-up (`Failed to
+    // initialize GTK` from a backend the session cannot serve) is exactly
+    // such a line. It goes to the file directly as well, from the dying
+    // thread itself, so the evidence survives the run that produced it.
+    let earlier_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic| {
+        if let Some(mut file) = open_the_webview_log() {
+            let _ = writeln!(file, "{panic}");
+            let _ = file.flush();
+        }
+        earlier_hook(panic);
+    }));
+
+    let reader = unsafe { std::fs::File::from_raw_fd(reading) };
+    let started = std::thread::Builder::new()
+        .name("webview-messages".into())
+        .spawn(move || {
+            // Bytes, not `str`: a driver is free to print anything, and a line
+            // that is not UTF-8 must still reach the terminal unharmed.
+            let mut lines = std::io::BufReader::new(reader).split(b'\n');
+            while let Some(Ok(line)) = lines.next() {
+                let _ = passed_on.write_all(&line);
+                let _ = passed_on.write_all(b"\n");
+                let _ = passed_on.flush();
+                if let Some(file) = file.as_mut() {
+                    let _ = file.write_all(&line);
+                    let _ = file.write_all(b"\n");
+                    let _ = file.flush();
+                }
+                if !WEBVIEW_GAVE_UP.load(std::sync::atomic::Ordering::Relaxed)
+                    && lanlauncher_core::graphics::looks_fatal(&String::from_utf8_lossy(&line))
+                {
+                    WEBVIEW_GAVE_UP.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        });
+    if started.is_err() {
+        // Nothing would read the pipe, so every message would be dropped and
+        // the fast path would be dead. Standard error goes back where it was.
+        unsafe {
+            libc::dup2(original, libc::STDERR_FILENO);
+        }
+        log::error!("could not start the reader for the webview's messages");
+    }
+}
+
+/// Standard error as it was before the pipe: what a restart hands its
+/// successor, so the second step of a climb still writes to the terminal.
+#[cfg(target_os = "linux")]
+static ORIGINAL_STDERR: std::sync::OnceLock<libc::c_int> = std::sync::OnceLock::new();
+
+/// A close-on-exec duplicate of a descriptor, owned by the caller.
+#[cfg(target_os = "linux")]
+fn dup_of(fd: libc::c_int) -> Result<std::os::fd::OwnedFd, ()> {
+    use std::os::fd::FromRawFd;
+
+    let copy = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
+    if copy < 0 {
+        return Err(());
+    }
+    Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(copy) })
+}
+
+/// The file the webview's messages are kept in, opened for appending.
 ///
 /// Every step of the climb appends, because the interesting lines are the
 /// ones from the step that just failed while the next one is already running.
-/// A terminal is left alone: there the output is in front of whoever started
-/// it, and taking it away would make a report harder, not easier.
+/// Appending for ever would fill the disk of a machine that prints a line per
+/// frame, so the file starts again once it is bigger than a report anyone
+/// would read.
 #[cfg(target_os = "linux")]
-fn keep_what_the_webview_says() {
-    use std::io::Write;
-    use std::os::fd::AsRawFd;
-
-    if unsafe { libc::isatty(libc::STDERR_FILENO) } == 1 {
-        return;
-    }
-    let Some(path) = webview_message_file() else {
-        return;
-    };
+fn open_the_webview_log() -> Option<std::fs::File> {
+    let path = webview_message_file()?;
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    // Appending for ever would fill the disk of a machine that logs a line
-    // per frame, so the file starts again once it is bigger than a report
-    // anyone would read.
     let too_big = std::fs::metadata(&path)
         .map(|m| m.len() > 256 * 1024)
         .unwrap_or(false);
@@ -900,24 +1029,13 @@ fn keep_what_the_webview_says() {
     } else {
         options.append(true);
     }
-    let Ok(mut file) = options.open(&path) else {
-        return;
-    };
-    let step = current_step();
-    let _ = writeln!(
-        file,
-        "\n--- NextGen LAN Launcher {} on graphics step {} ({}) ---",
-        app_version(),
-        step.name,
-        step.what
-    );
-    let _ = file.flush();
-    // `dup2` copies the descriptor, so dropping the handle below closes only
-    // the original one and standard error keeps pointing at the file.
-    unsafe {
-        libc::dup2(file.as_raw_fd(), libc::STDERR_FILENO);
-    }
+    options.open(&path).ok()
 }
+
+/// Set once the webview has said it is giving up, by the reader above.
+#[cfg(target_os = "linux")]
+pub(crate) static WEBVIEW_GAVE_UP: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Set when the interface has reported for duty (`frontend_ready`). The
 /// webview's own "page loaded" is no use for this: it fires for the error
@@ -964,6 +1082,14 @@ fn restart_on(step: &lanlauncher_core::graphics::RenderStep) -> Option<()> {
     }
     cmd.env(STEP_ENV, step.name);
     cmd.env(RETRY_ENV, "1");
+    // Without this the successor inherits file descriptor 2 as it stands —
+    // this process's pipe — and everything it says would go into a launcher
+    // that is about to end instead of to the terminal the user is watching.
+    if let Some(original) = ORIGINAL_STDERR.get() {
+        if let Ok(copy) = dup_of(*original) {
+            cmd.stderr(std::process::Stdio::from(copy));
+        }
+    }
     match cmd.spawn() {
         Ok(child) => {
             log::warn!(
@@ -1011,15 +1137,33 @@ fn warn_about_a_blank_window(app: &tauri::AppHandle) {
         };
         #[cfg(not(target_os = "linux"))]
         let patience = 30;
-        for _ in 0..patience {
+        let mut waited = 0;
+        while waited < patience {
             tokio::time::sleep(Duration::from_secs(1)).await;
+            waited += 1;
             if FRONTEND_READY.load(Ordering::Relaxed) {
                 #[cfg(target_os = "linux")]
                 remember_that_it_drew();
                 return;
             }
+            // The webview has said it is giving up, so the rest of the wait
+            // would be spent in front of a window that is already dead. One
+            // Steam Deck was closed 28 seconds into a 30-second wait and the
+            // ladder never climbed a step; a step that fails this loudly does
+            // not get to cost that again.
+            #[cfg(target_os = "linux")]
+            if WEBVIEW_GAVE_UP.load(Ordering::Relaxed) {
+                log::error!(
+                    "the webview gave up after {waited} s (see the webview log); \
+                     not waiting out the remaining {} s",
+                    patience - waited
+                );
+                break;
+            }
         }
-        log::error!("the interface did not report for duty within {patience} s");
+        if waited >= patience {
+            log::error!("the interface did not report for duty within {patience} s");
+        }
         // Only set where the ladder had somewhere to go and getting there
         // failed, which is a different message from having tried everything.
         #[cfg(target_os = "linux")]
