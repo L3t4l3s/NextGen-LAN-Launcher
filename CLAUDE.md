@@ -120,16 +120,31 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   der ganzen Ausschlussliste, den Tauris eigener linuxdeploy-Build falsch behandelt.
   `tools/appimage-unbundle-wayland.mjs` entfernt alle vier nach dem Bundling wieder und bricht ab,
   wenn es weniger als vier findet (sonst ginge die Nichtübereinstimmung unbemerkt wieder mit raus).
+  **Das war aber nicht die Ursache des weißen Fensters** — das war `WEBKIT_DISABLE_DMABUF_RENDERER`,
+  siehe unten. Der Schritt bleibt, weil die Ausschlussliste recht hat (Mesa und die Wayland-
+  Bibliotheken, gegen die es gelinkt ist, gehören demselben Rechner), nicht weil er ein Symptom
+  geheilt hätte.
   **Nur `ci.yml` ruft es auf; `release.yml` nicht** — dort baut und lädt `tauri-action` in einem
   Schritt hoch, das müsste erst getrennt werden. Bis dahin liefert ein Release die
   Nichtübereinstimmung weiter aus. Prüfen lässt sich das hier nur strukturell (die Dateien sind
   weg, das Abbild startet und zeichnet weiterhin) — ob es das Deck heilt, zeigt erst das Gerät.
-- **EGL auf Linux:** WebKitGTK bricht ab („Could not create default EGL display …"), wenn
-  `eglGetDisplay` scheitert — das Fenster bleibt weiß, im Log steht nur, dass sich die Oberfläche
-  nie gemeldet hat. Wichtig beim Lesen: Das ist der *Default*-Display, den der Pfad **ohne**
-  DMA-BUF-Renderer anfordert. `WEBKIT_DISABLE_DMABUF_RENDERER=1` — bis dahin das Gegenmittel gegen
-  weiße Fenster — kommt damit als Ursache genau dieses Abbruchs infrage; darum steht `native` an
-  zweiter Stelle der Leiter.
+- **`WEBKIT_DISABLE_DMABUF_RENDERER=1` war die Ursache, nicht die Lösung — auf dem Steam Deck
+  bestätigt.** Das Gerät zeichnet auf der Sprosse `native`, also mit **gar nichts** erzwungen
+  (`graphics.json`: `{"good":"native"}`, Logzeile: `forced []`, Sitzung Wayland, Backend x11,
+  EGL-Plattform auto). Vier Builds lang wurde die Variable unbedingt auf jedem Linux gesetzt, weil
+  sie die Mehrheit der weißen GTK-Webviews repariert — auf diesem Gerät hat sie das weiße Fenster
+  *erzeugt*. Der Abbruch „Could not create default EGL display" ist die Anforderung, die der Pfad
+  **ohne** DMA-BUF-Renderer stellt; jeder Folge-„Fix" hat also Einstellungen auf die eigentliche
+  Ursache gestapelt, und `--safe-graphics` machte es schlimmer statt besser. Die Sprosse bleibt an
+  erster Stelle der Leiter (sie hilft der Mehrheit), aber sie ist eine Vermutung, kein Gesetz. **Nie
+  wieder eine solche Einstellung unbedingt erzwingen — sie gehört als Sprosse in die Leiter, wo ein
+  Rechner, dem sie nicht bekommt, in etwa einer Sekunde daran vorbeikommt.**
+- **Die Lehre aus fünf Runden:** Vier Releases lang wurde je eine Hypothese ausgeliefert und auf dem
+  Deck getestet; keine hat getroffen, jede kostete eine Runde. Was es gelöst hat, war nicht die
+  fünfte Vermutung, sondern zwei Mechanismen: die Leiter (der Rechner probiert selbst durch) und das
+  Mitlesen der Standardfehlerausgabe (`webview.log`, plus sofortiger Sprossenwechsel bei
+  `graphics::looks_fatal`). Bei einem Problem, das hier nicht reproduzierbar ist, ist der Bau eines
+  Suchmechanismus billiger als die nächste Vermutung.
 - **Terminal-Meldungen des Webviews:** Der Web-Prozess schreibt sie auf Standardfehler, nicht ins
   Tauri-Log; ein über Desktop-Symbol oder Steam gestarteter Launcher hat kein Terminal, und genau
   deshalb musste bisher jeder Bericht von Hand aus einer Shell wiederholt werden.

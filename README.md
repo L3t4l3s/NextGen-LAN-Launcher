@@ -148,34 +148,30 @@ again.
 ## Open items
 
 - **Wayland libraries in the AppImage:** measured on a built image — `libEGL`, `libGL`, `libgbm`
-  and `libdrm` are correctly left to the machine, but all four Wayland libraries were packed, and
+  and `libdrm` are correctly left to the machine, but all four Wayland libraries are packed, and
   `libwayland-client.so.0` is on the AppImage exclude list (the one entry of the whole list that
-  Tauri's own linuxdeploy build gets wrong). The machine's Mesa then ran against Ubuntu's Wayland,
-  which is a plausible reason for an `eglGetDisplay` that fails whatever the platform and whether
-  or not software rendering is on — the Deck's symptom exactly.
-  `tools/appimage-unbundle-wayland.mjs` takes all four back out and `ci.yml` runs it. Verified here
-  only that the files are in the image and that it still starts and renders once they are gone;
-  whether it is what the Deck needed has to be tried there. **`release.yml` does not run it yet:**
-  `tauri-action` builds and uploads in one step, so adding it means splitting that into a build and
-  an upload, which is not something to change untested alongside this. A release before that is
-  done still ships the mismatch.
-- **A white window on SteamOS:** still open, and no longer approached by guessing. Four builds each
-  shipped one hypothesis (DMA-BUF off, the helper processes, `bwrap`, the EGL platform) and each
-  had to be tried on the Deck; the last one, `EGL_PLATFORM=x11`, missed like the others. Two of
-  them were ruled out for good by test here: the AppImage renders with the system's
-  `webkit2gtk-4.1` helper directory removed (WebKitGTK finds its own copies) and with `bwrap` gone.
-  So the launcher now climbs a ladder of renderer settings itself
-  (`crates/lanlauncher-core/src/graphics.rs`) and remembers the rung that draws — the machine
-  finds the answer in about two minutes instead of a release per guess. The ladder's own logic is
-  covered by tests, and the climb was run end to end here against a build whose interface can
-  never load; what it cannot do is say which rung a Steam Deck lands on. Three rungs are new and
-  none had been tried on the Deck: `native` (WebKitGTK's own DMA-BUF renderer, which every build so
-  far switched off unconditionally — the reported abort, "Could not create default EGL display",
-  is the call the path *without* it makes, so the standing fix is itself a candidate for the
-  cause), `wayland` (takes back the `GDK_BACKEND=x11` the AppImage forces on every session), and
-  `software-surfaceless` (an EGL display that needs no display server at all). If even that draws
-  nothing, `<log folder>/webview.log` now holds what WebKitGTK said — new in this version, and
-  the reason the next report will not need the launcher re-run from a terminal.
+  Tauri's own linuxdeploy build gets wrong). `tools/appimage-unbundle-wayland.mjs` takes all four
+  back out and `ci.yml` runs it. **This was not what made the Steam Deck white** — that was settled
+  on the device, see below — so it stands on the exclude list's own reasoning rather than on a
+  symptom: a machine's Mesa and the Wayland libraries it links belong to the same machine. Verified
+  here only that the files are in the image, that they are gone afterwards, and that the repacked
+  image still starts and renders. **`release.yml` does not run it yet:** `tauri-action` builds and
+  uploads in one step, so adding it means splitting that into a build and an upload, which has not
+  been done. A release before that still ships the mismatch.
+- **A white window on SteamOS — answered, by the device:** the launcher's own ladder found it. A
+  Steam Deck (SteamOS, Wayland session, X11 window) draws on the `native` rung: **nothing forced at
+  all**. `graphics.json` reads `{"good":"native"}` and the log line says `forced []`.
+  That makes the cause plain, and it is an uncomfortable one: `WEBKIT_DISABLE_DMABUF_RENDERER=1`,
+  shipped for four builds as *the* fix for a white GTK webview and forced unconditionally on every
+  Linux machine, is what made this one white. The abort it produced, "Could not create default EGL
+  display", is the call the path *without* the DMA-BUF renderer makes — so each later build stacked
+  more settings on top of the actual cause, and `--safe-graphics` made things worse rather than
+  better by adding yet more. Four rounds of guessing went into it; the ladder answered in seconds
+  once it was on the device.
+  That rung stays first for everyone else, because turning the DMA-BUF renderer off does fix the
+  majority of white GTK webviews — but it is a guess now, not a law, and a machine it does not suit
+  moves past it in about a second, because the launcher reads the abort out of the webview's own
+  output.
 - **Installer and a running launcher:** the NSIS hook now closes the launcher first and its sync
   engine second, because the launcher restarts an engine it sees dying — and the installer's own
   "close the application?" prompt only comes after the hook. It then waits (up to ten seconds)

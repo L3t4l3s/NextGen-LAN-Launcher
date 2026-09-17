@@ -609,7 +609,12 @@ fn prefer_a_renderer_that_draws() {
     let step = if usable(wanted) {
         wanted
     } else {
-        next_usable_after(wanted.name, session).unwrap_or_else(|| first_usable(session))
+        // Nothing usable below it: fall back to the most conservative step
+        // there is, never round to the top of the ladder. `--safe-graphics`
+        // asks for as little graphics stack as possible, and answering it
+        // with `no-dmabuf` — the most opinionated step of all — is the
+        // opposite of what was asked.
+        next_usable_after(wanted.name, session).unwrap_or_else(|| safest_usable(session))
     };
     if memory.took_the_last_run_down(wanted.name) {
         // Nothing logs yet — the log plugin comes later — so the note goes
@@ -633,8 +638,32 @@ fn prefer_a_renderer_that_draws() {
         .set(from_a_restart.is_none() && memory.good.as_deref() == Some(step.name));
     // Before the window: if the settings above are fatal, this is what is
     // left behind to say which step it was.
+    //
+    // `trying` moves with it. Leaving it on a step that was skipped here
+    // makes the next run want that step again — and by then `attempted` names
+    // the step this run chose, so the skipped one no longer counts as a
+    // killer and gets another go. Two steps that both die before a window
+    // would then hand the ladder back and forth between them for ever and
+    // never reach the bottom.
     memory.attempted = Some(step.name.to_string());
+    memory.trying = Some(step.name.to_string());
     write_graphics_memory(&memory);
+}
+
+/// The most conservative step of the ladder that nothing stands in the way of.
+#[cfg(target_os = "linux")]
+fn safest_usable(
+    session: lanlauncher_core::graphics::Session,
+) -> &'static lanlauncher_core::graphics::RenderStep {
+    use lanlauncher_core::graphics;
+
+    graphics::STEPS
+        .iter()
+        .rev()
+        .find(|step| session.allows(step) && is_usable(step))
+        // `native` sets nothing, so it can never be blocked and needs nothing
+        // of the session: there is always an answer.
+        .unwrap_or_else(|| first_usable(session))
 }
 
 /// A step left out because it had already killed a run. Named in the
@@ -930,6 +959,13 @@ fn keep_what_the_webview_says() {
     unsafe { libc::close(writing) };
 
     let mut file = open_the_webview_log();
+    // What the file already holds, so the cap below counts the whole thing
+    // and not just this run's share of it.
+    let mut written = file
+        .as_ref()
+        .and_then(|f| f.metadata().ok())
+        .map(|m| m.len())
+        .unwrap_or(0);
     if let Some(file) = file.as_mut() {
         let step = current_step();
         let _ = writeln!(
@@ -967,10 +1003,24 @@ fn keep_what_the_webview_says() {
                 let _ = passed_on.write_all(&line);
                 let _ = passed_on.write_all(b"\n");
                 let _ = passed_on.flush();
-                if let Some(file) = file.as_mut() {
-                    let _ = file.write_all(&line);
-                    let _ = file.write_all(b"\n");
-                    let _ = file.flush();
+                if let Some(open) = file.as_mut() {
+                    let _ = open.write_all(&line);
+                    let _ = open.write_all(b"\n");
+                    let _ = open.flush();
+                    written += line.len() as u64 + 1;
+                    // Checking only when the file is opened would let a stack
+                    // that prints a line per frame fill the disk over a long
+                    // session, which is the very thing the cap is for.
+                    if written > WEBVIEW_LOG_CAP {
+                        match open_the_webview_log_afresh() {
+                            Some(fresh) => {
+                                *open = fresh;
+                                written = 0;
+                            }
+                            // Better a file that grows than no messages at all.
+                            None => written = 0,
+                        }
+                    }
                 }
                 if !WEBVIEW_GAVE_UP.load(std::sync::atomic::Ordering::Relaxed)
                     && lanlauncher_core::graphics::looks_fatal(&String::from_utf8_lossy(&line))
@@ -1006,13 +1056,17 @@ fn dup_of(fd: libc::c_int) -> Result<std::os::fd::OwnedFd, ()> {
     Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(copy) })
 }
 
+/// How much of the webview's talk is worth keeping: more than a report anyone
+/// would read, less than anything that troubles a disk.
+#[cfg(target_os = "linux")]
+const WEBVIEW_LOG_CAP: u64 = 256 * 1024;
+
 /// The file the webview's messages are kept in, opened for appending.
 ///
 /// Every step of the climb appends, because the interesting lines are the
 /// ones from the step that just failed while the next one is already running.
-/// Appending for ever would fill the disk of a machine that prints a line per
-/// frame, so the file starts again once it is bigger than a report anyone
-/// would read.
+/// A file that is already over the cap starts again here; one that grows past
+/// it while running is started again by the reader thread.
 #[cfg(target_os = "linux")]
 fn open_the_webview_log() -> Option<std::fs::File> {
     let path = webview_message_file()?;
@@ -1020,7 +1074,7 @@ fn open_the_webview_log() -> Option<std::fs::File> {
         let _ = std::fs::create_dir_all(dir);
     }
     let too_big = std::fs::metadata(&path)
-        .map(|m| m.len() > 256 * 1024)
+        .map(|m| m.len() > WEBVIEW_LOG_CAP)
         .unwrap_or(false);
     let mut options = std::fs::OpenOptions::new();
     options.create(true).write(true);
@@ -1030,6 +1084,19 @@ fn open_the_webview_log() -> Option<std::fs::File> {
         options.append(true);
     }
     options.open(&path).ok()
+}
+
+/// The same file, emptied: what the reader thread moves to once the cap is
+/// reached mid-run.
+#[cfg(target_os = "linux")]
+fn open_the_webview_log_afresh() -> Option<std::fs::File> {
+    let path = webview_message_file()?;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)
+        .ok()
 }
 
 /// Set once the webview has said it is giving up, by the reader above.

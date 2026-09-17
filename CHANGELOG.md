@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Linux: Das weiße Fenster auf dem Steam Deck ist gelöst — und die Ursache war unsere eigene
+  Einstellung.** Das Gerät zeichnet auf der Sprosse `native`, also mit gar nichts erzwungen
+  (`graphics.json`: `{"good":"native"}`, Logzeile `forced []`). Vier Builds lang wurde
+  `WEBKIT_DISABLE_DMABUF_RENDERER=1` unbedingt auf jedem Linux gesetzt, weil es die Mehrheit der
+  weißen GTK-Webviews repariert — auf dem Deck hat es das weiße Fenster erst erzeugt. Der Abbruch
+  „Could not create default EGL display" ist die Anforderung des Pfades *ohne* DMA-BUF-Renderer,
+  jeder Folge-Fix stapelte also Einstellungen auf die eigentliche Ursache, und `--safe-graphics`
+  machte es schlimmer statt besser. Die Sprosse bleibt an erster Stelle (sie hilft der Mehrheit),
+  aber ein Rechner, dem sie nicht bekommt, kommt jetzt in etwa einer Sekunde daran vorbei.
+  Wer die beschleunigte Darstellung von Hand festnageln will: `WEBKIT_DISABLE_DMABUF_RENDERER=0`.
 - Linux: Der Launcher liest jetzt mit, was der Webview auf die Standardfehlerausgabe schreibt, und
   steigt sofort auf die nächste Sprosse, wenn dort steht, dass aufgegeben wurde („Could not create
   default EGL display … Aborting…"). Vorher wartete er stur 30 Sekunden vor einem Fenster, das
@@ -18,10 +28,10 @@
   Ubuntu, und `LD_LIBRARY_PATH` gab dem Image den Vorrang. Mesas `libEGL_mesa` bindet
   `libwayland-client` und `-server`; passt die Version nicht, lässt es sich gar nicht laden, und
   dann scheitert *jedes* `eglGetDisplay` mit EGL_BAD_PARAMETER — unabhängig von `EGL_PLATFORM` und
-  von `LIBGL_ALWAYS_SOFTWARE`. Genau das meldet das Steam Deck: Wayland-Sitzung, X11-Fenster,
-  `EGL_PLATFORM=x11`, Software-GL — und trotzdem kein Display. Hier geprüft: die Dateien sind im
-  Abbild, nach dem Entfernen startet und zeichnet es weiterhin. Ob es das Deck heilt, zeigt das
-  Gerät.
+  von `LIBGL_ALWAYS_SOFTWARE`. **Das war jedoch nicht die Ursache des weißen Fensters auf dem Deck**
+  (siehe oben); der Schritt bleibt, weil die Ausschlussliste recht hat — Mesa und die
+  Wayland-Bibliotheken, gegen die es gelinkt ist, gehören demselben Rechner. Hier geprüft: die
+  Dateien sind im Abbild, nach dem Entfernen startet und zeichnet es weiterhin.
 - Linux: Der Launcher probiert die Renderer-Einstellungen jetzt selbst durch, statt sich auf eine
   festzulegen. Vier Versionen lang wurde je eine Vermutung ausgeliefert und auf dem Steam Deck
   getestet — jede Runde kostete ein Release, und keine hat getroffen. Stattdessen gibt es eine

@@ -69,7 +69,10 @@ impl Session {
         }
     }
 
-    fn allows(&self, step: &RenderStep) -> bool {
+    /// Whether this session offers what the step needs. `next_after` and
+    /// `first` apply it walking forwards; a caller walking the ladder
+    /// backwards (for the most conservative step there is) needs it too.
+    pub fn allows(&self, step: &RenderStep) -> bool {
         match step.needs {
             Needs::Nothing => true,
             Needs::XServer => self.has_x_server,

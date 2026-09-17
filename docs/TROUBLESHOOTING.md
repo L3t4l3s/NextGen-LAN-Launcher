@@ -43,8 +43,8 @@ works down this ladder:
 
 | Step | What it does |
 |---|---|
-| `no-dmabuf` | WebKitGTK's DMA-BUF renderer off. Fixes the majority of white GTK webviews. |
-| `native` | Nothing forced at all — WebKitGTK's own renderer on the session's own backend. |
+| `no-dmabuf` | WebKitGTK's DMA-BUF renderer off. Fixes the majority of white GTK webviews — and is what made a Steam Deck white. |
+| `native` | Nothing forced at all — WebKitGTK's own renderer on the session's own backend. **This is the one a Steam Deck lands on.** |
 | `wayland` | Window and EGL both on Wayland, which undoes the `GDK_BACKEND=x11` the AppImage forces on every session. Only in a Wayland session. |
 | `x11` | Window and EGL both on X11. Only with an X server. |
 | `software` | No compositing, software GL (llvmpipe) on X11. Only with an X server. |
@@ -123,10 +123,11 @@ forced `GDK_BACKEND=x11` back is precisely what the `wayland` step is for.
 Measured on a built image: `libEGL`, `libGL`, `libgbm` and `libdrm` are correctly left out, so
 they come from the machine — but `libwayland-client`, `-server`, `-egl` and `-cursor` were packed
 into it, and `LD_LIBRARY_PATH` puts the image first. The machine's Mesa then runs against Ubuntu's
-Wayland. `libEGL_mesa` links two of those libraries; where the packed ones are older it cannot be
-loaded at all, and then every `eglGetDisplay` fails — no matter what `EGL_PLATFORM` says and
-whether or not software rendering is on. No renderer setting can help with that, which is why the
-ladder alone may not be enough.
+Wayland, which the AppImage exclude list names `libwayland-client` specifically to prevent.
+
+This was **not** what made the Steam Deck white — that was the renderer setting above, settled on
+the device — and no machine is known to need this. It is worth knowing about anyway, because it is
+the one failure a renderer setting cannot cure.
 
 CI builds have the four taken back out again since this change
 (`tools/appimage-unbundle-wayland.mjs`); **release builds do not yet**, so an AppImage from a
@@ -147,11 +148,21 @@ If that draws and the AppImage does not, this was it.
 Could not create default EGL display: EGL_BAD_PARAMETER. Aborting...
 ```
 
-WebKitGTK gave up before drawing anything: it could not get an EGL display at all. Worth knowing
-when reading it — this is the *default* display, which is what the path **without** the DMA-BUF
-renderer asks for. A launcher that turns that renderer off to avoid a white window can therefore be
-the reason for this particular abort, which is why `native` sits second on the ladder: it is the
-only step that leaves WebKitGTK's own renderer alone.
+WebKitGTK gave up before drawing anything: it could not get an EGL display at all. **On a Steam
+Deck this line means the launcher turned off a renderer the machine needed.** The *default* display
+is what the path **without** the DMA-BUF renderer asks for, so the setting shipped to cure white
+windows — `WEBKIT_DISABLE_DMABUF_RENDERER=1` — is what produces this abort here. The ladder's
+`native` step, which forces nothing at all, is the answer, and the launcher reaches it by itself
+within a second or two of seeing this line.
+
+If you are on a build old enough to force the setting unconditionally, the same thing by hand:
+
+```bash
+WEBKIT_DISABLE_DMABUF_RENDERER=0 ./NextGen*.AppImage
+```
+
+Note the `0`. Anything the ladder would set is left alone when it comes from outside, so this pins
+the accelerated path and the launcher stops arguing with it.
 
 ## Folder mode
 
