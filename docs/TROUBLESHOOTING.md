@@ -75,7 +75,7 @@ over from the top by itself.
 ### What WebKitGTK says about it
 
 Those messages never reached `launcher.log`: the web process writes them to standard error, and a
-launcher started from a desktop entry or from Steam has no terminal. Since 0.1.0 they are kept in
+launcher started from a desktop entry or from Steam has no terminal. Since 0.2.0 they are kept in
 
 ```
 ~/.local/share/xyz.nextgen-lan.launcher/logs/webview.log

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 – Ausbau
 
 - Diagnose: „Fremde Sync-Prozesse laufen" meldete unter Linux dauerhaft die eigene Engine.
   `sysinfo` listet pro Thread einen Eintrag, und ein Thread heißt wie sein Prozess — auf dem Steam

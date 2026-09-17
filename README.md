@@ -5,7 +5,7 @@ start games from the existing ETI ecosystem (sync server, `game.db`, `.eti` pack
 **Windows 10/11, macOS and Linux**, with a modern interface that organisers can re-brand per
 event and with clear instructions whenever something does not work.
 
-> Status: **0.1.0 – foundation.** Core logic and UI are complete and tested; operation against a
+> Status: **0.2.0 – build-out.** Core logic and UI are complete and tested; operation against a
 > real sync server still has to be verified at the next LAN (see [Open items](#open-items)).
 
 ![Library](screenshots/01-library.png)
