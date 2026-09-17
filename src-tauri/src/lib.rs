@@ -219,6 +219,13 @@ fn bundled_dir(resource_dir: Option<&Path>, name: &str, dev_relative: &str) -> O
         .filter(|p| p.is_dir())
         .or_else(|| {
             let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(dev_relative);
+            // `..` has to go. The path is handed to the asset protocol, which
+            // refuses anything that traverses ("cannot traverse directory,
+            // rewrite the path without the use of `../`") — so a development
+            // build showed no covers at all and said so once per game in the
+            // log. A packaged build never hit it, because there the resource
+            // directory above is found and needs no `..`.
+            let dev = dev.canonicalize().unwrap_or(dev);
             dev.is_dir().then_some(dev)
         })
 }

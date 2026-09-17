@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- Linux/AppImage: GStreamer wird jetzt vollständig mitgeliefert (`bundleMediaFramework: true`).
+  Gemessen am gebauten Abbild: die **zehn Kernbibliotheken** (`libgstreamer-1.0`, `libgstvideo`,
+  `libgstaudio` …) lagen drin — `libwebkit2gtk-4.1` linkt hart dagegen, sie sind nicht optional —
+  aber **kein einziges Plugin**, also kein Decoder, kein Demuxer. Die Plugins kamen vom Rechner und
+  sind an die dortige GStreamer-Version gebunden; in Ubuntus Kern lassen sie sich nicht laden.
+  Damit hatte der Webview auf jedem Rechner mit anderer GStreamer-Version gar keine Medienbasis.
+  Jetzt liegen 269 Plugins im Abbild (`libav`, `openh264`, `isomp4`, `matroska`, `vpx`,
+  `playback`), Kern und Plugins passen also zusammen. Kosten: 94 → 161 MB.
+  **Ungeprüft**, ob das die fehlenden Videos auf dem Steam Deck behebt — dieser Container hat
+  weder D-Bus noch Audiogerät, dort scheitert die Wiedergabe aus anderem Grund.
+- Entwicklungsbuilds zeigten keine Cover: der Rückfallpfad auf die mitgelieferten Bilder enthielt
+  `..`, und das Asset-Protokoll von Tauri lehnt jeden Pfad mit Verzeichniswechsel ab („cannot
+  traverse directory") — einmal pro Spiel im Log. Der Pfad wird jetzt aufgelöst. Ein Paketbau war
+  nie betroffen, dort wird das Ressourcenverzeichnis gefunden.
+
 ## 0.2.0 – Ausbau
 
 - Der Fortschritt eines Downloads kommt jetzt aus den Zählern der Gegenstellen. Resilios `size`
