@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Themes können den Karten, Kacheln und dem Detailbereich eine Textur geben: `surfacePattern` in
+  der `theme.json` (bzw. `theme_surface_pattern` in der `launcher.ini`) nennt eine der Figuren
+  `scanlines`, `grid`, `dots`, `diagonal` oder `gradient` samt Farbe, Abstand und Winkel — die
+  CSS-Regel dazu baut der Launcher selbst. Damit lassen sich die Scanlines einer LANPage nachbauen,
+  die vorher in keiner Farbe ausdrückbar waren. Ohne den Schlüssel bleiben die Flächen glatt.
 - Themes können jetzt eine eigene Schrift für die Überschriften nennen (`headingFontFamily` in der
   `theme.json`, `theme_heading_font_family` samt `theme_heading_font_src` in der `launcher.ini`).
   Bisher gab es genau einen Schriftstapel für die ganze Oberfläche; die schwere Schrift, die eine

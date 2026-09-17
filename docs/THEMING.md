@@ -21,6 +21,7 @@ Organisers can brand the launcher per event without touching code.
   "backgroundImage": "http://launcher.lan/bg.jpg",
   "backgroundOverlay": "rgba(4, 12, 24, 0.66)",
   "radius": 12,
+  "surfacePattern": { "kind": "scanlines", "color": "rgba(0, 212, 255, 0.06)", "size": 4 },
   "fontFamily": "Rajdhani, sans-serif",
   "headingFontFamily": "Bebas Neue, sans-serif",
   "fontFaces": [
@@ -40,9 +41,34 @@ LANPage needs to look like itself inside the launcher:
 | `colors.footer` / `colors.footerText` | the status bar at the bottom | `surface` / `textMuted` |
 | `backgroundImage` | a picture behind the whole window | none |
 | `backgroundOverlay` | a colour over that picture, so the text stays readable | transparent |
+| `surfacePattern` | a figure on the cards, tiles and the detail panel | flat `surface` |
 | `fontFamily` | the font stack of the whole UI | the system font |
 | `headingFontFamily` | the font stack of the headings (`h1`–`h3`, the event name in the top bar) | `fontFamily` |
 | `fontFaces` | the font files themselves (`family`, `src`, optional `weight`/`style`) | none |
+
+### `surfacePattern`
+
+A panel that is a flat colour on the LANPage and a flat colour in the launcher matches; one drawn
+with CRT scanlines or a grid has no colour that would say so. The theme names the figure and its
+numbers, the launcher builds the `background-image`:
+
+| `kind` | What it draws | Uses |
+|---|---|---|
+| `scanlines` | horizontal hairlines every `size` px — the CRT look | `color`, `size` |
+| `grid` | the same in both directions | `color`, `size` |
+| `dots` | one dot every `size` px | `color`, `size` |
+| `diagonal` | hairlines at `angle` | `color`, `size`, `angle` |
+| `gradient` | a wash from `color` at `angle` into nothing, over `colors.surface` | `color`, `angle` |
+| `none` | nothing, like leaving the key out | — |
+
+`color` is the ink and is validated like every other colour — a hairline is a hint of one, so it is
+usually an `rgba()` well under `0.1`. `size` is 2–64 px (default 4) and `angle` a direction in
+degrees (default 45). Only the colour can cost a theme: a `size` outside the range is clamped into
+it, an `angle` is taken modulo a full turn (`-45` is `315`), and a `kind` this launcher does not
+know leaves the surfaces flat — each with a line in the log, and the colour of a figure that is not
+drawn is not checked at all. So a page may already name a figure a newer build draws without its
+theme being refused by an older one. In `launcher.ini` a `size` outside the range keeps the default
+instead of being clamped; the angle wraps there as well.
 
 A page that sets a display face on its headlines — a slab, a condensed all-caps — and a readable
 one on everything else needs both stacks: as the UI font that display face is unusable, and without
@@ -94,7 +120,9 @@ Recognised keys: `theme_mode` (`dark`/`light`, picks the base the rest is applie
 `theme_header`, `theme_header_text`, `theme_footer`, `theme_footer_text`.
 
 The same goes for most of what `theme.json` can say: `theme_logo`, `theme_background_image`,
-`theme_background_overlay`, `theme_font_family`, `theme_heading_font_family` and their files
+`theme_background_overlay`, `theme_surface_pattern` with `theme_surface_pattern_color`,
+`theme_surface_pattern_size` and `theme_surface_pattern_angle` (naming only the figure is enough,
+the rest has defaults), `theme_font_family`, `theme_heading_font_family` and their files
 `theme_font_src` and `theme_heading_font_src` (one file per stack, using the first family of the
 stack it belongs to; several weights per family want a `theme.json`). URLs must be `http(s)`,
 and a value that is neither a colour nor a URL is ignored with a line in the log.

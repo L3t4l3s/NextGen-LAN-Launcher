@@ -76,7 +76,11 @@
     flex-direction: column;
     text-align: left;
     padding: 0;
-    background: var(--color-surface);
+    /* The cover brings its own background, so the theme's figure shows on the
+       strip below it — where a LANPage draws it too. */
+    background-color: var(--color-surface);
+    background-image: var(--surface-pattern, none);
+    background-size: var(--surface-pattern-size, auto);
     overflow: hidden;
     border-radius: var(--radius);
     transition: transform 0.12s, border-color 0.15s, box-shadow 0.15s;

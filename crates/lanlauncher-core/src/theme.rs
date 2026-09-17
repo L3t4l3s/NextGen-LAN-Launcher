@@ -81,6 +81,11 @@ pub struct Theme {
     pub background_overlay: Option<String>,
     /// Corner radius token in pixels.
     pub radius: u32,
+    /// Texture on the cards, tiles and the detail panel. A LANPage that draws
+    /// its panels with scanlines or a grid cannot say so in a colour, and a
+    /// stylesheet is not on offer; this names the figure and the launcher
+    /// draws it. `None` leaves the surfaces flat.
+    pub surface_pattern: Option<SurfacePattern>,
     /// Font stack override.
     pub font_family: Option<String>,
     /// Font stack for the headings (`h1`-`h3` and the event title in the top
@@ -98,6 +103,228 @@ pub struct Theme {
     pub icons: BTreeMap<String, String>,
     /// Legacy ETI `launcher.css` to inject as an extra stylesheet, if any.
     pub legacy_css: Option<String>,
+}
+
+/// The figure drawn on a surface. A closed list, because every kind becomes a
+/// `background-image` the launcher writes itself — an organiser names the
+/// figure and its two or three numbers, never the CSS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SurfacePatternKind {
+    /// Flat, as without the key at all.
+    #[default]
+    None,
+    /// Horizontal hairlines every `size` pixels — the CRT look.
+    Scanlines,
+    /// Scanlines in both directions.
+    Grid,
+    /// A dot every `size` pixels.
+    Dots,
+    /// Hairlines at `angle`.
+    Diagonal,
+    /// A wash from `color` at `angle` into nothing, over the surface colour.
+    Gradient,
+}
+
+/// A texture on the surfaces, as far as a theme may describe one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SurfacePattern {
+    /// The figure. An unknown name leaves the surfaces flat instead of
+    /// costing the theme: a LANPage may well name a kind a newer launcher
+    /// knows and this one does not.
+    #[serde(deserialize_with = "kind_or_flat")]
+    pub kind: SurfacePatternKind,
+    /// The ink of the figure. Barely-there is the point: a scanline is a hint
+    /// of a line, so this is usually an `rgba()` well under 0.1.
+    #[serde(deserialize_with = "color_or_default")]
+    pub color: String,
+    /// Distance between the lines or dots in pixels, inside
+    /// [`PATTERN_SIZE_RANGE`]; a value outside it is clamped.
+    #[serde(deserialize_with = "size_or_default")]
+    pub size: u32,
+    /// Direction of `diagonal` and `gradient` in degrees; ignored by the rest.
+    /// Anything is a direction once it is taken modulo a full turn.
+    #[serde(deserialize_with = "angle_or_default")]
+    pub angle: u32,
+}
+
+/// What a pattern looks like when a theme names the kind and nothing else.
+/// A grey that shows on a dark card and on a light one, and the 4 px of the
+/// CRT look.
+pub const PATTERN_COLOR: &str = "rgba(128, 128, 128, 0.07)";
+pub const PATTERN_SIZE: u32 = 4;
+pub const PATTERN_ANGLE: u32 = 45;
+/// Under 2 px a line pattern is a solid block, over 64 it is one line per
+/// card. Both ends are the point where the figure stops being one.
+pub const PATTERN_SIZE_RANGE: std::ops::RangeInclusive<u32> = 2..=64;
+
+impl Default for SurfacePattern {
+    fn default() -> Self {
+        Self {
+            kind: SurfacePatternKind::None,
+            color: PATTERN_COLOR.into(),
+            size: PATTERN_SIZE,
+            angle: PATTERN_ANGLE,
+        }
+    }
+}
+
+/// What a file people edit by hand holds where a word belongs.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LooseText {
+    Text(String),
+    /// A number, `null`, a list — anything that is not a word.
+    Other(serde::de::IgnoredAny),
+}
+
+/// The same where a number belongs. `"4"`, `4.0` and `-45` all turn up in a
+/// theme somebody wrote by hand, and none of them is worth the rest of it.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LooseNumber {
+    Int(i64),
+    Float(f64),
+    Text(String),
+    Other(serde::de::IgnoredAny),
+}
+
+impl LooseNumber {
+    /// The number behind the value, whatever notation it arrived in.
+    fn value(&self) -> Option<i64> {
+        let round = |f: f64| f.is_finite().then(|| f.round() as i64);
+        match self {
+            Self::Int(i) => Some(*i),
+            Self::Float(f) => round(*f),
+            Self::Text(t) => t.trim().parse::<f64>().ok().and_then(round),
+            Self::Other(_) => None,
+        }
+    }
+}
+
+/// Distance between the lines, brought into the range where the figure is one.
+/// A number outside it is clamped rather than refused: the same file has to
+/// pass here and in `surfacePatternCss` of `src/lib/theme.ts`, which clamps,
+/// and a theme that draws on one screen and is rejected on the next is worse
+/// than a pattern two pixels off what was asked for.
+fn size_or_default<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let (low, high) = (*PATTERN_SIZE_RANGE.start(), *PATTERN_SIZE_RANGE.end());
+    Ok(match LooseNumber::deserialize(deserializer)?.value() {
+        Some(v) => {
+            let size = v.clamp(i64::from(low), i64::from(high)) as u32;
+            if i64::from(size) != v {
+                log::warn!("theme: surfacePattern.size {v} is outside {low}-{high}, using {size}");
+            }
+            size
+        }
+        None => {
+            log::warn!("theme: surfacePattern.size is not a number, using {PATTERN_SIZE}");
+            PATTERN_SIZE
+        }
+    })
+}
+
+/// The direction, as a turn: -45 is 315, 405 is 45.
+fn angle_or_default<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match LooseNumber::deserialize(deserializer)?.value() {
+        Some(v) => v.rem_euclid(360) as u32,
+        None => {
+            log::warn!("theme: surfacePattern.angle is not a number, using {PATTERN_ANGLE}");
+            PATTERN_ANGLE
+        }
+    })
+}
+
+/// The ink, as far as the type goes. A `null` or a number is the same slip as
+/// the ones `kind`, `size` and `angle` forgive, so it costs the default rather
+/// than the theme; a colour that *is* a word still has to be one the launcher
+/// may paint with, which [`Theme::validate`] decides.
+fn color_or_default<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let LooseText::Text(raw) = LooseText::deserialize(deserializer)? else {
+        log::warn!("theme: surfacePattern.color is not a colour, using {PATTERN_COLOR}");
+        return Ok(PATTERN_COLOR.to_string());
+    };
+    Ok(raw)
+}
+
+/// A kind this launcher does not know is no pattern, not a broken theme.
+/// Serde's `other` attribute only works on tagged enums, so the mapping is
+/// written out here.
+fn kind_or_flat<'de, D>(deserializer: D) -> Result<SurfacePatternKind, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let LooseText::Text(raw) = LooseText::deserialize(deserializer)? else {
+        log::warn!("theme: surfacePattern.kind is not a name, surfaces stay flat");
+        return Ok(SurfacePatternKind::None);
+    };
+    Ok(match raw.trim().to_ascii_lowercase().as_str() {
+        "none" => SurfacePatternKind::None,
+        "scanlines" => SurfacePatternKind::Scanlines,
+        "grid" => SurfacePatternKind::Grid,
+        "dots" => SurfacePatternKind::Dots,
+        "diagonal" => SurfacePatternKind::Diagonal,
+        "gradient" => SurfacePatternKind::Gradient,
+        other => {
+            log::warn!("theme: `{other}` is not a surface pattern, surfaces stay flat");
+            SurfacePatternKind::None
+        }
+    })
+}
+
+impl SurfacePattern {
+    /// The `background-image` and the `background-size` for it, or `None` when
+    /// the theme asks for nothing (or for something with an unusable colour —
+    /// the figure would be invisible or, worse, carry a rule of its own).
+    ///
+    /// Every number is clamped here rather than trusted: this is the last
+    /// place before the value stands in a declaration.
+    pub fn to_css(&self) -> Option<(String, String)> {
+        let color = self.color.trim();
+        if self.kind == SurfacePatternKind::None {
+            return None;
+        }
+        if !is_safe_css_color(color) {
+            log::warn!("theme: `{color}` is not a colour, surfaces stay flat");
+            return None;
+        }
+        let size = self
+            .size
+            .clamp(*PATTERN_SIZE_RANGE.start(), *PATTERN_SIZE_RANGE.end());
+        let angle = self.angle % 360;
+        // One hairline at `deg`, then nothing until the next one.
+        let lines = |deg: u32| {
+            format!(
+                "repeating-linear-gradient({deg}deg, {color} 0, {color} 1px, transparent 1px, transparent {size}px)"
+            )
+        };
+        Some(match self.kind {
+            SurfacePatternKind::None => unreachable!("handled above"),
+            SurfacePatternKind::Scanlines => (lines(0), "auto".into()),
+            SurfacePatternKind::Grid => (format!("{}, {}", lines(0), lines(90)), "auto".into()),
+            // A dot needs the size on the box, not in the figure: the radial
+            // gradient draws one dot per tile of `background-size`.
+            SurfacePatternKind::Dots => (
+                format!("radial-gradient({color} 1px, transparent 1px)"),
+                format!("{size}px {size}px"),
+            ),
+            SurfacePatternKind::Diagonal => (lines(angle), "auto".into()),
+            SurfacePatternKind::Gradient => (
+                format!("linear-gradient({angle}deg, {color}, transparent)"),
+                "auto".into(),
+            ),
+        })
+    }
 }
 
 /// One font file of the event, as `@font-face` needs it.
@@ -214,6 +441,7 @@ impl Default for Theme {
             background_image: None,
             background_overlay: None,
             radius: 12,
+            surface_pattern: None,
             font_family: None,
             heading_font_family: None,
             font_faces: Vec::new(),
@@ -517,6 +745,63 @@ impl Theme {
                 _ => log::warn!("launcher.ini: theme_radius is not a number up to 48: {raw}"),
             }
         }
+        // The texture of the surfaces: the figure, and the three values that
+        // describe it. Naming only the figure is the common case and enough.
+        if let Some(raw) = extra.get("theme_surface_pattern").map(|k| k.trim()) {
+            let kind = match raw.to_ascii_lowercase().as_str() {
+                "none" => Some(SurfacePatternKind::None),
+                "scanlines" => Some(SurfacePatternKind::Scanlines),
+                "grid" => Some(SurfacePatternKind::Grid),
+                "dots" => Some(SurfacePatternKind::Dots),
+                "diagonal" => Some(SurfacePatternKind::Diagonal),
+                "gradient" => Some(SurfacePatternKind::Gradient),
+                _ => None,
+            };
+            match kind {
+                None => log::warn!("launcher.ini: theme_surface_pattern is not a pattern: {raw}"),
+                Some(kind) => {
+                    let mut pattern = SurfacePattern {
+                        kind,
+                        ..SurfacePattern::default()
+                    };
+                    if let Some(value) = extra.get("theme_surface_pattern_color").map(|v| v.trim())
+                    {
+                        if is_safe_css_color(value) {
+                            pattern.color = value.to_string();
+                        } else {
+                            log::warn!(
+                                "launcher.ini: theme_surface_pattern_color is not a colour: {value}"
+                            );
+                        }
+                    }
+                    if let Some(raw) = extra.get("theme_surface_pattern_size").map(|v| v.trim()) {
+                        match raw.parse::<u32>() {
+                            Ok(size) if PATTERN_SIZE_RANGE.contains(&size) => pattern.size = size,
+                            // Outside the range the default stands, and the
+                            // log says why: `size = 1` is a solid block, not
+                            // a figure anyone meant to ask for.
+                            _ => log::warn!(
+                                "launcher.ini: theme_surface_pattern_size is not a number between {} and {}: {raw}",
+                                PATTERN_SIZE_RANGE.start(),
+                                PATTERN_SIZE_RANGE.end()
+                            ),
+                        }
+                    }
+                    if let Some(raw) = extra.get("theme_surface_pattern_angle").map(|v| v.trim()) {
+                        match raw.parse::<i64>() {
+                            // A turn backwards is a direction too, and it has
+                            // to mean here what it means in a theme.json.
+                            Ok(angle) => pattern.angle = angle.rem_euclid(360) as u32,
+                            Err(_) => log::warn!(
+                                "launcher.ini: theme_surface_pattern_angle is not a number: {raw}"
+                            ),
+                        }
+                    }
+                    theme.surface_pattern = Some(pattern);
+                    any = true;
+                }
+            }
+        }
         any.then_some(theme)
     }
 
@@ -543,7 +828,21 @@ impl Theme {
             &self.colors.footer_text,
             &self.background_overlay,
         ];
-        for c in all.into_iter().chain(optional.into_iter().flatten()) {
+        // The pattern's ink ends up in a `background-image` the launcher
+        // writes, so it is checked like every other colour of the theme — but
+        // only for a figure that is actually drawn. A theme naming a kind only
+        // a newer launcher knows would otherwise still lose everything here,
+        // over a colour this build never paints with.
+        let pattern = self
+            .surface_pattern
+            .as_ref()
+            .filter(|p| p.kind != SurfacePatternKind::None)
+            .map(|p| &p.color);
+        for c in all
+            .into_iter()
+            .chain(optional.into_iter().flatten())
+            .chain(pattern)
+        {
             if !is_safe_css_color(c) {
                 return Err(crate::Error::Settings(format!(
                     "invalid colour `{c}` in theme"
@@ -553,6 +852,10 @@ impl Theme {
         if self.radius > 48 {
             return Err(crate::Error::Settings("radius must be <= 48".into()));
         }
+        // The pattern's numbers are not checked here: they cannot carry a rule
+        // (a `u32` is digits), and both the parser and `SurfacePattern::to_css`
+        // bring them into range. Refusing a theme over two pixels would be the
+        // harsher answer to the smaller problem.
         Ok(())
     }
 
@@ -635,6 +938,12 @@ impl Theme {
         push("color-footer", c.footer.as_deref().unwrap_or(&c.surface));
         push("color-footer-text", &footer_text);
         push("radius", &format!("{}px", self.radius));
+        // Nothing is pushed for a flat theme, so the cards keep the plain
+        // surface colour they had before this key existed.
+        if let Some((image, size)) = self.surface_pattern.as_ref().and_then(|p| p.to_css()) {
+            push("surface-pattern", &image);
+            push("surface-pattern-size", &size);
+        }
         if let Some(overlay) = &self.background_overlay {
             push("bg-overlay", overlay);
         }
@@ -939,6 +1248,162 @@ mod tests {
         assert!(theme.font_faces.is_empty());
         assert_eq!(theme.font_family, None);
         assert_eq!(theme.colors.primary, "#29b6f6");
+    }
+
+    #[test]
+    fn a_theme_may_draw_a_figure_on_its_surfaces() {
+        // The CRT look of a LANPage: hairlines every 4 px. A colour cannot
+        // say this and a stylesheet is not on offer, so the theme names the
+        // figure and the launcher draws it.
+        let theme = Theme::parse(
+            r#"{"surfacePattern":{"kind":"scanlines","color":"rgba(0, 212, 255, 0.06)","size":4}}"#,
+        )
+        .expect("a theme");
+        let css = theme.to_css_variables();
+        assert!(
+            css.contains(
+                "--surface-pattern: repeating-linear-gradient(0deg, rgba(0, 212, 255, 0.06) 0, \
+                 rgba(0, 212, 255, 0.06) 1px, transparent 1px, transparent 4px);"
+            ),
+            "{css}"
+        );
+        assert!(css.contains("--surface-pattern-size: auto;"), "{css}");
+        // A dot needs its distance on the box, not in the figure.
+        let dots = Theme::parse(r#"{"surfacePattern":{"kind":"dots","size":6}}"#).unwrap();
+        let css = dots.to_css_variables();
+        assert!(css.contains("--surface-pattern: radial-gradient("), "{css}");
+        assert!(css.contains("--surface-pattern-size: 6px 6px;"), "{css}");
+        // The grid draws both directions, the diagonal follows the angle.
+        let grid = Theme::parse(r#"{"surfacePattern":{"kind":"grid"}}"#).unwrap();
+        assert_eq!(
+            grid.to_css_variables().matches("repeating-linear").count(),
+            1 + 1
+        );
+        let diagonal =
+            Theme::parse(r#"{"surfacePattern":{"kind":"diagonal","angle":135}}"#).unwrap();
+        assert!(
+            diagonal
+                .to_css_variables()
+                .contains("repeating-linear-gradient(135deg,"),
+            "{diagonal:?}"
+        );
+        // Saying nothing leaves the surfaces flat, exactly as before the key.
+        assert!(!Theme::default()
+            .to_css_variables()
+            .contains("--surface-pattern"));
+        assert!(!Theme::parse(r#"{"surfacePattern":{"kind":"none"}}"#)
+            .unwrap()
+            .to_css_variables()
+            .contains("--surface-pattern"));
+    }
+
+    #[test]
+    fn a_pattern_cannot_carry_a_rule_of_its_own() {
+        // Colour, figure and numbers all end up in a declaration the launcher
+        // writes. The colour is checked like every other colour of the theme,
+        // so a value that could close the declaration costs the theme.
+        assert!(Theme::parse(
+            r#"{"surfacePattern":{"kind":"scanlines","color":"red; } body { display: none"}}"#
+        )
+        .is_err());
+        // A number cannot carry a rule, so it is brought into range instead of
+        // costing the theme — and into the same range as in
+        // `surfacePatternCss` of `src/lib/theme.ts`, which clamps as well.
+        let css = |json: &str| Theme::parse(json).expect("a theme").to_css_variables();
+        assert!(css(r#"{"surfacePattern":{"kind":"dots","size":0}}"#).contains(": 2px 2px;"));
+        assert!(css(r#"{"surfacePattern":{"kind":"dots","size":800}}"#).contains(": 64px 64px;"));
+        assert!(css(r#"{"surfacePattern":{"kind":"diagonal","angle":900}}"#).contains("(180deg,"));
+        // A turn backwards is a direction too, and `"4"` is how a number
+        // reaches a file somebody wrote by hand.
+        assert!(css(r#"{"surfacePattern":{"kind":"diagonal","angle":-45}}"#).contains("(315deg,"));
+        assert!(css(r#"{"surfacePattern":{"kind":"dots","size":"6"}}"#).contains(": 6px 6px;"));
+        // And what is no number at all keeps the default. The ink is the same
+        // slip and gets the same answer — only a colour that is a word but no
+        // colour is refused, because that one could carry a rule.
+        assert!(css(r#"{"surfacePattern":{"kind":"dots","size":null}}"#).contains(": 4px 4px;"));
+        assert!(
+            css(r#"{"surfacePattern":{"kind":"scanlines","color":null}}"#).contains(PATTERN_COLOR)
+        );
+        // A figure this launcher does not know is no pattern and no error: a
+        // LANPage may name one a newer build draws.
+        let unknown = Theme::parse(
+            r##"{"surfacePattern":{"kind":"hexagons"},"colors":{"primary":"#29b6f6"}}"##,
+        )
+        .expect("still a theme");
+        assert_eq!(unknown.colors.primary, "#29b6f6");
+        assert!(!unknown.to_css_variables().contains("--surface-pattern"));
+        // The same for a kind that is not even a word.
+        assert!(!Theme::parse(r#"{"surfacePattern":{"kind":null}}"#)
+            .expect("still a theme")
+            .to_css_variables()
+            .contains("--surface-pattern"));
+        // And the ink of a figure nobody draws is nobody's problem: a page
+        // naming a kind and a colour notation only a newer launcher knows
+        // must not lose its theme here.
+        let ahead = Theme::parse(
+            r#"{"surfacePattern":{"kind":"hexagons","color":"oklch(0.7 0.1 200)"},
+                "fontFamily":"Rajdhani"}"#,
+        )
+        .expect("still a theme");
+        assert_eq!(ahead.font_family.as_deref(), Some("Rajdhani"));
+        assert!(!ahead.to_css_variables().contains("--surface-pattern"));
+    }
+
+    #[test]
+    fn the_ini_can_name_a_pattern_too() {
+        let theme = Theme::from_ini(&ini(&[
+            ("theme_surface_pattern", "Scanlines"),
+            ("theme_surface_pattern_color", "rgba(0, 212, 255, 0.06)"),
+            ("theme_surface_pattern_size", "4"),
+        ]))
+        .expect("a theme");
+        theme.validate().expect("valid");
+        let pattern = theme.surface_pattern.expect("a pattern");
+        assert_eq!(pattern.kind, SurfacePatternKind::Scanlines);
+        assert_eq!(pattern.size, 4);
+        // Naming only the figure is the common case: the rest has defaults.
+        let bare = Theme::from_ini(&ini(&[("theme_surface_pattern", "dots")]))
+            .expect("a theme")
+            .surface_pattern
+            .expect("a pattern");
+        assert_eq!(bare.color, PATTERN_COLOR);
+        assert_eq!(bare.size, PATTERN_SIZE);
+        // A value that is none of the figures, a colour that is no colour and
+        // a size that is no number each cost themselves, not the theme.
+        assert!(Theme::from_ini(&ini(&[("theme_surface_pattern", "sparkles")])).is_none());
+        let sloppy = Theme::from_ini(&ini(&[
+            ("theme_surface_pattern", "grid"),
+            ("theme_surface_pattern_color", "red; } body { display: none"),
+            ("theme_surface_pattern_size", "huge"),
+            ("theme_surface_pattern_angle", "900"),
+        ]))
+        .expect("a theme");
+        sloppy.validate().expect("valid");
+        let pattern = sloppy.surface_pattern.expect("a pattern");
+        assert_eq!(pattern.kind, SurfacePatternKind::Grid);
+        assert_eq!(pattern.color, PATTERN_COLOR);
+        assert_eq!(pattern.size, PATTERN_SIZE);
+        // A direction wraps here as it does in a theme.json, rather than the
+        // same value meaning two things in the two files.
+        assert_eq!(pattern.angle, 900 % 360);
+        let backwards = Theme::from_ini(&ini(&[
+            ("theme_surface_pattern", "diagonal"),
+            ("theme_surface_pattern_angle", "-45"),
+        ]))
+        .expect("a theme")
+        .surface_pattern
+        .expect("a pattern");
+        assert_eq!(backwards.angle, 315);
+        // A size below the range is a solid block, not a figure: the ini says
+        // so in the log and keeps the default.
+        let dense = Theme::from_ini(&ini(&[
+            ("theme_surface_pattern", "scanlines"),
+            ("theme_surface_pattern_size", "1"),
+        ]))
+        .expect("a theme")
+        .surface_pattern
+        .expect("a pattern");
+        assert_eq!(dense.size, PATTERN_SIZE);
     }
 
     #[test]

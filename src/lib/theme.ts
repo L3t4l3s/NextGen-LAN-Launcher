@@ -1,4 +1,4 @@
-import type { FontFace, Theme, ThemeColors } from "./types";
+import type { FontFace, SurfacePattern, Theme, ThemeColors } from "./types";
 import lightJson from "../../themes/light.json";
 import blueJson from "../../themes/blue.json";
 import greenJson from "../../themes/green.json";
@@ -28,6 +28,7 @@ export const defaultTheme: Theme = {
   backgroundImage: null,
   backgroundOverlay: null,
   radius: 12,
+  surfacePattern: null,
   fontFamily: null,
   headingFontFamily: null,
   fontFaces: [],
@@ -187,6 +188,51 @@ function fontFaceCss(faces: FontFace[]): string {
     .join("\n");
 }
 
+// Same figures, defaults and bounds as `SurfacePattern` in
+// crates/lanlauncher-core/src/theme.rs. A theme that draws its cards there and
+// not here is a theme nobody can explain.
+const PATTERN_COLOR = "rgba(128, 128, 128, 0.07)";
+const PATTERN_SIZE = 4;
+const PATTERN_ANGLE = 45;
+const PATTERN_MIN = 2;
+const PATTERN_MAX = 64;
+
+/**
+ * The `background-image` and `background-size` for the figure a theme asks
+ * for, or `null` for a flat surface. The colour is checked and the numbers are
+ * clamped here: this is the last place before the value stands in a
+ * declaration, so nothing that could end it may get through.
+ */
+export function surfacePatternCss(pattern: SurfacePattern | null | undefined): { image: string; size: string } | null {
+  if (!pattern || !pattern.kind || pattern.kind === "none") return null;
+  const color = safeColor(pattern.color ?? PATTERN_COLOR);
+  if (!color) return null;
+  const raw = Number(pattern.size ?? PATTERN_SIZE);
+  const size = Math.round(Math.min(PATTERN_MAX, Math.max(PATTERN_MIN, Number.isFinite(raw) ? raw : PATTERN_SIZE)));
+  const degrees = Math.round(Number(pattern.angle ?? PATTERN_ANGLE));
+  const angle = (((Number.isFinite(degrees) ? degrees : PATTERN_ANGLE) % 360) + 360) % 360;
+  // One hairline at `deg`, then nothing until the next one.
+  const lines = (deg: number) =>
+    `repeating-linear-gradient(${deg}deg, ${color} 0, ${color} 1px, transparent 1px, transparent ${size}px)`;
+  switch (pattern.kind) {
+    case "scanlines":
+      return { image: lines(0), size: "auto" };
+    case "grid":
+      return { image: `${lines(0)}, ${lines(90)}`, size: "auto" };
+    // A dot needs its distance on the box: the radial gradient draws one dot
+    // per tile of `background-size`.
+    case "dots":
+      return { image: `radial-gradient(${color} 1px, transparent 1px)`, size: `${size}px ${size}px` };
+    case "diagonal":
+      return { image: lines(angle), size: "auto" };
+    case "gradient":
+      return { image: `linear-gradient(${angle}deg, ${color}, transparent)`, size: "auto" };
+    // A figure a newer launcher knows: flat here, and no reason to complain.
+    default:
+      return null;
+  }
+}
+
 /** Put the event's font rules into the document, or take them out again. */
 function applyFont(css: string | null | undefined) {
   let style = document.getElementById("theme-font") as HTMLStyleElement | null;
@@ -227,6 +273,15 @@ export function applyTheme(theme: Theme) {
   root.style.setProperty("--color-success-text", readableOn(merged.colors.success));
   root.style.setProperty("--color-warning-text", readableOn(merged.colors.warning));
   root.style.setProperty("--radius", `${Math.min(48, Math.max(0, merged.radius))}px`);
+  // Nothing set means a flat card, exactly as before this key existed.
+  const pattern = surfacePatternCss(merged.surfacePattern);
+  if (pattern) {
+    root.style.setProperty("--surface-pattern", pattern.image);
+    root.style.setProperty("--surface-pattern-size", pattern.size);
+  } else {
+    root.style.removeProperty("--surface-pattern");
+    root.style.removeProperty("--surface-pattern-size");
+  }
   // A stack ends up in a declaration of its own, so what could close it goes.
   // The headings fall back to the body font in CSS, so leaving the property
   // unset is how a theme without a headline face keeps looking as it did.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { builtinThemes, readableOn } from "./theme";
+import { builtinThemes, readableOn, surfacePatternCss } from "./theme";
 
 /**
  * Distance in OKLab, which is perceptual: two oranges that differ by a lot of
@@ -103,6 +103,42 @@ describe("built-in themes", () => {
         expect(value, `${id}.${token}`).toMatch(/^#[0-9a-f]{6}$/i);
       }
     }
+  });
+
+  // The figures are built in two places — here and in
+  // crates/lanlauncher-core/src/theme.rs, whose tests assert the same strings.
+  // This side is the one that paints, so it is the one that must not let a
+  // value through that could end the declaration it stands in.
+  it("draws the figure a theme asks for on its surfaces", () => {
+    expect(surfacePatternCss({ kind: "scanlines", color: "rgba(0, 212, 255, 0.06)", size: 4 })).toEqual({
+      image:
+        "repeating-linear-gradient(0deg, rgba(0, 212, 255, 0.06) 0, rgba(0, 212, 255, 0.06) 1px, transparent 1px, transparent 4px)",
+      size: "auto",
+    });
+    // A dot carries its distance on the box, not in the figure.
+    expect(surfacePatternCss({ kind: "dots", size: 6 })?.size).toBe("6px 6px");
+    expect(surfacePatternCss({ kind: "grid" })?.image.match(/repeating-linear/g)).toHaveLength(2);
+    expect(surfacePatternCss({ kind: "diagonal", angle: 135 })?.image).toContain("(135deg,");
+    expect(surfacePatternCss({ kind: "gradient", angle: 135 })?.image).toContain("linear-gradient(135deg,");
+  });
+
+  it("leaves the surface flat where it cannot draw", () => {
+    expect(surfacePatternCss(null)).toBeNull();
+    expect(surfacePatternCss({ kind: "none" })).toBeNull();
+    // A figure only a newer launcher knows.
+    expect(surfacePatternCss({ kind: "hexagons" as never })).toBeNull();
+    // A colour that could close the declaration and open a rule of its own.
+    expect(surfacePatternCss({ kind: "scanlines", color: "red; } body { display: none" })).toBeNull();
+  });
+
+  it("keeps the numbers of a figure inside what is still a figure", () => {
+    // Under 2px scanlines are a solid block, over 64 there is one line per
+    // card; the angle wraps rather than reaching CSS as -45 or 900.
+    expect(surfacePatternCss({ kind: "scanlines", size: 0 })?.image).toContain("transparent 2px");
+    expect(surfacePatternCss({ kind: "scanlines", size: 4000 })?.image).toContain("transparent 64px");
+    expect(surfacePatternCss({ kind: "diagonal", angle: 405 })?.image).toContain("(45deg,");
+    expect(surfacePatternCss({ kind: "diagonal", angle: -45 })?.image).toContain("(315deg,");
+    expect(surfacePatternCss({ kind: "scanlines", size: Number.NaN })?.image).toContain("transparent 4px");
   });
 
   it("gives every theme a name and a radius the UI can use", () => {
