@@ -165,6 +165,19 @@ export interface FontFace {
   style?: string | null;
 }
 
+/** The figures a theme may ask for on its surfaces; the launcher draws them. */
+export type SurfacePatternKind = "none" | "scanlines" | "grid" | "dots" | "diagonal" | "gradient";
+
+export interface SurfacePattern {
+  kind: SurfacePatternKind;
+  /** Ink of the figure; usually an `rgba()` well under 0.1. */
+  color?: string;
+  /** Distance between the lines or dots in pixels. */
+  size?: number;
+  /** Direction of `diagonal` and `gradient` in degrees. */
+  angle?: number;
+}
+
 export interface Theme {
   version: number;
   name: string;
@@ -175,7 +188,11 @@ export interface Theme {
   /** Colour over the background image so text stays readable on a photo. */
   backgroundOverlay?: string | null;
   radius: number;
+  /** Texture on the cards, tiles and the detail panel; flat without it. */
+  surfacePattern?: SurfacePattern | null;
   fontFamily: string | null;
+  /** Font stack of the headings; falls back to `fontFamily`. */
+  headingFontFamily?: string | null;
   /** Font files of the event; the launcher writes the @font-face rules itself. */
   fontFaces?: FontFace[];
   icons: Record<string, string>;

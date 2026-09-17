@@ -127,11 +127,12 @@ pub struct Observation {
 /// Whose figure an [`Observation`] speaks with. A change from one to the
 /// other is a jump, not a transfer: the rate must not be measured across it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
 pub enum ByteSource {
     /// The sync engine's own counter for the share.
-    Engine,
+    Engine = 0,
     /// What lies in the game's folder.
-    Folder,
+    Folder = 1,
 }
 
 impl Observation {
@@ -163,7 +164,7 @@ impl Observation {
                 && (t.bytes_total as u128) * 10 >= (self.catalog_bytes as u128) * 9
                 && (t.bytes_total as u128) * 9 <= (self.catalog_bytes as u128) * 10;
             if knows_the_share {
-                return (t.bytes_done.min(t.bytes_total), ByteSource::Engine);
+                return (t.bytes_received.min(t.bytes_total), ByteSource::Engine);
             }
         }
         // An installed game that is updating: the folder still holds the
@@ -186,7 +187,11 @@ impl Observation {
                 ByteSource::Folder,
             );
         }
-        let engine = self.transport.as_ref().map(|t| t.bytes_done).unwrap_or(0);
+        let engine = self
+            .transport
+            .as_ref()
+            .map(|t| t.bytes_received)
+            .unwrap_or(0);
         let on_disk = self.bytes_on_disk_only();
         if engine > on_disk {
             (engine, ByteSource::Engine)
@@ -382,6 +387,12 @@ pub struct Tracker {
     /// Which figure the last tick counted with: the engine's counter and the
     /// folder are not the same scale, so the rate restarts when it changes.
     byte_source: Option<ByteSource>,
+    /// The most this download has reported as arrived, per witness: the
+    /// engine's counters start again when it does, and the folder's figure
+    /// includes a placeholder allocated at full size. Kept apart, so one tick
+    /// without an answer from the engine cannot lift the engine's mark to the
+    /// placeholder's size, and the engine's own mark survives that tick.
+    high_water: [u64; 2],
     /// Last rate sample `(taken at, bytes)`; the transport's own rate is
     /// preferred, this covers engines that report none.
     rate_sample: Option<(Instant, u64)>,
@@ -411,6 +422,7 @@ impl Tracker {
             last_engine_log: None,
             last_engine_bytes: None,
             byte_source: None,
+            high_water: [0, 0],
             rate_sample: None,
             rate_bps: 0.0,
             verify_failed_at: None,
@@ -430,6 +442,7 @@ impl Tracker {
         self.problem = None;
         self.last_progress_at = Instant::now();
         self.indexing_since = None;
+        self.high_water = [0, 0];
     }
 
     /// Repair: forget verification failures and re-run the pipeline from
@@ -447,6 +460,7 @@ impl Tracker {
         self.last_archive_len = None;
         self.last_progress_at = Instant::now();
         self.indexing_since = None;
+        self.high_water = [0, 0];
         self.rate_sample = None;
         self.rate_bps = 0.0;
     }
@@ -568,7 +582,21 @@ impl Tracker {
         // transferring it. Where the source changes (the engine finishes
         // indexing and takes over), the measurement starts again: that step
         // is a jump, and a jump is not a transfer.
-        let (bytes_now, source) = obs.arrived();
+        // A game that is not downloading has no mark to keep: an installed
+        // one whose folder is deleted by hand starts its next download at
+        // nothing, not at the size it once had.
+        if !matches!(self.phase, Phase::Syncing | Phase::Queued | Phase::Paused) {
+            self.high_water = [0, 0];
+        }
+        let (arrived, source) = obs.arrived();
+        // The peers' counters begin again at zero when the engine restarts or
+        // a peer drops out, and a download that has come 60 GB must not read
+        // as 0 GB for it — but only against what the same witness said
+        // before. One tick without an answer from the engine would otherwise
+        // lift the mark to the size of the placeholder the folder reports.
+        let mark = &mut self.high_water[source as usize];
+        *mark = (*mark).max(arrived);
+        let bytes_now = *mark;
         if Some(source) != self.byte_source {
             self.byte_source = Some(source);
             // Everything measured on the other scale is void, and the stall
@@ -633,18 +661,29 @@ impl Tracker {
                 // Resilio allocates the target file at its full size before
                 // the first byte arrives, so "the file is there and its size
                 // stopped changing" is not enough: an 85 GB placeholder is
-                // stable from the first second. The engine has to agree that
-                // most of the share arrived — its own two figures, which also
-                // hold for an update, where the folder counts the installed
-                // package as if it were the new one. At 90 %, so the engine
-                // that hangs at 99 % with a complete file still gets its
-                // verification, and a share whose size it does not know says
-                // nothing either way.
+                // stable from the first second. What the engine calls
+                // *finished* answers this — it counts a file only once it is
+                // whole, which is the question a verification asks — while
+                // what merely arrived (the peers' counters) does not: those
+                // run on for a repair of a package already downloaded once.
+                // Where the engine knows nothing at all, the disk decides;
+                // where it knows, it decides, and nothing overrides that. A
+                // check asked for by hand would read the same placeholder,
+                // and waiting turns it into an archive just as little.
                 let engine_mostly_done = obs.transport.as_ref().is_none_or(|t| {
+                    let nine_tenths =
+                        |bytes: u64| (bytes as u128) * 10 >= (t.bytes_total as u128) * 9;
                     t.state == ShareState::Complete
-                        || !t.bytes_known
                         || t.bytes_total == 0
-                        || (t.bytes_done as u128) * 10 >= (t.bytes_total as u128) * 9
+                        // What the engine calls finished is the best answer …
+                        || (t.finished_known && nine_tenths(t.bytes_done))
+                        // … and where it does not count finished files, its
+                        // own progress is the next best: the web UI's
+                        // percentage covers the file in flight.
+                        || (!t.finished_known && t.bytes_known && nine_tenths(t.bytes_received))
+                        // Nothing countable at all: the disk decides, as it
+                        // did before this launcher asked the engine.
+                        || (!t.finished_known && !t.bytes_known)
                 });
                 let complete_on_disk = obs.archive_len.is_some()
                     && obs.partial_len.is_none()
@@ -686,9 +725,10 @@ impl Tracker {
                     self.last_engine_log = Some(now);
                     if let Some(t) = obs.transport.as_ref() {
                         log::info!(
-                            "{}: engine {:?} {} of {} at {} B/s, {} peers; folder {} bytes, partial {:?}, archive {:?}",
+                            "{}: engine {:?} {} received, {} finished of {} at {} B/s, {} peers; folder {} bytes, partial {:?}, archive {:?}",
                             self.game_id,
                             t.state,
+                            t.bytes_received,
                             t.bytes_done,
                             t.bytes_total,
                             t.download_bps,
@@ -733,14 +773,16 @@ impl Tracker {
                 // for as long as indexing plausibly takes.
                 const INDEXING_GRACE: Duration = Duration::from_secs(600);
                 if let Some(t) = obs.transport.as_ref() {
-                    // The engine's *counter* moving is a sign of life even
-                    // when the bytes land somewhere this launcher cannot see;
-                    // its *rate* is not, it has been seen reporting hundreds
-                    // of MB/s for a share that received nothing.
+                    // The engine's counter moving is a sign of life even
+                    // when the bytes land somewhere this launcher cannot see.
+                    // (Its *rate* looked wrong next to "577 B of 150.9 GB" —
+                    // but it was the byte count that was wrong, not the rate:
+                    // `size` counts finished files. The rate is the engine's
+                    // to report and the row shows it.)
                     // The first reading is not progress: it is the first
                     // reading. Only a change from one tick to the next is.
-                    let previous = self.last_engine_bytes.replace(t.bytes_done);
-                    if previous.is_some_and(|before| before != t.bytes_done) {
+                    let previous = self.last_engine_bytes.replace(t.bytes_received);
+                    if previous.is_some_and(|before| before != t.bytes_received) {
                         self.last_progress_at = now;
                         self.indexing_since = None;
                     }
@@ -828,7 +870,13 @@ impl Tracker {
             .max(1);
         let done = match self.phase {
             Phase::Ready | Phase::UpdateAvailable => total,
-            _ => obs.bytes_on_disk(),
+            // Never below what this download already reached: the engine's
+            // counters start again when it does, and a bar that falls back
+            // reads as a download starting over.
+            _ => {
+                let (arrived, source) = obs.arrived();
+                arrived.max(self.high_water[source as usize])
+            }
         };
         let progress = match self.phase {
             Phase::Verifying | Phase::Extracting | Phase::Setup => self.work_progress,
@@ -843,11 +891,26 @@ impl Tracker {
             bytes_done: done.min(total),
             bytes_total: total,
             peers: obs.transport.as_ref().map(|t| t.peers).unwrap_or(0),
-            // What this game's folder grew by, not what the engine reports:
-            // a share showing "177 MB/s" next to "577 B of 150.9 GB" is the
-            // engine's own counter for something else, and a rate that does
-            // not belong to the row it stands in is worse than none.
-            download_bps: self.rate_bps.max(0.0).round() as u64,
+            // The engine's rate for this share where it reports one: it knows
+            // what it is receiving, down to the bytes that have not been
+            // written yet. Where it reports none — folder mode, or an engine
+            // that leaves the field out — what the game's own files grew by
+            // is the next best thing.
+            download_bps: match self.phase {
+                // A rate belongs to a download; a game being verified,
+                // extracted or played is not one.
+                Phase::Syncing | Phase::Queued => obs
+                    .transport
+                    .as_ref()
+                    // While it is indexing the engine has been seen reporting
+                    // hundreds of MB/s for a share that received nothing, so
+                    // only a share it says it is downloading shows its rate.
+                    .filter(|t| t.state == ShareState::Downloading)
+                    .map(|t| t.download_bps)
+                    .filter(|rate| *rate > 0)
+                    .unwrap_or_else(|| self.rate_bps.max(0.0).round() as u64),
+                _ => 0,
+            },
             installed_revision: obs.receipt.as_ref().map(|r| r.revision.clone()),
             catalog_revision: obs.catalog_revision.clone(),
             stalled: self.phase == Phase::Syncing
@@ -1735,7 +1798,9 @@ mod tests {
             state: ShareState::Downloading,
             bytes_done: 0,
             bytes_total: 782,
+            bytes_received: 0,
             bytes_known: true,
+            finished_known: true,
             files_total: 1,
             peers: 1,
             download_bps: 0,
@@ -1763,7 +1828,9 @@ mod tests {
             state: ShareState::Downloading,
             bytes_done: 9000,
             bytes_total: 10_000,
+            bytes_received: 9000,
             bytes_known: true,
+            finished_known: true,
             files_total: 1,
             peers: 1,
             download_bps: 0,
@@ -1774,7 +1841,7 @@ mod tests {
         // … but on a first download a small figure from a share the engine is
         // still indexing does not outrank the gigabytes already on the disk.
         o.share_bytes = 6_000_000_000;
-        o.transport.as_mut().unwrap().bytes_done = 234;
+        o.transport.as_mut().unwrap().bytes_received = 234;
         assert_eq!(o.bytes_on_disk(), 6_000_000_000);
 
         // Updating an installed game: neither the old archive in the folder
@@ -1839,7 +1906,9 @@ mod tests {
                 },
                 bytes_done: p * 10,
                 bytes_total: 1000,
+                bytes_received: p * 10,
                 bytes_known: true,
+                finished_known: true,
                 files_total: 3,
                 peers: 2,
                 download_bps: 0,
@@ -1970,7 +2039,9 @@ mod tests {
             state: ShareState::Downloading,
             bytes_done: 8,
             bytes_total: 85_885_187_222,
+            bytes_received: 8,
             bytes_known: true,
+            finished_known: true,
             files_total: 1,
             peers: 1,
             download_bps: 229_991_773,
@@ -2047,6 +2118,35 @@ mod tests {
     }
 
     #[test]
+    fn the_web_uis_percentage_answers_for_the_web_ui() {
+        // Without an API key the engine's web interface is all there is: it
+        // reports one percentage over the whole share, the file in flight
+        // included, so it cannot say what is *finished* — but it can say the
+        // share is at 10 %, and that is enough to keep a placeholder out of
+        // the CRC check.
+        let mut t = Tracker::new("g");
+        t.request_install();
+        t.phase = Phase::Syncing;
+        let t0 = Instant::now();
+        let mut o = obs(Some(1000), None, Some("20250308"), Some(0));
+        let engine = o.transport.as_mut().unwrap();
+        engine.finished_known = false;
+        engine.bytes_known = true;
+        engine.bytes_received = 100;
+        assert_eq!(t.step(&o, &policy(), t0), Action::None);
+        assert_eq!(
+            t.step(&o, &policy(), t0 + Duration::from_secs(30)),
+            Action::None,
+            "a tenth of the share is not an archive to verify"
+        );
+        o.transport.as_mut().unwrap().bytes_received = 950;
+        assert_eq!(
+            t.step(&o, &policy(), t0 + Duration::from_secs(40)),
+            Action::Verify
+        );
+    }
+
+    #[test]
     fn a_counter_that_is_only_a_stand_in_does_not_hold_a_game_back() {
         // The web-UI client answers for a share with a state and nothing
         // countable, and fills in a zero. Read as a figure, that zero says
@@ -2056,10 +2156,100 @@ mod tests {
         t.request_install();
         let t0 = Instant::now();
         let mut o = obs(Some(1000), None, Some("20250308"), Some(0));
-        o.transport.as_mut().unwrap().bytes_known = false;
+        let engine = o.transport.as_mut().unwrap();
+        engine.bytes_known = false;
+        engine.finished_known = false;
         assert_eq!(t.step(&o, &policy(), t0), Action::None);
         assert_eq!(
             t.step(&o, &policy(), t0 + Duration::from_secs(20)),
+            Action::Verify
+        );
+    }
+
+    #[test]
+    fn a_counter_that_starts_again_does_not_take_the_download_backwards() {
+        // The peers' counters are per engine session: a restart, or a peer
+        // that drops out of the list, sets them back. Sixty gigabytes do not
+        // un-arrive for that.
+        let mut t = Tracker::new("g");
+        t.request_install();
+        let t0 = Instant::now();
+        let mut o = obs(None, None, None, Some(0));
+        o.transport.as_mut().unwrap().bytes_received = 600;
+        t.step(&o, &policy(), t0);
+        assert_eq!(t.status(&o, &policy(), t0, false).bytes_done, 600);
+        o.transport.as_mut().unwrap().bytes_received = 0;
+        let t1 = t0 + Duration::from_secs(10);
+        t.step(&o, &policy(), t1);
+        assert_eq!(
+            t.status(&o, &policy(), t1, false).bytes_done,
+            600,
+            "the bar stays where the download got to"
+        );
+        // It climbs again from there, not from the counter.
+        o.transport.as_mut().unwrap().bytes_received = 700;
+        let t2 = t0 + Duration::from_secs(20);
+        t.step(&o, &policy(), t2);
+        assert_eq!(t.status(&o, &policy(), t2, false).bytes_done, 700);
+        // A new download of the same game starts from nothing.
+        t.request_repair();
+        o.transport.as_mut().unwrap().bytes_received = 5;
+        let t3 = t0 + Duration::from_secs(30);
+        t.step(&o, &policy(), t3);
+        assert_eq!(t.status(&o, &policy(), t3, false).bytes_done, 5);
+    }
+
+    #[test]
+    fn what_the_engine_calls_finished_decides_the_verification() {
+        // The peers' counters run on across a repair of a package that was
+        // downloaded once already, so they cannot say whether the archive is
+        // whole. What the engine counts as *finished* can.
+        let mut t = Tracker::new("g");
+        t.request_install();
+        t.phase = Phase::Syncing;
+        let t0 = Instant::now();
+        let mut o = obs(Some(1000), None, Some("20250308"), Some(0));
+        let engine = o.transport.as_mut().unwrap();
+        engine.bytes_done = 0;
+        engine.bytes_received = 1000;
+        assert_eq!(t.step(&o, &policy(), t0), Action::None);
+        assert_eq!(
+            t.step(&o, &policy(), t0 + Duration::from_secs(30)),
+            Action::None,
+            "everything arrived, nothing finished: the file may be a placeholder"
+        );
+        o.transport.as_mut().unwrap().bytes_done = 1000;
+        assert_eq!(
+            t.step(&o, &policy(), t0 + Duration::from_secs(40)),
+            Action::Verify
+        );
+    }
+
+    #[test]
+    fn a_repair_during_a_download_does_not_check_a_placeholder() {
+        // "Repair" is what the launcher itself offers for a stalled sync, so
+        // it is pressed while a package is still arriving. Reading 85 GB of
+        // a file the engine has not filled yet takes half an hour and ends in
+        // "archive incomplete", so the engine's word holds here too — the
+        // check follows when it calls the files finished.
+        let mut t = Tracker::new("g");
+        t.request_install();
+        t.phase = Phase::Syncing;
+        let t0 = Instant::now();
+        let mut o = obs(Some(1000), None, Some("20250308"), Some(0));
+        let engine = o.transport.as_mut().unwrap();
+        engine.bytes_done = 500;
+        engine.bytes_received = 500;
+        t.request_repair();
+        t.step(&o, &policy(), t0);
+        assert_eq!(
+            t.step(&o, &policy(), t0 + Duration::from_secs(300)),
+            Action::None,
+            "half a share stays half a share, however long one waits"
+        );
+        o.transport.as_mut().unwrap().bytes_done = 1000;
+        assert_eq!(
+            t.step(&o, &policy(), t0 + Duration::from_secs(320)),
             Action::Verify
         );
     }
@@ -2099,9 +2289,11 @@ mod tests {
             dir: "/x".into(),
             state: ShareState::Downloading,
             bytes_done: 5,
+            bytes_received: 5,
             // Far below the catalogue's 1000: the engine is still counting.
             bytes_total: 10,
             bytes_known: true,
+            finished_known: true,
             files_total: 1,
             peers: 1,
             download_bps: 0,
@@ -2114,10 +2306,10 @@ mod tests {
         // The engine has the share now and is far ahead of the folder.
         let engine = o.transport.as_mut().unwrap();
         engine.bytes_total = 1000;
-        engine.bytes_done = 900;
+        engine.bytes_received = 900;
         t.step(&o, &policy(), t0 + Duration::from_secs(20));
         assert_eq!(t.rate_bps, 0.0, "the change of source is not a transfer");
-        o.transport.as_mut().unwrap().bytes_done = 950;
+        o.transport.as_mut().unwrap().bytes_received = 950;
         t.step(&o, &policy(), t0 + Duration::from_secs(30));
         assert_eq!(t.rate_bps, 5.0, "50 bytes in ten seconds, from the engine");
     }
@@ -2234,7 +2426,9 @@ mod tests {
             state: ShareState::Downloading,
             bytes_done: 600,
             bytes_total: 1000,
+            bytes_received: 600,
             bytes_known: true,
+            finished_known: true,
             files_total: 1,
             peers: 2,
             download_bps: 9000,
@@ -2243,9 +2437,12 @@ mod tests {
         });
         assert_eq!(
             t.status(&o, &policy, t2, false).download_bps,
-            140,
-            "the engine's number belongs to the engine, not to this row"
+            9000,
+            "the engine knows its own share's rate better than the file does"
         );
+        // … and where it reports none, the measurement stands.
+        o.transport.as_mut().unwrap().download_bps = 0;
+        assert_eq!(t.status(&o, &policy, t2, false).download_bps, 140);
     }
 
     #[test]

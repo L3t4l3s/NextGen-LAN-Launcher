@@ -151,7 +151,9 @@
   }
   aside {
     border-left: 1px solid var(--color-border);
-    background: var(--color-surface);
+    background-color: var(--color-surface);
+    background-image: var(--surface-pattern, none);
+    background-size: var(--surface-pattern-size, auto);
     overflow: auto;
     min-height: 0;
   }

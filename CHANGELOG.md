@@ -2,6 +2,39 @@
 
 ## 0.2.0 – Ausbau
 
+- Der Fortschritt eines Downloads kommt jetzt aus den Zählern der Gegenstellen. Resilios `size`
+  zählt nur *fertige* Dateien: neben dem 150-GB-Paket liegt die acht Byte kleine `version.ini`,
+  und genau „8 B von 150,9 GB“ stand stundenlang in der Zeile, während mit 244 MB/s geladen wurde.
+  Die Laderate der Zeile kommt wieder von der Engine selbst, die ihre eigene Freigabe am besten
+  kennt; gemessen wird nur noch, wo sie keine meldet (Ordner-Modus). Fangen die Zähler von vorn an
+  (Neustart der Engine, eine Gegenstelle verschwindet), bleibt die Anzeige stehen statt
+  zurückzuspringen. Bekannte Grenze: Wird der *Launcher* neu gestartet, beginnt auch die Engine
+  neu, und was vor dem Neustart ankam, kann niemand mehr beziffern — die Anzeige eines laufenden
+  Downloads fängt dann wieder unten an und zählt hoch. Am Download selbst ändert das nichts.
+  Für die Frage „darf jetzt geprüft werden?“ zählt dagegen nur, was die Engine als *fertig*
+  meldet — auch bei „Reparieren“: ein zur vollen Größe angelegter Platzhalter sieht fertig aus und
+  ist es nicht, und eine halbe Stunde CRC-Prüfung darauf hilft niemandem.
+- Scheitert die Einrichtung eines Spiels, nennt der Launcher den Pfad, an dem es hängt. Das Skript
+  wird dafür gelesen wie cmd es liest: `set`-Variablen, `cd`/`pushd` (auch `%~dp0`) und
+  Programmnamen relativ zum jeweiligen Ordner — `cd local`, dann `"OpenAL\oalinst.exe"` ist die
+  übliche Form. Damit steht in der Meldung „E:\LAN\opencnc\local\OpenAL\oalinst.exe" statt
+  Windows' „Das System kann den angegebenen Pfad nicht finden" ohne Pfad. Systemprogramme wie
+  `reg.exe` werden auf dem `PATH` gesucht und nicht fälschlich als fehlend gemeldet. Einmal gegen
+  alle 32 Einrichtungsskripte des ETI-Launchers laufen gelassen, damit die Meldung keine Pfade
+  erfindet.
+- Windows-Installer: Die Sync-Engine wird zusätzlich an ihrer Befehlszeile erkannt, damit auch eine
+  Kopie beendet wird, die sich aus dem Programmordner herausgeschrieben hat.
+- Themes können den Karten, Kacheln und dem Detailbereich eine Textur geben: `surfacePattern` in
+  der `theme.json` (bzw. `theme_surface_pattern` in der `launcher.ini`) nennt eine der Figuren
+  `scanlines`, `grid`, `dots`, `diagonal` oder `gradient` samt Farbe, Abstand und Winkel — die
+  CSS-Regel dazu baut der Launcher selbst. Damit lassen sich die Scanlines einer LANPage nachbauen,
+  die vorher in keiner Farbe ausdrückbar waren. Ohne den Schlüssel bleiben die Flächen glatt.
+- Themes können jetzt eine eigene Schrift für die Überschriften nennen (`headingFontFamily` in der
+  `theme.json`, `theme_heading_font_family` samt `theme_heading_font_src` in der `launcher.ini`).
+  Bisher gab es genau einen Schriftstapel für die ganze Oberfläche; die schwere Schrift, die eine
+  LANPage über ihre Überschriften legt, ließ sich damit gar nicht abbilden — als Textschrift wäre
+  sie unlesbar. Sie gilt für `h1`–`h3` und den Veranstaltungsnamen in der Kopfzeile; ohne den
+  Schlüssel bleibt alles bei der bisherigen Schrift.
 - Diagnose: „Fremde Sync-Prozesse laufen" meldete unter Linux dauerhaft die eigene Engine.
   `sysinfo` listet pro Thread einen Eintrag, und ein Thread heißt wie sein Prozess — auf dem Steam
   Deck waren das 21 angeblich fremde `rslsync` mit lückenlosen PIDs, in Wahrheit die Threads der

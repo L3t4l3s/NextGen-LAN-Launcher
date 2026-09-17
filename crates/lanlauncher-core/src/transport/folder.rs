@@ -60,9 +60,11 @@ impl FolderTransport {
         Some(ShareStatus {
             dir: dir.to_path_buf(),
             state,
-            bytes_done: done + partial,
+            bytes_done: done,
+            bytes_received: done + partial,
             // Counted from the folder itself, so it is a figure, not a guess.
             bytes_known: true,
+            finished_known: true,
             // unknown total: report what we have; the installer uses the
             // catalog size for the progress bar.
             bytes_total: 0,
@@ -158,7 +160,8 @@ mod tests {
         std::fs::write(dir.join("quake3.eti.!sync"), vec![0u8; 100]).unwrap();
         let s = FolderTransport::status_from_disk(&dir).unwrap();
         assert_eq!(s.state, ShareState::Downloading);
-        assert_eq!(s.bytes_done, 100);
+        // Nothing is finished yet; the partial file is what has arrived.
+        assert_eq!((s.bytes_done, s.bytes_received), (0, 100));
         std::fs::rename(dir.join("quake3.eti.!sync"), dir.join("quake3.eti")).unwrap();
         std::fs::write(dir.join("version.ini"), "20160922").unwrap();
         let s = FolderTransport::status_from_disk(&dir).unwrap();

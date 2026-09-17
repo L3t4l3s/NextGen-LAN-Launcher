@@ -80,6 +80,10 @@ h2,
 h3 {
   margin: 0 0 0.4em;
   line-height: 1.2;
+  /* A LANPage usually wears a display face on its headlines and a readable
+     one everywhere else; `headingFontFamily` is that face, and without it the
+     headings stay on the body font. */
+  font-family: var(--font-family-heading, var(--font-family));
 }
 h1 {
   font-size: 1.7rem;
@@ -175,8 +179,13 @@ label {
   color: var(--color-text-muted);
 }
 
+/* The three surfaces a theme may texture: this card, a library tile and the
+   detail panel. `--surface-pattern` is the figure the launcher drew from the
+   theme; without one the surface is the plain colour it always was. */
 .card {
-  background: var(--color-surface);
+  background-color: var(--color-surface);
+  background-image: var(--surface-pattern, none);
+  background-size: var(--surface-pattern-size, auto);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   padding: 1.1rem 1.25rem;

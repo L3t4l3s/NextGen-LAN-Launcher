@@ -269,8 +269,8 @@ export const de: Messages = {
   "msg.transport_restarted": "Sync-Dienst neu gestartet.",
   "msg.repair_started": "Reparatur gestartet.",
   "msg.defender_exclusion_added": "Ausnahme für Windows Defender hinzugefügt.",
-  "msg.setup_tools_missing":
-    "Das Einrichtungsskript des Spiels ruft Programme auf, die es auf diesem PC nicht gibt: {detail}. Diese Hilfsprogramme gehören zum alten ETI-Launcher; ohne sie meldet Windows nur „Das System kann den angegebenen Pfad nicht finden“. Das Spiel ist trotzdem entpackt – wenn es ohne die Einrichtung nicht startet, hilft es, den ETI-Launcher zu installieren oder die Dateien in diesen Ordner zu kopieren.",
+  "msg.setup_paths_missing":
+    "Das Einrichtungsskript greift auf etwas zu, das es auf diesem PC nicht gibt: {detail}. Liegt das im Spielordner (meist unter „local“), ist das Paket unvollständig — „Reparieren“ beim Spiel prüft und entpackt es neu. Programme unter „eti\\lan launcher“ gehören zum alten ETI-Launcher; ohne sie meldet Windows nur „Das System kann den angegebenen Pfad nicht finden“. Das Spiel ist trotzdem entpackt und lässt sich starten.",
 
   // Problem catalogue. Each code has .title, .cause and steps.
   "problem.network.public_profile.title": "Windows-Netzwerkprofil ist „Öffentlich“ ({adapter})",

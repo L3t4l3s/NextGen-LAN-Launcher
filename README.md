@@ -174,10 +174,13 @@ again.
   majority of white GTK webviews — but it is a guess now, not a law, and a machine it does not suit
   moves past it in about a second, because the launcher reads the abort out of the webview's own
   output.
-- **Installer and a running launcher:** the NSIS hook now closes the launcher first and its sync
-  engine second, because the launcher restarts an engine it sees dying — and the installer's own
-  "close the application?" prompt only comes after the hook. It then waits (up to ten seconds)
-  until nothing runs from the install folder any more. Built, not yet run against a real upgrade.
+- **Installer and a running launcher:** unsolved. The NSIS hook closes the launcher first and its
+  sync engine second (the launcher restarts an engine it sees dying, and the installer's own
+  "close the application?" prompt only comes after the hook), waits until nothing runs from the
+  install folder, and now also stops whatever runs with this launcher's config on its command
+  line — a Resilio that copied itself out of the install folder is ours wherever it sits. An
+  upgrade on the LAN still reported the engine as running; what the installer says exactly is the
+  next thing to find out, since none of this can be tried here.
 - **The environment a game is started in:** what the launcher forces on itself to get its own
   window drawn (software rendering, an X11 backend, an EGL platform) is put back to the value it
   had before, and under an AppImage every path into the mount plus the image's own `GDK_BACKEND`
@@ -189,9 +192,17 @@ again.
   but the shell caches icons per path. The NSIS hook calling `SHChangeNotify` is meant to clear
   that on upgrade; whether it does for Explorer, the desktop shortcut and a pinned taskbar entry
   has not been verified against a real upgrade yet.
-- **What `get_folders` means:** the launcher now reads `size` as the bytes this PC holds,
-  `total_size` as the share's size and `down_speed` as the rate — matching what a 2.8.1 engine
-  writes in its own log. Verified against that log, not against a running server.
+- **What `get_folders` means:** `size` counts the bytes of *finished* files, not what has
+  arrived — a share whose single package is still transferring answers with the length of the
+  `version.ini` beside it (eight bytes, a revision like `20250308`), which is what a 150 GB
+  download showed for hours. Progress therefore comes from the `download` counters of
+  `get_folder_peers`, `total_size` is the share's size and `down_speed` its rate. Read off a
+  running 2.8.1 engine on the LAN. Those counters are cumulative for the engine's session, so
+  only their increases are added up, and the display keeps the highest figure it reached: a
+  restart of the engine costs the count of what arrived before it, not the bar. Restarting the
+  *launcher* restarts the engine with it, and nothing on the disk can say how much of a
+  half-transferred package is real (it was allocated at full size), so a resumed download counts
+  up from the start again while transferring the remainder.
 - **Firewall rules on a managed PC:** the rules are added with `netsh` from an elevated batch.
   Verified on a domain-joined Windows PC: the repair succeeds there, so the domain profile alone
   does not block it. A stricter policy still can, and then the failure carries the message `netsh`
