@@ -23,6 +23,9 @@ use tokio::sync::RwLock;
 
 pub const STATUS_EVENT: &str = "install-status";
 pub const HEALTH_EVENT: &str = "transport-health";
+/// Rates and peer count, once a second: the status bar should move while
+/// something is moving, and the full health is too expensive for that.
+pub const RATES_EVENT: &str = "transport-rates";
 pub const EVENT_UPDATED: &str = "event-updated";
 /// Emitted with the new game count after `game.db` changed on disk.
 pub const CATALOG_EVENT: &str = "catalog-updated";
@@ -467,10 +470,13 @@ pub(crate) fn build_manager(
         transport,
         catalog,
         move |game| {
+            // The same rule the install command follows, so "where it is
+            // downloading" and "where the launcher looks" cannot disagree:
+            // where the game already is, else a root with room for it.
             lib_for_paths
                 .read()
                 .ok()
-                .and_then(|l| l.game_paths(&game.id))
+                .and_then(|l| l.game_paths_for(&game.id, game.size_bytes.saturating_mul(2)))
         },
         move |game, paths| manifests.resolve_for(&game.id, paths),
         Arc::new(AppSetupHook {
@@ -769,6 +775,23 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
         }
     });
 
+    // Rates for the status bar, once a second: one `get_folders` against the
+    // engine on localhost, without the peer count that costs a request per
+    // share. The peer number comes from the health poll below.
+    let st = state.clone();
+    let app_rates = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let Some(t) = st.transport.read().await.clone() else {
+                continue;
+            };
+            if let Ok(rates) = t.rates().await {
+                let _ = app_rates.emit(RATES_EVENT, rates);
+            }
+        }
+    });
+
     // Transport health.
     let st = state.clone();
     let app4 = app.clone();
@@ -846,7 +869,7 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
             tokio::time::sleep(Duration::from_secs(20)).await;
             let (enabled, player) = {
                 let s = st.settings.read().await;
-                (s.send_stats && !st.demo, s.safe_player_name())
+                (!st.demo, s.safe_player_name())
             };
             let url = st
                 .event

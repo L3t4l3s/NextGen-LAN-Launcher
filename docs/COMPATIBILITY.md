@@ -81,7 +81,9 @@ installer of this launcher must provide them at that path (planned in `release.y
   top and status bars, an overlay over the background image and a web font (see THEMING.md).
 * Stats beacon: `GET <stats_url>?hostname&macaddr1&macaddr2&board_manufacturer&baseboard&
   system_product_name&bios_release&cpu&gpu&windows_edition&player_name&current_game`, values
-  ISO-8859-15 percent-encoded, response `ok`/`error`. Sent every ~3 minutes when enabled.
+  ISO-8859-15 percent-encoded, response `ok`/`error`. Sent every ~3 minutes whenever the LANPage
+  names a `stats_url` (the LANPage's player list is the point of the beacon; there is no setting
+  for it, as there is none in the ETI launcher).
 
 ## Manifests (`manifests/<id>.toml`)
 

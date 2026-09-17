@@ -121,15 +121,32 @@ pub async fn fetch_event(host: &str) -> EventBundle {
     // The ETI standard: logo.png next to launcher.ini. The URL is handed to
     // the UI as is; the CSP allows images from the LANPage host.
     if let Ok(resp) = logo {
-        let is_image = resp
+        let says_image = resp
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .and_then(|ct| ct.get(..6))
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("image/"));
-        if resp.status().is_success() && is_image {
-            bundle.fetched.push("logo.png".into());
-            bundle.logo = Some(logo_url);
+        // The bytes decide, not the content type: a server that answers with
+        // `application/octet-stream` is still serving the logo, and the index
+        // page many LANPages return for a missing file is not an image even
+        // when it arrives as `image/png`. Only an unreadable body falls back
+        // to what the header claims.
+        if resp.status().is_success() {
+            let body = resp.bytes().await;
+            // The bytes are the better answer, but they only *reject* what
+            // is plainly a web page: BMP, AVIF and an SVG with a doctype are
+            // images too, and a server that says so is taken at its word.
+            let is_image = match &body {
+                Ok(bytes) => looks_like_image(bytes) || (says_image && !looks_like_html(bytes)),
+                Err(_) => says_image,
+            };
+            if is_image {
+                bundle.fetched.push("logo.png".into());
+                bundle.logo = Some(logo_url);
+            } else if says_image {
+                log::warn!("{logo_url}: served as an image but is none, ignored");
+            }
         }
     }
 
@@ -141,7 +158,7 @@ pub async fn fetch_event(host: &str) -> EventBundle {
                 // not a theme. A theme_url the organiser configured must
                 // parse, or the error is kept.
                 if explicit_theme_url.is_some() || looks_like_theme(&text) {
-                    match Theme::parse(&text) {
+                    match Theme::parse_at(&text, Some(&theme_url)) {
                         Ok(t) => {
                             bundle.fetched.push("theme.json".into());
                             bundle.theme = Some(t);
@@ -161,17 +178,46 @@ pub async fn fetch_event(host: &str) -> EventBundle {
     // No theme.json: the colours may still be in launcher.ini. The file wins
     // where both exist — it is the deliberate one and can say more.
     if bundle.theme.is_none() {
-        if let Some(theme) = bundle
+        if let Some(mut theme) = bundle
             .config
             .as_ref()
             .and_then(|c| Theme::from_ini(&c.extra))
         {
+            // `theme_logo = logo.png` means the file next to launcher.ini.
+            theme.normalise_for(&format!("{base}/launcher.ini"));
             log::info!("theme from launcher.ini: {}", theme.name);
             bundle.theme = Some(theme);
         }
     }
 
     bundle
+}
+
+/// The first bytes of the common image formats, plus SVG's opening tag.
+fn looks_like_image(bytes: &[u8]) -> bool {
+    const MAGIC: [&[u8]; 5] = [
+        b"\x89PNG",
+        b"\xff\xd8\xff", // JPEG
+        b"GIF8",
+        b"RIFF",             // WebP (RIFF....WEBP)
+        b"\x00\x00\x01\x00", // ICO
+    ];
+    if MAGIC.iter().any(|m| bytes.starts_with(m)) {
+        return true;
+    }
+    // SVG, but only when the document *is* one: an HTML page with an inline
+    // icon in it contains `<svg` too, and that page is what a LANPage answers
+    // for a file it does not have.
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(512)]).to_ascii_lowercase();
+    let head = head.trim_start();
+    head.starts_with("<svg") || (head.starts_with("<?xml") && head.contains("<svg"))
+}
+
+/// The page a LANPage answers with for a file it does not have.
+fn looks_like_html(bytes: &[u8]) -> bool {
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(512)]).to_ascii_lowercase();
+    let head = head.trim_start();
+    head.starts_with("<!doctype html") || head.starts_with("<html") || head.starts_with("<?php")
 }
 
 /// A body that can be a theme at all.
@@ -357,6 +403,30 @@ mod tests {
 
     const INI_WITH_COLOURS: &str =
         "lan_title ### t {\nNext Generation LAN\n}\n\ntheme_primary ### c {\n#29b6f6\n}\n";
+
+    #[tokio::test]
+    async fn a_logo_served_without_an_image_type_is_still_the_logo() {
+        // A LANPage that answers `logo.png` as `application/octet-stream` was
+        // serving its logo all along; the first bytes are the honest answer.
+        let base = lanpage(vec![
+            ("launcher.ini", "text/plain", INI_WITH_COLOURS),
+            ("logo.png", "application/octet-stream", "GIF89a...."),
+        ])
+        .await;
+        let bundle = fetch_event(&base).await;
+        assert_eq!(
+            bundle.logo.as_deref(),
+            Some(format!("{base}/logo.png").as_str())
+        );
+
+        // A page returned for a missing file is not an image, whatever it says.
+        let base = lanpage(vec![
+            ("launcher.ini", "text/plain", INI_WITH_COLOURS),
+            ("logo.png", "image/png", "<!DOCTYPE html><html>404</html>"),
+        ])
+        .await;
+        assert_eq!(fetch_event(&base).await.logo, None);
+    }
 
     #[tokio::test]
     async fn colours_from_the_ini_survive_a_json_error_body_for_theme_json() {

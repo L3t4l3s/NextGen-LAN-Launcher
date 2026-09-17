@@ -85,6 +85,12 @@ class AppStore {
       await listen("transport-health", (payload) => {
         this.health = payload as TransportHealth;
       });
+      // Rates arrive every second, the full health every 15: merging keeps
+      // the status bar moving while something is moving.
+      await listen("transport-rates", (payload) => {
+        const rates = payload as { download_bps: number; upload_bps: number };
+        if (this.health) this.health = { ...this.health, ...rates };
+      });
       await listen("catalog-updated", () => {
         void this.reloadGames();
       });
@@ -108,9 +114,11 @@ class AppStore {
     } else if (settings.theme === null && event?.theme) {
       theme = event.theme;
     }
-    // Automatic mode also takes the event's launcher.css and logo.png.
+    // The event's logo is branding, not a colour scheme: it stays in the
+    // corner whichever scheme the user picked. Only the LANPage's stylesheet
+    // is tied to automatic mode, because it paints.
     const auto = settings.theme === null;
-    this.logo = theme.logo ?? (auto ? (event?.logo ?? null) : null);
+    this.logo = theme.logo ?? event?.theme?.logo ?? event?.logo ?? null;
     applyTheme({ ...theme, legacyCss: auto ? (event?.legacy_css ?? null) : null });
   }
 

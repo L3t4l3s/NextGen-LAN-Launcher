@@ -101,7 +101,6 @@ export interface Settings {
   gameLanguage: string;
   transport: TransportMode;
   lanpageHost: string;
-  sendStats: boolean;
   lanMode: boolean;
   theme: string | null;
   setupComplete: boolean;
@@ -240,6 +239,8 @@ export interface LaunchAttempt {
   error: string | null;
   exitCode: number | null;
   ended: boolean;
+  /** What the program printed (tail of the captured output). */
+  output: string;
 }
 
 export interface BootstrapInfo {

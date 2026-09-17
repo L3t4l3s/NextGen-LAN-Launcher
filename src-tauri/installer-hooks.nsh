@@ -5,13 +5,21 @@
 ; of our business.
 ; Matched by path, not by name: the engine may be called "Resilio Sync.exe",
 ; "rslsync.exe" or "btsync.exe", and the path is what says it is ours.
-; `$_` is an NSIS variable name too, so the pipeline uses the comparison form
-; of Where-Object, which needs none.
+; The string is delimited with backticks so the shell can use double quotes
+; and PowerShell single quotes; `\"` is not an escape in NSIS and reached
+; PowerShell as a literal backslash, which is why the first version of this
+; hook matched nothing. `$$` is a literal dollar, for PowerShell's `$_`.
 !macro StopBundledResilio
   DetailPrint "Stopping the bundled sync engine"
-  nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Process -ErrorAction SilentlyContinue | Where-Object Path -like \"$INSTDIR\resilio\*\" | Stop-Process -Force -ErrorAction SilentlyContinue"'
+  nsExec::ExecToLog `powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Process -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like '$INSTDIR\resilio\*' } | Stop-Process -Force -ErrorAction SilentlyContinue"`
   Pop $0
-  ; Give Windows a moment to release the file handles.
+  DetailPrint "Sync engine stop returned $0"
+  ; Whatever is left holding a file there: the engine writes its own folder,
+  ; so a lock that survives the stop above would fail the whole install.
+  nsExec::ExecToLog `powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Process -ErrorAction SilentlyContinue -Name 'Resilio Sync','rslsync','btsync' | Where-Object { $$_.Path -like '$INSTDIR\*' } | Stop-Process -Force -ErrorAction SilentlyContinue"`
+  Pop $0
+  ; Give Windows a moment to release the file handles of everything stopped
+  ; above, before the installer starts overwriting them.
   Sleep 1500
 !macroend
 

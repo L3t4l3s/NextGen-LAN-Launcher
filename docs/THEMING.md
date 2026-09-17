@@ -48,8 +48,9 @@ loaded by the browser, which is why the content-security policy allows fonts and
 `http(s)` address: a LANPage usually lives at an IP, not at `launcher.lan`. Remote stylesheets and
 scripts stay blocked.
 
-URLs must be `http(s)` — `logo` and `backgroundImage` may also be a `data:image/…` URI, but not a
-relative path: the theme is applied inside the launcher, which has no idea where the file would sit.
+URLs must be `http(s)`, a `data:image/…` URI, or a path relative to the file they are written in
+(`"logo": "logo.png"` means the image next to the theme, `theme_logo = logo.png` the one next to
+`launcher.ini`); the launcher resolves those against the LANPage it fetched them from.
 `javascript:` and `file:` are rejected, in the file as in `launcher.ini`. A font stack containing anything but family names is ignored. So no theme can add a
 rule to the document — the only exception stays the legacy `launcher.css` below, which was always an
 ETI feature and is scoped to the background layer.

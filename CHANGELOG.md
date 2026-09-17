@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- Ein Download zählt jetzt alles, was in der Freigabe liegt, nicht nur die oberste Ebene: ein Paket,
+  das als Ordner ankommt, stand sonst bei „1,6 KB von 115,5 GB", während der Sync mit voller Rate
+  lief. Solange die Engine eine Rate meldet, gilt ein Download außerdem nie als hängend — ein
+  einzelnes riesiges Paket zählt die Engine erst, wenn es fertig ist.
+- Ein leerer Spielordner aus einem abgebrochenen Versuch bindet ein Spiel nicht mehr an diese
+  Platte: die Wahl des Bibliotheksordners übergeht ihn, und beim Installieren wird er entfernt.
+  Damit landet ein 115-GB-Spiel auf der Platte mit Platz, und der Fortschritt wird dort gemessen,
+  wo wirklich geladen wird. Die Downloadseite zeigt den Zielordner.
+- Meldet der Sync-Dienst für eine Freigabe einen Fehler („Ordner nicht gefunden", nachdem ein Spiel
+  entfernt wurde), sagt der Launcher das mit einem Schritt dazu — und „Reparieren" meldet die
+  Freigabe neu an, statt den kaputten Zustand als „schon hinzugefügt" zu übernehmen.
+- Der Installer beendet die mitgelieferte Sync-Engine jetzt wirklich: die Zeichenkette für
+  PowerShell war in NSIS falsch geschrieben (`\"` ist dort kein Escape), der Vergleich lief ins Leere.
+- Das Logo der LANPage verschwand, wenn ein Farbschema gewählt war oder der Webserver
+  `logo.png` ohne Bild-Typ auslieferte. Über das Logo entscheiden jetzt die ersten Bytes, und es
+  gehört zur Marke, nicht zum Farbschema. Ein `theme.json` darf seine Dateien relativ nennen
+  (`"logo": "logo.png"`), sie werden gegen die LANPage aufgelöst.
+- Statusleiste: die Übertragungsraten kommen jetzt sekündlich statt alle 15 Sekunden (die
+  Teilnehmerzahl weiter im 15-Sekunden-Takt — sie kostet eine Abfrage pro Freigabe).
+- Diagnose und Downloads ohne Überschrift (die Reiterzeile sagt es schon); der Zustand der Prüfung
+  steht als Haken oder Warndreieck oben in der Ecke, der Erklärtext darüber entfällt. Beide Seiten
+  stehen als Spalte in der Mitte.
+- Diagnose, „Letzter Start": zeigt jetzt auch die Ausgabe des Programms. Ein Startskript, das ein
+  leeres cmd-Fenster öffnet und endet, hinterließ bisher nichts, worüber man reden konnte.
+- Die Einstellung „Statistik an die LANPage senden" entfällt; die Statistik geht immer an die
+  LANPage, sofern eine `stats_url` in der `launcher.ini` steht — auch auf einem PC, auf dem der
+  Haken vorher aus war. (Die LANPage zeigt damit, wer gerade was spielt; der ETI-Launcher kennt
+  dafür ebenfalls keine Einstellung.)
+- Lässt sich ein leerer Spielordner nicht entfernen (der Sync-Dienst hält ihn noch), lädt der
+  Launcher dorthin, wo er das Spiel später auch sucht, statt in zwei Ordner gleichzeitig zu
+  zeigen. Die Wahl des Ordners trifft jetzt überall dieselbe Regel.
+
 - `theme.json` in Version 2: eigene Farben für Kopf- und Statusleiste, eine Überlagerungsfarbe über
   dem Hintergrundbild und eine Schriftart der LANPage (`fontFamily` samt `fontFaces`, nur http(s)
   oder `data:`). Alles ist optional und fällt auf die bisherigen Werte zurück; dieselben Angaben gehen

@@ -32,6 +32,18 @@ impl LibraryRoot {
     }
 }
 
+/// Does this folder hold anything of the game? The engine's own `.sync`
+/// bookkeeping is not a game: a share the user removed leaves it behind, and
+/// it would pin the game to that disk for ever. `None` when the folder does
+/// not exist or cannot be read.
+fn dir_is_empty(dir: &Path) -> Option<bool> {
+    let mut entries = std::fs::read_dir(dir).ok()?;
+    Some(!entries.any(|e| {
+        e.map(|e| e.file_name().to_string_lossy().to_ascii_lowercase() != ".sync")
+            .unwrap_or(false)
+    }))
+}
+
 /// Free/total bytes of the volume a path lives on. Returns `None` if the path
 /// does not exist yet or the platform does not report disk information.
 /// Prefer [`DiskTable`] when querying many paths in one go.
@@ -130,6 +142,15 @@ impl Library {
         self.roots.iter().find(|r| r.path.join(game_id).is_dir())
     }
 
+    /// Like [`Library::locate_game`], but an empty folder does not count.
+    /// A cancelled or failed install leaves one behind, and it would pin the
+    /// game to that disk for good — including to one without room for it.
+    fn locate_game_with_content(&self, game_id: &str) -> Option<&LibraryRoot> {
+        self.roots
+            .iter()
+            .find(|r| !dir_is_empty(&r.path.join(game_id)).unwrap_or(true))
+    }
+
     /// Root to use for a new install: where the game already is, else the
     /// default root when `needed_bytes` fit there, else the root with the
     /// most free space that fits, else the default root anyway.
@@ -137,7 +158,7 @@ impl Library {
         // A game that is already somewhere needs no volume enumeration at
         // all; only a new one pays for the snapshot, and then once for every
         // root rather than once per root.
-        if let Some(r) = self.locate_game(game_id) {
+        if let Some(r) = self.locate_game_with_content(game_id) {
             return Some(r);
         }
         let disks = DiskTable::refresh();
@@ -152,7 +173,7 @@ impl Library {
         needed_bytes: u64,
         free_for: impl Fn(&Path) -> Option<u64>,
     ) -> Option<&LibraryRoot> {
-        if let Some(r) = self.locate_game(game_id) {
+        if let Some(r) = self.locate_game_with_content(game_id) {
             return Some(r);
         }
         // The root the user marked as the default is a choice, not a
@@ -171,6 +192,14 @@ impl Library {
                 }
             }
         }
+        if best.is_none() {
+            // Nothing fits anywhere. The game goes to the default root and the
+            // state machine says so with the numbers; silently picking the
+            // biggest of several too-small disks would only hide it.
+            log::warn!(
+                "{game_id} needs {needed_bytes} bytes and no library root has room; using the default"
+            );
+        }
         best.map(|(r, _)| r).or_else(|| self.default_root())
     }
 
@@ -178,9 +207,24 @@ impl Library {
     /// [`Library::game_paths_for`]: it is what puts a game on the disk with
     /// room for it.
     pub fn game_paths(&self, game_id: &str) -> Option<GamePaths> {
-        self.locate_game(game_id)
+        // A root that actually holds something wins over one with an empty
+        // leftover folder: otherwise a download running on the second disk is
+        // watched on the first, which reports no progress for ever.
+        self.locate_game_with_content(game_id)
+            .or_else(|| self.locate_game(game_id))
             .or_else(|| self.default_root())
             .map(|r| GamePaths::new(&r.path, game_id))
+    }
+
+    /// Empty `<root>/<game_id>` folders in every root but `keep`. A cancelled
+    /// install leaves one behind, and it decides where later lookups go.
+    pub fn empty_leftovers(&self, game_id: &str, keep: &Path) -> Vec<PathBuf> {
+        self.roots
+            .iter()
+            .map(|r| r.path.join(game_id))
+            .filter(|dir| dir != keep)
+            .filter(|dir| dir_is_empty(dir).unwrap_or(false))
+            .collect()
     }
 
     /// Paths for a game of known size, choosing the root as
@@ -210,6 +254,7 @@ mod tests {
         // An install that already exists stays where it is, whatever the
         // free space says.
         std::fs::create_dir_all(small.join("quake3")).unwrap();
+        std::fs::write(small.join("quake3").join("quake3.eti"), b"x").unwrap();
         let paths = lib.game_paths_for("quake3", u64::MAX).unwrap();
         assert_eq!(paths.share_dir, small.join("quake3"));
 
@@ -274,11 +319,45 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_folder_does_not_pin_a_game_to_a_full_disk() {
+        // A cancelled install leaves `D:\LAN\bf4` behind. It must not decide
+        // where the next attempt goes — that is how a 115 GB game ended up on
+        // the disk without room while another one had 500 GB free.
+        let dir = tempfile::tempdir().unwrap();
+        let small = dir.path().join("small");
+        let big = dir.path().join("big");
+        std::fs::create_dir_all(small.join("bf4")).unwrap();
+        std::fs::create_dir_all(&big).unwrap();
+        let mut lib = Library::default();
+        lib.add_root(LibraryRoot::new(&small));
+        lib.add_root(LibraryRoot::new(&big));
+        let free = |p: &Path| Some(if p == small { 10 } else { 900 });
+        assert_eq!(lib.choose_root_with("bf4", 500, free).unwrap().path, big);
+        // …and the leftover is named so the install can clear it away.
+        assert_eq!(
+            lib.empty_leftovers("bf4", &big.join("bf4")),
+            vec![small.join("bf4")]
+        );
+        // The engine's own bookkeeping folder is not an install either.
+        std::fs::create_dir_all(small.join("bf4").join(".sync")).unwrap();
+        assert_eq!(lib.choose_root_with("bf4", 500, free).unwrap().path, big);
+        assert_eq!(
+            lib.empty_leftovers("bf4", &big.join("bf4")),
+            vec![small.join("bf4")]
+        );
+        // Once something is in it, it is an install again and stays put.
+        std::fs::write(small.join("bf4").join("bf4.eti.!sync"), b"x").unwrap();
+        assert_eq!(lib.choose_root_with("bf4", 500, free).unwrap().path, small);
+        assert!(lib.empty_leftovers("bf4", &big.join("bf4")).is_empty());
+    }
+
+    #[test]
     fn locate_prefers_existing_install() {
         let tmp = tempfile::tempdir().unwrap();
         let a = tmp.path().join("a");
         let b = tmp.path().join("b");
         std::fs::create_dir_all(b.join("quake3")).unwrap();
+        std::fs::write(b.join("quake3").join("quake3.eti"), b"x").unwrap();
         std::fs::create_dir_all(&a).unwrap();
         let mut lib = Library::default();
         lib.add_root(LibraryRoot::new(&a));

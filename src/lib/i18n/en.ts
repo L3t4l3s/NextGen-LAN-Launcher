@@ -105,7 +105,6 @@ export const en: Messages = {
   "detail.folder_key.title": "Offline mode",
   "detail.folder_key.text": "Add this key in Resilio Sync and choose this folder: {dir}",
 
-  "downloads.title": "Downloads and installations",
   "downloads.empty": "Nothing is downloading. Pick a game in the library and click “Install”.",
   "downloads.hints.title": "Hints",
   "downloads.hints.text": "These games are playable but reported something during setup.",
@@ -121,7 +120,6 @@ export const en: Messages = {
 
   "lan.transport.lan_mode": "LAN only, no internet",
 
-  "diag.title": "Diagnostics",
   "diag.run": "Run checks",
   "diag.running": "Checking …",
   "diag.ok.title": "All good",
@@ -138,6 +136,9 @@ export const en: Messages = {
   "diag.launch.command": "Command line",
   "diag.launch.cwd": "Working directory",
   "diag.launch.result": "Result",
+  "diag.launch.output": "Output",
+  "diag.launch.output.empty": "The program printed nothing.",
+  "diag.launch.output.elevated": "Started with administrator rights — its output stays in its own window.",
   "diag.launch.running": "still running (PID {pid})",
   "diag.launch.ended": "ended with code {code}",
   "diag.launch.ended_unknown": "ended (no code reported)",
@@ -145,7 +146,6 @@ export const en: Messages = {
   "diag.restart_transport": "Restart sync service",
   "diag.last_run": "Last run: {time}",
   "diag.ignored": "Ignored messages ({count})",
-  "diag.intro": "When downloads do not start or hang, this page shows the cause with instructions – usually fixable with one click.",
 
   "settings.title": "Settings",
   "settings.player": "Player name",
@@ -164,7 +164,7 @@ export const en: Messages = {
   "settings.library.unknown": "Drive not reachable",
   "settings.transport": "Synchronisation",
   "settings.lan_mode": "Sync on the LAN only (no internet traffic)",
-  "settings.lan_mode.hint": "The engine picks this up the next time the sync service starts.",
+  "settings.lan_mode.hint": "Applied when the sync service restarts.",
   "settings.prereqs": "Commonly needed system libraries",
   "settings.prereqs.hint": "ETI's package installer from the catalog folder sets up the runtimes most games need. It shows its own window.",
   "settings.prereqs.missing": "The package installer (eti_launcher\\bin\\preqsetup.exe, about 3.3 GB) has not been fully synced yet.",
@@ -173,7 +173,6 @@ export const en: Messages = {
   "settings.prereqs.started": "Package installer started. Follow the installer window.",
   "settings.lanpage": "LANPage",
   "settings.lanpage.hint": "The launcher reads launcher.ini from launcher.lan (LAN name, colours, statistics address), exactly like the previous launcher.",
-  "settings.send_stats": "Send statistics to the LANPage (who plays what)",
   "settings.theme": "Colour scheme",
   "settings.theme.auto": "Automatic (event theme, else default)",
   "settings.theme.default": "NextGen Dark",
@@ -286,6 +285,10 @@ export const en: Messages = {
   "problem.sync.stalled.cause": "No data for {minutes} min although peers are connected.",
   "problem.sync.stalled.step.1": "“Repair” checks whether the file is already complete and extracts it right away.",
   "problem.sync.stalled.step.2": "Still stuck: pause the sync, wait a moment, resume.",
+
+  "problem.sync.share_error.title": "The sync service cannot use this folder",
+  "problem.sync.share_error.cause": "The sync service reports an error for this share ({detail}). This usually means the game folder was deleted or moved while it was registered.",
+  "problem.sync.share_error.step.1": "\u201cRepair\u201d registers the share again \u2014 the download continues afterwards.",
 
   "problem.install.archive_incomplete.title": "Archive still incomplete",
   "problem.install.archive_incomplete.cause": "The checksum did not match – data is still missing or the file was just written. ({detail})",

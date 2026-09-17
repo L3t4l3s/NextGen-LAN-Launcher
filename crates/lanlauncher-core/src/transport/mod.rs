@@ -101,6 +101,25 @@ pub struct TransportHealth {
     pub web_ui: Option<String>,
 }
 
+/// What the status bar shows every second: the current rates and how many
+/// other PCs are around. Cheap enough to ask the engine for once a second,
+/// unlike the full health (which also asks for the version and builds its
+/// detail line).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct TransportRates {
+    pub download_bps: u64,
+    pub upload_bps: u64,
+}
+
+impl From<PeerSummary> for TransportRates {
+    fn from(s: PeerSummary) -> Self {
+        Self {
+            download_bps: s.download_bps,
+            upload_bps: s.upload_bps,
+        }
+    }
+}
+
 /// Peer counts split into "everything" and "the catalog share".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PeerSummary {
@@ -186,6 +205,16 @@ pub trait Transport: Send + Sync {
     async fn remove_share(&self, dir: &Path) -> Result<()>;
     async fn set_paused(&self, dir: &Path, paused: bool) -> Result<()>;
     async fn share_status(&self, dir: &Path) -> Result<Option<ShareStatus>>;
+    /// Current rates over all shares, asked for once a second. The default
+    /// takes them from [`Transport::list_shares`]; a transport that can
+    /// answer more cheaply than with its full share list overrides this.
+    async fn rates(&self) -> Result<TransportRates> {
+        Ok(peer_summary(self.list_shares().await?.iter()).into())
+    }
+    /// Forget whatever was cached about the shares. Called before an action
+    /// that has to see the engine as it is right now (a repair the user just
+    /// asked for), not as it was a moment ago.
+    fn invalidate(&self) {}
     /// Peers of one share with their current rates. Empty when the transport
     /// cannot tell; only queried while the user looks at the detail panel.
     async fn share_peers(&self, _dir: &Path) -> Result<Vec<SharePeer>> {

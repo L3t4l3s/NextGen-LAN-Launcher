@@ -175,24 +175,57 @@ impl Observation {
         let partial_len = std::fs::metadata(partial_path(&paths.archive))
             .ok()
             .map(|m| m.len());
-        // Files only, and only the top level: `local/` holds the extracted
-        // game and would dwarf the download, `.sync/` is the engine's own
-        // bookkeeping and is a directory too.
-        let share_bytes = std::fs::read_dir(&paths.share_dir)
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .filter_map(|e| e.metadata().ok())
-                    .filter(|m| m.is_file())
-                    .map(|m| m.len())
-                    .sum()
-            })
-            .unwrap_or(0);
+        // Everything that arrived, wherever in the share it sits: a package
+        // is usually one `<id>.eti`, but some are a folder tree, and counting
+        // only the top level showed "1.6 KB of 115.5 GB" for a download that
+        // was running at full speed. `local/` (the extracted game, which would
+        // dwarf the download) and the engine's own `.sync/` stay out. The
+        // walk is bounded: this runs for every tracked game every couple of
+        // seconds, and a package of more than 50,000 files would only be
+        // counted more precisely, not more usefully.
+        let receipt = Receipt::load(&paths.receipt);
+        // An installed game that is not updating has nothing to count, and
+        // this runs for every tracked game every couple of seconds. A pending
+        // update is counted, whether it arrives as a `.!sync` file or as a
+        // folder tree.
+        // Nothing to count only when the installed package is also still
+        // there: a game whose folder was emptied by hand is downloading
+        // again, and for a folder-tree package there is no `.!sync` file to
+        // notice that by.
+        let settled = receipt
+            .as_ref()
+            .is_some_and(|r| r.revision == game.revision)
+            && archive_len.is_some()
+            && paths.local_dir.is_dir();
+        let share_bytes = if settled && partial_len.is_none() {
+            0
+        } else {
+            walkdir::WalkDir::new(&paths.share_dir)
+                .max_depth(8)
+                .into_iter()
+                .filter_entry(|e| {
+                    if !e.file_type().is_dir() || e.depth() == 0 {
+                        return true;
+                    }
+                    let name = e.file_name().to_string_lossy().to_ascii_lowercase();
+                    // `local/` is the extracted game, `.sync/` the engine's
+                    // bookkeeping, `.nll-staging`/`.nll-old*` belong to an
+                    // extraction in progress — none of them is the download, and
+                    // counting them showed more than the package's whole size.
+                    !(e.depth() == 1
+                        && (name == "local" || name == ".sync" || name.starts_with(".nll-")))
+                })
+                .flatten()
+                .take(50_000)
+                .filter(|e| e.file_type().is_file())
+                .filter_map(|e| e.metadata().ok())
+                .map(|m| m.len())
+                .sum()
+        };
         let version_ini = std::fs::read_to_string(&paths.version_file)
             .ok()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty() && s.len() <= 64);
-        let receipt = Receipt::load(&paths.receipt);
         let local_present = paths.local_dir.is_dir();
         let required_files_ok = local_present
             && if required_files.is_empty() {
@@ -286,6 +319,9 @@ pub struct Tracker {
     archive_stable_since: Option<Instant>,
     last_bytes: u64,
     last_progress_at: Instant,
+    /// When the engine started indexing this share; indexing postpones the
+    /// stall warning, but not for ever.
+    indexing_since: Option<Instant>,
     /// Last rate sample `(taken at, bytes)`; the transport's own rate is
     /// preferred, this covers engines that report none.
     rate_sample: Option<(Instant, u64)>,
@@ -311,6 +347,7 @@ impl Tracker {
             archive_stable_since: None,
             last_bytes: 0,
             last_progress_at: Instant::now(),
+            indexing_since: None,
             rate_sample: None,
             rate_bps: 0.0,
             verify_failed_at: None,
@@ -329,6 +366,7 @@ impl Tracker {
         }
         self.problem = None;
         self.last_progress_at = Instant::now();
+        self.indexing_since = None;
     }
 
     /// Repair: forget verification failures and re-run the pipeline from
@@ -345,6 +383,7 @@ impl Tracker {
         // Force the stability timer to restart on the next observation.
         self.last_archive_len = None;
         self.last_progress_at = Instant::now();
+        self.indexing_since = None;
         self.rate_sample = None;
         self.rate_bps = 0.0;
     }
@@ -382,6 +421,7 @@ impl Tracker {
         } else if !paused && self.phase == Phase::Paused {
             self.phase = Phase::Syncing;
             self.last_progress_at = Instant::now();
+            self.indexing_since = None;
         }
     }
 
@@ -464,6 +504,9 @@ impl Tracker {
         if bytes_now != self.last_bytes {
             self.last_bytes = bytes_now;
             self.last_progress_at = now;
+            // Bytes arrived, so whatever indexing there was is behind us; the
+            // grace period starts again only with the next indexing run.
+            self.indexing_since = None;
         }
         self.sample_rate(bytes_now, now);
         // Archive stability.
@@ -533,6 +576,53 @@ impl Tracker {
                         self.work_progress = 0.0;
                         self.work_started_at = Some(now);
                         return Action::Verify;
+                    }
+                }
+                // The engine gave up on this share — usually a folder that
+                // was removed under it, which it keeps reporting for ever
+                // while the share looks finished. "Repair" re-adds the share,
+                // and that is what clears it.
+                // Not over a problem that already names the cause: a full
+                // disk is reported by the engine as a folder error too, and
+                // "repair" would do nothing about it.
+                let has_specific_problem = self
+                    .problem
+                    .as_ref()
+                    .is_some_and(|p| p.code.starts_with("install."));
+                if let Some(t) = obs
+                    .transport
+                    .as_ref()
+                    .filter(|_| !has_specific_problem)
+                    .filter(|t| t.state == ShareState::Error)
+                {
+                    self.problem = Some(
+                        Problem::new("sync.share_error", Severity::Error)
+                            .param("detail", t.error.clone().unwrap_or_default())
+                            .step("sync.share_error.step.1")
+                            .with_fix(FixAction::RepairGame {
+                                game_id: self.game_id.clone(),
+                            }),
+                    );
+                    return Action::None;
+                }
+                // A package that arrives as one huge file gives the engine
+                // nothing to count until it is done, so "no bytes" is not
+                // "nothing is happening" while the engine reports a rate. A
+                // trickle is not a transfer, though, and indexing only counts
+                // for as long as indexing plausibly takes.
+                const MOVING_BPS: u64 = 4096;
+                const INDEXING_GRACE: Duration = Duration::from_secs(600);
+                if let Some(t) = obs.transport.as_ref() {
+                    if t.state == ShareState::Indexing {
+                        let since = *self.indexing_since.get_or_insert(now);
+                        if now.duration_since(since) < INDEXING_GRACE {
+                            self.last_progress_at = now;
+                        }
+                    } else if t.download_bps >= MOVING_BPS {
+                        // Data is moving: whatever indexing there was is over,
+                        // and the next indexing run gets its own grace.
+                        self.indexing_since = None;
+                        self.last_progress_at = now;
                     }
                 }
                 let stalled = now.duration_since(self.last_progress_at) >= policy.stall_after;
@@ -1638,6 +1728,109 @@ mod tests {
             stall_after: Duration::from_secs(120),
             verify_retry_after: Duration::from_secs(120),
         }
+    }
+
+    #[test]
+    fn a_package_that_arrives_as_a_folder_counts_too() {
+        // The package of a big game is not always one `<id>.eti`: with only
+        // the top level counted, a 115 GB download read as "1.6 KB".
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = GamePaths::new(tmp.path(), "bf4");
+        std::fs::create_dir_all(paths.share_dir.join("Data")).unwrap();
+        std::fs::create_dir_all(paths.share_dir.join(".nll-staging")).unwrap();
+        std::fs::create_dir_all(&paths.local_dir).unwrap();
+        // An extraction in progress is not part of the download either.
+        std::fs::write(
+            paths.share_dir.join(".nll-staging").join("x"),
+            vec![0u8; 70_000],
+        )
+        .unwrap();
+        std::fs::write(paths.share_dir.join("version.ini"), vec![0u8; 16]).unwrap();
+        std::fs::write(
+            paths.share_dir.join("Data").join("big.dat"),
+            vec![0u8; 4096],
+        )
+        .unwrap();
+        // The extracted game is not the download.
+        std::fs::write(paths.local_dir.join("game.exe"), vec![0u8; 100_000]).unwrap();
+        let game = Game {
+            id: "bf4".into(),
+            order: 0,
+            title: "Battlefield 4".into(),
+            key: crate::catalog::ShareKey::parse(crate::catalog::BUILTIN_CATALOG_KEY).unwrap(),
+            revision: "20250308".into(),
+            size_bytes: 1 << 40,
+            release_year: None,
+            publisher: None,
+            max_players: None,
+            needs_master_server: false,
+            genre_id: None,
+            readme: Default::default(),
+        };
+        let obs = Observation::from_disk(&paths, &game, &[], &crate::library::DiskTable::default());
+        assert_eq!(obs.share_bytes, 16 + 4096);
+    }
+
+    #[test]
+    fn a_running_transfer_is_never_called_stalled() {
+        // Resilio counts a file only once it is complete, so a single huge
+        // package shows no bytes for its whole transfer. The rate is what says
+        // it is alive.
+        let mut t = Tracker::new("bf4");
+        t.request_install();
+        let t0 = Instant::now();
+        let mut o = obs(None, Some(1600), None, Some(0));
+        if let Some(tr) = o.transport.as_mut() {
+            tr.download_bps = 179_000_000;
+            tr.peers = 1;
+        }
+        assert_eq!(t.step(&o, &policy(), t0), Action::None);
+        assert_eq!(t.phase, Phase::Syncing);
+        // Ten minutes later, still not a byte more on disk — and still no
+        // "download stalled", because the engine is moving data.
+        assert_eq!(
+            t.step(&o, &policy(), t0 + Duration::from_secs(600)),
+            Action::None
+        );
+        assert!(t.problem.is_none(), "{:?}", t.problem);
+        // The moment the rate drops to zero the clock starts again.
+        if let Some(tr) = o.transport.as_mut() {
+            tr.download_bps = 0;
+        }
+        t.step(&o, &policy(), t0 + Duration::from_secs(600));
+        t.step(&o, &policy(), t0 + Duration::from_secs(900));
+        assert_eq!(
+            t.problem.as_ref().map(|p| p.code.as_str()),
+            Some("sync.stalled")
+        );
+    }
+
+    #[test]
+    fn a_share_the_engine_gave_up_on_asks_for_a_repair() {
+        // "Folder not found" after the user deleted the folder: the share
+        // reports a finished download that never moves, and only re-adding
+        // it helps — which is what "Repair" does.
+        let mut t = Tracker::new("ut99");
+        t.request_install();
+        let t0 = Instant::now();
+        let mut o = obs(None, Some(10), None, Some(0));
+        if let Some(tr) = o.transport.as_mut() {
+            tr.state = ShareState::Error;
+            tr.error = Some("folder not found".into());
+        }
+        assert_eq!(t.step(&o, &policy(), t0), Action::None);
+        assert_eq!(t.phase, Phase::Syncing);
+        assert_eq!(
+            t.step(&o, &policy(), t0 + Duration::from_secs(2)),
+            Action::None
+        );
+        let problem = t.problem.as_ref().expect("a problem");
+        assert_eq!(problem.code, "sync.share_error");
+        assert_eq!(
+            problem.params.get("detail").map(String::as_str),
+            Some("folder not found")
+        );
+        assert!(matches!(problem.fix, Some(FixAction::RepairGame { .. })));
     }
 
     #[test]

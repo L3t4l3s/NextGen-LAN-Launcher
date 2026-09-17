@@ -230,6 +230,21 @@ async fn manager(state: &AppState) -> Cmd<Arc<lanlauncher_core::install::Install
         .ok_or_else(|| "err.not_ready".to_string())
 }
 
+/// Does this folder hold nothing but the engine's own `.sync` bookkeeping?
+/// That is what the library counts as empty, and the only case in which a
+/// recursive delete is anything but dangerous.
+fn only_sync(dir: &std::path::Path) -> bool {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries.flatten().all(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(".sync")
+            })
+        })
+        .unwrap_or(false)
+}
+
 #[tauri::command]
 pub async fn install_game(state: State<'_, Arc<AppState>>, game_id: String) -> Cmd<()> {
     // The manager first: an empty folder created before it exists would pin
@@ -244,9 +259,86 @@ pub async fn install_game(state: State<'_, Arc<AppState>>, game_id: String) -> C
         // created where the download will look for it. Writing the snapshot
         // here instead would skip the media-scope update the sync loop does.
         let library = state.library.read().ok().map(|l| l.clone());
-        if let Some(paths) =
-            library.and_then(|l| l.game_paths_for(&game.id, game.size_bytes.saturating_mul(2)))
-        {
+        let needed = game.size_bytes.saturating_mul(2);
+        if let Some((paths, leftovers)) = library.and_then(|l| {
+            let paths = l.game_paths_for(&game.id, needed)?;
+            let leftovers = l.empty_leftovers(&game.id, &paths.share_dir);
+            Some((paths, leftovers))
+        }) {
+            // An empty folder from a cancelled attempt in another root would
+            // send every later lookup to the wrong disk — and the engine may
+            // still have a share registered on it, which is what leaves a
+            // download wedged at "folder not found".
+            let transport = state.transport.read().await.clone();
+            let mut stuck = Vec::new();
+            for dir in leftovers {
+                if let Some(t) = &transport {
+                    if let Err(e) = t.remove_share(&dir).await {
+                        log::debug!("no share to remove for {}: {e}", dir.display());
+                    }
+                    // Windows keeps the engine's handles on `.sync` for a
+                    // moment after it lets the folder go.
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                }
+                // Only the engine's own `.sync` may still be in there — the
+                // library counts that as empty, so a plain `remove_dir` would
+                // fail on it.
+                let removed = std::fs::remove_dir(&dir).or_else(|first| {
+                    if only_sync(&dir) {
+                        std::fs::remove_dir_all(&dir)
+                    } else {
+                        Err(first)
+                    }
+                });
+                // One retry: the handles are usually gone a moment later. The
+                // guard is checked again — whatever the engine may have
+                // written back meanwhile is not ours to delete.
+                let removed = match removed {
+                    Err(first) => {
+                        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+                        if only_sync(&dir) {
+                            std::fs::remove_dir_all(&dir)
+                        } else {
+                            std::fs::remove_dir(&dir).map_err(|_| first)
+                        }
+                    }
+                    ok => ok,
+                };
+                match removed {
+                    Ok(()) => log::info!("removed the empty leftover folder {}", dir.display()),
+                    Err(e) => {
+                        log::warn!("leftover folder {} stays: {e}", dir.display());
+                        stuck.push(dir);
+                    }
+                }
+            }
+            // A folder that will not go (the engine may still hold it after
+            // a restart, when it no longer knows the key) must not block the
+            // install — but the download has to run where every later lookup
+            // will search, or it would report no progress for ever.
+            let paths = match stuck.first() {
+                None => paths,
+                Some(dir) => {
+                    let fallback = state
+                        .library
+                        .read()
+                        .ok()
+                        .and_then(|l| l.game_paths(&game.id));
+                    log::warn!(
+                        "{} could not be removed; installing where the lookup points instead",
+                        dir.display()
+                    );
+                    fallback.unwrap_or(paths)
+                }
+            };
+            let free = lanlauncher_core::library::disk_space(&paths.share_dir).map(|(f, _)| f);
+            log::info!(
+                "installing {} into {} (needs {} bytes, {} free)",
+                game.id,
+                paths.share_dir.display(),
+                needed,
+                free.map(|f| f.to_string()).unwrap_or_else(|| "?".into())
+            );
             let existed = paths.share_dir.exists();
             std::fs::create_dir_all(&paths.share_dir)
                 .map_err(|e| format!("err.create_folder|{}: {e}", paths.share_dir.display()))?;
@@ -276,6 +368,11 @@ pub async fn install_game(state: State<'_, Arc<AppState>>, game_id: String) -> C
 
 #[tauri::command]
 pub async fn repair_game(state: State<'_, Arc<AppState>>, game_id: String) -> Cmd<()> {
+    // A repair usually follows something the user just did to the folder;
+    // the engine's state has to be read fresh, not from the last snapshot.
+    if let Some(t) = state.transport.read().await.as_ref() {
+        t.invalidate();
+    }
     manager(&state).await?.repair(&game_id).await.map_err(err)
 }
 
@@ -377,10 +474,16 @@ pub async fn play_game(
         plan.program.display(),
         attempt.command_line
     );
-    let outcome = launch::spawn_for_user_watched(&plan, &state.run_dir(), allow).await;
+    // The console window of an ETI script shows nothing anyway; captured, at
+    // least the diagnostics page can say what it printed.
+    let log = state.launch_log(&game_id, "play");
+    // An elevated start runs through a batch file and writes nothing here;
+    // the previous run's output must not be shown as this one's.
+    let _ = std::fs::remove_file(&log);
+    let outcome = launch::spawn_for_user_watched(&plan, &state.run_dir(), allow, Some(&log)).await;
     let pid = state
         .inner()
-        .record_launch(attempt, outcome)
+        .record_launch(attempt, Some(log), outcome)
         .await
         .map_err(err)?;
     let mut running = state.running.write().await;
@@ -422,11 +525,18 @@ pub async fn run_extra(
         plan.program.display(),
         attempt.command_line
     );
-    let outcome =
-        launch::spawn_for_user_watched(&plan, &state.run_dir(), settings.allow_elevation).await;
+    let log = state.launch_log(&game_id, &format!("{extra:?}"));
+    let _ = std::fs::remove_file(&log);
+    let outcome = launch::spawn_for_user_watched(
+        &plan,
+        &state.run_dir(),
+        settings.allow_elevation,
+        Some(&log),
+    )
+    .await;
     state
         .inner()
-        .record_launch(attempt, outcome)
+        .record_launch(attempt, Some(log), outcome)
         .await
         .map_err(err)
 }
@@ -437,7 +547,15 @@ pub async fn run_extra(
 pub async fn get_last_launch(
     state: State<'_, Arc<AppState>>,
 ) -> Cmd<Option<crate::state::LaunchAttempt>> {
-    Ok(state.last_launch.read().await.clone())
+    let mut last = state.last_launch.read().await.clone();
+    // While the game is still running the file grows; read it on every ask
+    // rather than only when the process ends.
+    if let Some(rec) = last.as_mut().filter(|r| !r.ended) {
+        if let Some(path) = rec.log.clone() {
+            rec.output = state.launch_output(&path);
+        }
+    }
+    Ok(last)
 }
 
 #[tauri::command]

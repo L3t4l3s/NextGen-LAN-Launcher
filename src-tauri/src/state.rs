@@ -74,6 +74,12 @@ pub struct LaunchAttempt {
     pub exit_code: Option<i32>,
     /// The process has ended (with or without a code).
     pub ended: bool,
+    /// What the program printed, as far as it was captured (the tail of the
+    /// log file). Empty when it printed nothing.
+    pub output: String,
+    /// The file that output was captured into; `None` when nothing was.
+    #[serde(skip)]
+    pub log: Option<PathBuf>,
 }
 
 impl LaunchAttempt {
@@ -105,6 +111,8 @@ impl LaunchAttempt {
             error: None,
             exit_code: None,
             ended: false,
+            output: String::new(),
+            log: None,
         }
     }
 }
@@ -115,9 +123,11 @@ impl AppState {
     pub async fn record_launch(
         self: &std::sync::Arc<Self>,
         mut attempt: LaunchAttempt,
+        log: Option<PathBuf>,
         outcome: lanlauncher_core::error::Result<(u32, lanlauncher_core::launch::ExitWatch)>,
     ) -> lanlauncher_core::error::Result<u32> {
         let stamp = attempt.at;
+        attempt.log = log.clone();
         match outcome {
             Ok((pid, watch)) => {
                 attempt.pid = Some(pid);
@@ -125,10 +135,15 @@ impl AppState {
                 let st = self.clone();
                 tauri::async_runtime::spawn(async move {
                     let code = watch.await.ok().flatten();
+                    let output = log
+                        .as_ref()
+                        .map(|p| st.launch_output(p))
+                        .unwrap_or_default();
                     let mut slot = st.last_launch.write().await;
                     if let Some(rec) = slot.as_mut().filter(|r| r.at == stamp) {
                         rec.exit_code = code;
                         rec.ended = true;
+                        rec.output = output;
                     }
                 });
                 Ok(pid)
@@ -140,6 +155,56 @@ impl AppState {
                 Err(e)
             }
         }
+    }
+
+    /// Where a started program's output is captured. One file per game and
+    /// kind: a game started while its server script is still running would
+    /// otherwise truncate the file under the server's open handle.
+    pub fn launch_log(&self, game_id: &str, what: &str) -> PathBuf {
+        let safe = |s: &str| -> String {
+            s.chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+                .take(48)
+                .collect()
+        };
+        self.run_dir()
+            .join(format!("start-{}-{}.log", safe(what), safe(game_id)))
+    }
+
+    /// The tail of one of those files, for the diagnostics page.
+    pub fn launch_output(&self, path: &std::path::Path) -> String {
+        use std::io::{Read, Seek, SeekFrom};
+        const TAIL: usize = 8 * 1024;
+        // Only the end of the file: a dedicated server writes for hours, and
+        // this is read again every couple of seconds while it runs.
+        let Ok(mut file) = std::fs::File::open(path) else {
+            return String::new();
+        };
+        let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+        if file
+            .seek(SeekFrom::Start(len.saturating_sub(TAIL as u64)))
+            .is_err()
+        {
+            return String::new();
+        }
+        let mut text = Vec::with_capacity(TAIL);
+        if file.take(TAIL as u64).read_to_end(&mut text).is_err() {
+            return String::new();
+        }
+        // A tail starts in the middle of a line, and possibly in the middle
+        // of a character; the first line goes.
+        let start = if len > TAIL as u64 {
+            text.iter()
+                .position(|b| *b == b'\n')
+                .map(|i| i + 1)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        // Windows scripts write in the console code page; whatever does not
+        // decode is shown as the replacement character rather than dropping
+        // the line it sits in.
+        String::from_utf8_lossy(&text[start..]).trim().to_string()
     }
 
     pub fn settings_path(&self) -> PathBuf {

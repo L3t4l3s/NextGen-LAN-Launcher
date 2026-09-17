@@ -33,8 +33,6 @@ pub struct Settings {
     pub transport: TransportMode,
     /// Host serving `launcher.ini`; ETI hard-codes `launcher.lan`.
     pub lanpage_host: String,
-    /// Allow the launcher to send the ETI statistics beacon.
-    pub send_stats: bool,
     /// Only talk to LAN peers, never to trackers/relays on the internet.
     pub lan_mode: bool,
     /// Id of a built-in theme (`src/lib/theme.ts`, mirrored in `themes/`);
@@ -84,7 +82,6 @@ impl Default for Settings {
             game_language: "de".into(),
             transport: TransportMode::Managed,
             lanpage_host: "launcher.lan".into(),
-            send_stats: true,
             lan_mode: true,
             theme: None,
             setup_complete: false,

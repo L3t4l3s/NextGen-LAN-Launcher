@@ -164,7 +164,6 @@
       <section class="card">
         <h2>{t("settings.lanpage")}</h2>
         <p class="hint">{t("settings.lanpage.hint")}</p>
-        <label class="radio"><input type="checkbox" bind:checked={draft.sendStats} /> {t("settings.send_stats")}</label>
       </section>
 
       <section class="card">

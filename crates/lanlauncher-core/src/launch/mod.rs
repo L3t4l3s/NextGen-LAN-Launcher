@@ -236,16 +236,23 @@ fn watch(child: tokio::process::Child) -> (u32, ExitWatch) {
 /// A program whose own manifest demands administrator rights (Windows error
 /// 740) is retried the same way. `run_dir` receives the batch files.
 pub async fn spawn_for_user(plan: &LaunchPlan, run_dir: &Path, allow: bool) -> Result<u32> {
-    spawn_for_user_watched(plan, run_dir, allow)
+    spawn_for_user_watched(plan, run_dir, allow, None)
         .await
         .map(|(pid, _)| pid)
 }
 
-/// Like [`spawn_for_user`], plus a handle that reports the exit code.
+/// Like [`spawn_for_user`], plus a handle that reports the exit code and, with
+/// `log`, the program's output written to that file.
+///
+/// A game script that opens an empty console window and ends leaves nothing
+/// behind to look at; with the file the diagnostics page can show what it
+/// printed. The window itself stays empty either way — its output goes to the
+/// file instead of the screen.
 pub async fn spawn_for_user_watched(
     plan: &LaunchPlan,
     run_dir: &Path,
     allow: bool,
+    log: Option<&Path>,
 ) -> Result<(u32, ExitWatch)> {
     let not_elevated = elevate::running_elevated() == Some(false);
     if plan.needs_elevation && not_elevated {
@@ -258,7 +265,7 @@ pub async fn spawn_for_user_watched(
             return spawn_elevated(plan, run_dir).await;
         }
     }
-    match spawn(plan).await {
+    match spawn(plan, log).await {
         Err(Error::Launch(msg)) if not_elevated && allow && msg.contains("os error 740") => {
             log::info!(
                 "{} demands administrator rights itself; retrying elevated",
@@ -277,6 +284,10 @@ pub async fn spawn_for_user_watched(
 /// which is reported as `err.elevation_denied`.
 pub async fn spawn_elevated(plan: &LaunchPlan, run_dir: &Path) -> Result<(u32, ExitWatch)> {
     let stem = plan.runner.trim_end_matches(".cmd").replace(' ', "-");
+    // No output capture here: an elevated script keeps its own console, and
+    // the ETI scripts that need administrator rights are the ones that print
+    // instructions and wait for a key. Redirecting that would leave the user
+    // in front of a blank window with no way to know what it wants.
     let batch = elevate::write_batch(run_dir, &stem, &[elevate::batch_line(plan).into()])?;
     log::info!("starting {} elevated via {}", plan.runner, batch.display());
     let runas = elevate::runas_plan(&batch, &plan.cwd);
@@ -316,13 +327,34 @@ pub async fn spawn_elevated(plan: &LaunchPlan, run_dir: &Path) -> Result<(u32, E
     }
 }
 
-pub async fn spawn(plan: &LaunchPlan) -> Result<(u32, ExitWatch)> {
+pub async fn spawn(plan: &LaunchPlan, log: Option<&Path>) -> Result<(u32, ExitWatch)> {
     let mut cmd = tokio::process::Command::new(&plan.program);
     cmd.current_dir(&plan.cwd).envs(&plan.env);
     apply_args(&mut cmd, plan);
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+    cmd.stdin(std::process::Stdio::null());
+    // Both streams into one file, in the order they were written.
+    match log.and_then(|path| {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let file = std::fs::File::create(path)
+            .inspect_err(|e| log::warn!("cannot write {}: {e}", path.display()))
+            .ok()?;
+        let err = file
+            .try_clone()
+            .inspect_err(|e| log::warn!("cannot write {}: {e}", path.display()))
+            .ok()?;
+        Some((file, err))
+    }) {
+        Some((out, err)) => {
+            cmd.stdout(std::process::Stdio::from(out))
+                .stderr(std::process::Stdio::from(err));
+        }
+        None => {
+            cmd.stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+        }
+    }
     let child = cmd
         .spawn()
         .map_err(|e| Error::Launch(format!("cannot start {}: {e}", plan.program.display())))?;

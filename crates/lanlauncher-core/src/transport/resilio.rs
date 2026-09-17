@@ -191,6 +191,14 @@ pub fn folder_prefs(lan_only: bool) -> Vec<(&'static str, &'static str)> {
     ]
 }
 
+/// How long a folder snapshot may serve several callers. Short enough that
+/// the status bar (once a second) still shows fresh rates, long enough that
+/// the loops asking in the same moment share one round of requests.
+const FOLDER_CACHE: Duration = Duration::from_millis(900);
+
+/// The folder list as it was at that moment.
+type FolderSnapshot = (Instant, HashMap<PathBuf, ShareStatus>);
+
 /// Minimal HTTP client for the Resilio API surfaces.
 #[derive(Debug, Clone)]
 pub struct ResilioClient {
@@ -203,6 +211,11 @@ pub struct ResilioClient {
     /// Cleared once a build has refused `getversion`, so the probe does not
     /// pay for a request that will never work on this engine.
     gui_has_getversion: Arc<AtomicBool>,
+    /// Last folder snapshot and when it was taken. A snapshot costs one
+    /// `get_folders` plus one `get_folder_peers` per share, and three loops
+    /// (install tick, rates, health) ask for it independently; within this
+    /// window they share one answer.
+    folder_cache: Arc<Mutex<Option<FolderSnapshot>>>,
 }
 
 use std::sync::Arc;
@@ -229,6 +242,7 @@ impl ResilioClient {
                 .expect("reqwest client"),
             gui_token: Arc::new(Mutex::new(None)),
             gui_has_getversion: Arc::new(AtomicBool::new(true)),
+            folder_cache: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -459,7 +473,59 @@ impl ResilioClient {
         Ok(v.as_array().cloned().unwrap_or_default())
     }
 
-    /// All folders known to the engine, keyed by directory.
+    /// The folder snapshot, at most `max_age` old. Everything that only wants
+    /// to display the state uses this; [`ResilioClient::folders`] itself is
+    /// for the places that must see the engine as it is right now.
+    pub async fn folders_cached(&self, max_age: Duration) -> Result<HashMap<PathBuf, ShareStatus>> {
+        if let Ok(cache) = self.folder_cache.lock() {
+            if let Some((at, folders)) = cache.as_ref() {
+                if at.elapsed() <= max_age {
+                    return Ok(folders.clone());
+                }
+            }
+        }
+        let folders = self.folders().await?;
+        if let Ok(mut cache) = self.folder_cache.lock() {
+            *cache = Some((Instant::now(), folders.clone()));
+        }
+        Ok(folders)
+    }
+
+    /// Forget the snapshot: after adding, removing or pausing a share the
+    /// next look must see the change, not the second before it.
+    pub fn forget_folders(&self) {
+        if let Ok(mut cache) = self.folder_cache.lock() {
+            *cache = None;
+        }
+    }
+
+    /// The folder list without the peer count: one request, whatever the
+    /// number of shares. Used for the rates in the status bar.
+    pub async fn folders_without_peers(&self) -> Result<HashMap<PathBuf, ShareStatus>> {
+        if !self.has_api_key() {
+            // The web UI answers everything in one document, and that
+            // document is the expensive one: on this engine the rates are
+            // a few seconds old rather than fetched every second.
+            return self.folders_cached(Duration::from_secs(3)).await;
+        }
+        let v = self.api("get_folders", &[]).await?;
+        Ok(v.as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|f| {
+                let dir = crate::paths::strip_verbatim(PathBuf::from(
+                    f.get("dir").and_then(Value::as_str).unwrap_or(""),
+                ));
+                let status = parse_api_folder(&f, 0);
+                (dir, status)
+            })
+            .collect())
+    }
+
+    /// All folders known to the engine, keyed by directory. One request plus
+    /// one per share for the peer counts, so callers that only display the
+    /// state take [`ResilioClient::folders_cached`] instead.
     pub async fn folders(&self) -> Result<HashMap<PathBuf, ShareStatus>> {
         if self.has_api_key() {
             let v = self.api("get_folders", &[]).await?;
@@ -1214,7 +1280,38 @@ impl Transport for ResilioTransport {
 
     async fn add_share(&self, key: &ShareKey, dir: &Path, opts: &ShareOptions) -> Result<()> {
         std::fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
+        // A folder the engine still knows from an install the user removed
+        // keeps its old state — "folder not found" once the directory was
+        // deleted — and re-adding it is accepted as "already added" without
+        // fixing anything: the share then sits there reporting a finished
+        // download that never moves. Taking it out first is the only way back.
+        if let Ok(Some(status)) = self.share_status(dir).await {
+            if status.state == ShareState::Error {
+                log::info!(
+                    "sync engine reports an error for {}: {} — re-adding the share",
+                    dir.display(),
+                    status.error.as_deref().unwrap_or("no detail")
+                );
+                // With the key from the caller, not from the map of shares
+                // this process added: after a restart that map is empty, and
+                // that is exactly when a folder deleted in the meantime shows
+                // up as an error.
+                if let Err(e) = self.client.remove_folder(dir, Some(key)).await {
+                    log::warn!("could not remove the broken share {}: {e}", dir.display());
+                }
+                if let Ok(mut k) = self.keys.lock() {
+                    k.remove(dir);
+                }
+                self.client.forget_folders();
+                // The engine needs a moment before it accepts the folder
+                // again; without it the re-add is answered "already added"
+                // and nothing has changed.
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                std::fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
+            }
+        }
         self.client.add_folder(key, dir, opts.lan_only).await?;
+        self.client.forget_folders();
         if let Ok(mut k) = self.keys.lock() {
             k.insert(dir.to_path_buf(), key.clone());
         }
@@ -1224,6 +1321,7 @@ impl Transport for ResilioTransport {
     async fn remove_share(&self, dir: &Path) -> Result<()> {
         let key = self.keys.lock().ok().and_then(|k| k.get(dir).cloned());
         self.client.remove_folder(dir, key.as_ref()).await?;
+        self.client.forget_folders();
         if let Ok(mut k) = self.keys.lock() {
             k.remove(dir);
         }
@@ -1232,7 +1330,7 @@ impl Transport for ResilioTransport {
 
     async fn set_paused(&self, dir: &Path, paused: bool) -> Result<()> {
         let dir_s = dir.to_string_lossy().to_string();
-        if self.client.has_api_key() {
+        let result = if self.client.has_api_key() {
             let key = self.keys.lock().ok().and_then(|k| k.get(dir).cloned());
             let secret = key.map(|k| k.expose().to_string()).unwrap_or_default();
             self.client
@@ -1258,11 +1356,27 @@ impl Transport for ResilioTransport {
                 )
                 .await
                 .map(|_| ())
-        }
+        };
+        // After the request, not before: a poll landing in between would put
+        // the state from a moment ago back into the snapshot.
+        self.client.forget_folders();
+        result
+    }
+
+    fn invalidate(&self) {
+        self.client.forget_folders();
+    }
+
+    async fn rates(&self) -> Result<TransportRates> {
+        // `get_folders` alone: the peer count per share costs a request each
+        // and the status bar gets that from the health poll, which is slower
+        // for a reason.
+        let folders = self.client.folders_without_peers().await?;
+        Ok(super::peer_summary(folders.values()).into())
     }
 
     async fn share_status(&self, dir: &Path) -> Result<Option<ShareStatus>> {
-        let folders = self.client.folders().await?;
+        let folders = self.client.folders_cached(FOLDER_CACHE).await?;
         Ok(folders.get(dir).cloned().or_else(|| {
             folders
                 .values()
@@ -1316,7 +1430,12 @@ impl Transport for ResilioTransport {
     }
 
     async fn list_shares(&self) -> Result<Vec<ShareStatus>> {
-        Ok(self.client.folders().await?.into_values().collect())
+        Ok(self
+            .client
+            .folders_cached(FOLDER_CACHE)
+            .await?
+            .into_values()
+            .collect())
     }
 
     async fn set_lan_mode(&self, lan_only: bool) -> Result<()> {

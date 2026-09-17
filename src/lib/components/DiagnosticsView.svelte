@@ -22,6 +22,19 @@
     }
   }
 
+  // While the game is still running its output keeps growing; the panel is
+  // only useful if it follows.
+  $effect(() => {
+    if (!lastLaunch || lastLaunch.ended) return;
+    const timer = setInterval(() => {
+      void api
+        .lastLaunch()
+        .then((l) => (lastLaunch = l))
+        .catch(() => {});
+    }, 2000);
+    return () => clearInterval(timer);
+  });
+
   // "A cmd window opens and nothing happens" is only answerable with the
   // command line in front of you, so the panel spells the whole start out.
   const launchResult = $derived.by(() => {
@@ -64,9 +77,28 @@
   }
 </script>
 
-<div class="page">
+<!-- No heading and no introduction: the tab above says where you are, and
+     the state of the check belongs next to the buttons, not in a line of its
+     own that read like one more problem. -->
+<div class="page diagnostics">
   <div class="row">
-    <h1 class="grow">{t("diag.title")}</h1>
+    {#if report}
+      <!-- The time of the check is a detail; the state is the headline, and
+           it must not wrap around the buttons next to it. -->
+      <span
+        class="state grow"
+        class:bad={errors > 0}
+        class:warn={errors === 0 && warnings > 0}
+        title={t("diag.last_run", { time: new Date(report.generatedAt).toLocaleTimeString() })}
+      >
+        <span class="mark">{errors > 0 || warnings > 0 ? "⚠" : "✓"}</span>
+        <strong>
+          {#if errors > 0}{t("diag.summary.error", { count: errors })}{:else if warnings > 0}{t("diag.summary.warning", { count: warnings })}{:else}{t("diag.ok.title")}{/if}
+        </strong>
+      </span>
+    {:else}
+      <span class="grow"></span>
+    {/if}
     <button class="ghost" onclick={() => api.openPath(app.bootstrap?.dirs.logs ?? "")}>{t("diag.logs")}</button>
     {#if webUi !== null}
       <!-- Permanently available, not only when a problem offers it as a fix:
@@ -76,19 +108,11 @@
     <button class="ghost" onclick={restartTransport}>{t("diag.restart_transport")}</button>
     <button class="primary" onclick={run} disabled={running}>{running ? t("diag.running") : t("diag.run")}</button>
   </div>
-  <p class="hint">{t("diag.intro")}</p>
 
   {#if report}
-    <!-- A plain line, not a card: styled like the cards below it, the
-         summary read as one more problem. -->
-    <div class="summary">
-      <strong>
-        {#if errors > 0}{t("diag.summary.error", { count: errors })}{:else if warnings > 0}{t("diag.summary.warning", { count: warnings })}{:else}{t("diag.ok.title")}{/if}
-      </strong>
-      {#if errors === 0 && warnings === 0}<span class="muted">{t("diag.ok.text")}</span>{/if}
-      <span class="grow"></span>
-      <small class="muted">{t("diag.last_run", { time: new Date(report.generatedAt).toLocaleTimeString() })}</small>
-    </div>
+    {#if errors === 0 && warnings === 0}
+      <p class="muted ok-text">{t("diag.ok.text")}</p>
+    {/if}
 
     <div class="stack">
       {#each sorted as problem (problem.code + JSON.stringify(problem.params))}
@@ -110,6 +134,19 @@
           <dd><code>{lastLaunch.cwd}</code></dd>
           <dt>{t("diag.launch.result")}</dt>
           <dd class:bad={!!lastLaunch.error || (lastLaunch.ended && lastLaunch.exitCode !== 0)}>{launchResult}</dd>
+          <dt>{t("diag.launch.output")}</dt>
+          <dd>
+            <!-- The console window of an ETI script is empty because its
+                 output goes into this file; without it there is nothing to
+                 go on when a game does not start. -->
+            {#if lastLaunch.output}
+              <pre>{lastLaunch.output}</pre>
+            {:else if lastLaunch.elevated}
+              <span class="muted">{t("diag.launch.output.elevated")}</span>
+            {:else}
+              <span class="muted">{t("diag.launch.output.empty")}</span>
+            {/if}
+          </dd>
         </dl>
       </details>
     {/if}
@@ -167,13 +204,42 @@
   .launch code {
     font-size: 0.85em;
   }
+  .launch pre {
+    margin: 0;
+    max-height: 14rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    font-size: 0.82rem;
+    background: var(--color-surface-alt);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.6rem;
+    user-select: text;
+  }
   .launch .bad {
     color: var(--color-warning);
   }
-  .summary {
+  .diagnostics {
+    max-width: 900px;
+  }
+  .state {
     display: flex;
-    gap: 0.6rem;
     align-items: baseline;
-    margin: 0.4rem 0 0.9rem;
+    gap: 0.5rem;
+    color: var(--color-success);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .state.warn {
+    color: var(--color-warning);
+  }
+  .state.bad {
+    color: var(--color-danger);
+  }
+  .state .mark {
+    font-size: 1.1rem;
+  }
+  .ok-text {
+    margin: 0.2rem 0 0.9rem;
   }
 </style>

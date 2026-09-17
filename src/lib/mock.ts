@@ -88,7 +88,6 @@ export function createMock() {
     gameLanguage: "de",
     transport: "demo",
     lanpageHost: "launcher.lan",
-    sendStats: true,
     lanMode: true,
     theme: null,
     setupComplete: true,
@@ -172,6 +171,12 @@ export function createMock() {
 
   setInterval(() => {
     emit("install-status", [...sims.keys()].map(status).filter(Boolean));
+    // The real backend sends these once a second too, so the rates in the
+    // status bar move here as well.
+    emit("transport-rates", {
+      download_bps: 7_000_000 + Math.round(Math.random() * 3_000_000),
+      upload_bps: Math.round(Math.random() * 500_000),
+    });
   }, 1000);
 
   const noServer = new URLSearchParams(location.search).has("noserver");
@@ -327,6 +332,7 @@ export function createMock() {
           error: null,
           exitCode: 1,
           ended: true,
+          output: "Der Befehl \"fnr.exe\" ist entweder falsch geschrieben oder\nkonnte nicht gefunden werden.\nDrücken Sie eine beliebige Taste . . .",
         };
       case "set_problem_ignored": {
         const key = args.key as string;

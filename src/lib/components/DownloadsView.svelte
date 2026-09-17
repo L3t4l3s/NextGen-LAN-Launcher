@@ -74,9 +74,8 @@
   }
 </script>
 
-<div class="page">
-  <h1>{t("downloads.title")}</h1>
-
+<!-- No heading: the tab above already says where you are. -->
+<div class="page downloads">
   {#if items.length === 0 && app.hintGames.length === 0}
     <div class="card empty">
       <p class="muted">{t("downloads.empty")}</p>
@@ -105,6 +104,9 @@
                 <span>{t("detail.progress", { done: formatBytes(status.bytesDone), total: formatBytes(status.bytesTotal) })}</span>
                 {#if status.downloadBps}<span>{formatSpeed(status.downloadBps)}</span>{/if}
                 <span>{t("detail.peers", { count: status.peers })}</span>
+                <!-- Which disk it is going to: with several library folders
+                     that is the first question when something looks wrong. -->
+                {#if game.shareDir}<span class="path" title={game.shareDir}>{game.shareDir}</span>{/if}
               {/if}
               <span class="grow"></span>
               <button class="ghost" onclick={() => act(() => api.repair(game.id))}>🛠 {t("action.repair")}</button>
@@ -174,6 +176,17 @@
 </div>
 
 <style>
+  /* A column in the middle of the window rather than a wide band across it:
+     a download row is a line of text, not a table. */
+  .downloads {
+    max-width: 900px;
+  }
+  .path {
+    max-width: 22em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .details {
     display: grid;
     gap: 0.9rem;

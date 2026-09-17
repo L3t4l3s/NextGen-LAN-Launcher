@@ -160,6 +160,16 @@ impl FontFace {
         self.family_ok() && self.src_ok() && self.weight_ok() && self.style_ok()
     }
 
+    /// As written down, before the address has been resolved: a LANPage names
+    /// the file next to its `launcher.ini`, not a URL. What is still relative
+    /// afterwards is dropped by [`Theme::normalise_for`].
+    pub fn is_declared_ok(&self) -> bool {
+        self.family_ok()
+            && (self.src_ok() || is_relative_ref(self.src.trim(), FONT_EXTENSIONS))
+            && self.weight_ok()
+            && self.style_ok()
+    }
+
     /// The rule for this file. Every part was checked first, so nothing here
     /// can close the block and start one of its own.
     pub fn to_css(&self) -> String {
@@ -234,10 +244,58 @@ impl ThemeColors {
 
 impl Theme {
     pub fn parse(json: &str) -> crate::Result<Self> {
+        Self::parse_at(json, None)
+    }
+
+    /// Parse a theme served by a LANPage. `base` is the address it came from,
+    /// so `"logo": "logo.png"` — how anyone would write it in a file that
+    /// sits next to the image — points at the LANPage instead of at nothing.
+    pub fn parse_at(json: &str, base: Option<&str>) -> crate::Result<Self> {
         let mut theme: Theme = serde_json::from_str(json)?;
+        if let Some(base) = base {
+            theme.resolve_relative(base);
+        }
         theme.drop_unusable();
         theme.validate()?;
         Ok(theme)
+    }
+
+    /// Make relative image and font addresses absolute against the LANPage
+    /// they were served from. Anything already absolute stays as it is.
+    /// Resolve the addresses against the LANPage and drop what is still not
+    /// usable afterwards. This is what a fetched theme goes through.
+    pub fn normalise_for(&mut self, base: &str) {
+        self.resolve_relative(base);
+        self.drop_unusable();
+    }
+
+    pub fn resolve_relative(&mut self, base: &str) {
+        let Ok(base) = url::Url::parse(base) else {
+            return;
+        };
+        let resolve = |v: &mut String, extensions: &[&str]| {
+            let raw = v.trim().to_string();
+            // A scheme means it is already an address of its own (`http:`,
+            // `data:`); everything else has to look like a file next to the
+            // theme, or `"logo": "none"` would become an address and render
+            // as a broken image instead of being dropped.
+            if raw.is_empty() || raw.contains(':') || !is_relative_ref(&raw, extensions) {
+                return;
+            }
+            match base.join(&raw) {
+                Ok(absolute) => *v = absolute.to_string(),
+                Err(e) => log::warn!("theme: {raw} is not a usable address ({e})"),
+            }
+        };
+        for v in [&mut self.logo, &mut self.background_image]
+            .into_iter()
+            .flatten()
+        {
+            resolve(v, IMAGE_EXTENSIONS);
+        }
+        for face in &mut self.font_faces {
+            resolve(&mut face.src, FONT_EXTENSIONS);
+        }
     }
 
     /// A theme from the `theme_…` keys of the LANPage's `launcher.ini`.
@@ -350,11 +408,13 @@ impl Theme {
             let Some(value) = extra.get(key).map(|v| v.trim()) else {
                 continue;
             };
-            if is_image_ref(value) {
+            // A LANPage writes `logo.png`, meaning the file next to its own
+            // `launcher.ini`; the fetch resolves that against the page.
+            if is_image_ref(value) || is_relative_ref(value, IMAGE_EXTENSIONS) {
                 *slot = Some(value.to_string());
                 any = true;
             } else {
-                log::warn!("launcher.ini: {key} is not an http(s) or data:image URL: {value}");
+                log::warn!("launcher.ini: {key} is not a usable image address: {value}");
             }
         }
         // A font stack reaches CSS as is, so it may only name families.
@@ -394,7 +454,7 @@ impl Theme {
                         weight: None,
                         style: None,
                     };
-                    if face.is_valid() {
+                    if face.is_declared_ok() {
                         theme.font_faces = vec![face];
                         any = true;
                     } else {
@@ -547,9 +607,29 @@ impl Theme {
     }
 }
 
-/// An image the launcher can show: fetched over the network, or carried in
-/// the theme itself. Anything else (a relative path, `javascript:`) has no
-/// base to resolve against and would render as a broken image.
+/// A file named next to the LANPage's own files, which
+/// [`Theme::resolve_relative`] turns into an address. No scheme, none of the
+/// characters that could leave the `url("…")` it ends up in, and one of the
+/// given extensions: a typo that is silently turned into an address only
+/// shows up later as a broken image.
+pub fn is_relative_ref(value: &str, extensions: &[&str]) -> bool {
+    let v = value.trim();
+    let lower = v.to_ascii_lowercase();
+    !v.is_empty()
+        && v.len() <= 512
+        && !v.contains(':')
+        && !v.contains(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | '\\'))
+        && extensions.iter().any(|ext| lower.ends_with(ext))
+}
+
+/// Extensions the launcher shows as an image, and those a browser loads as a
+/// font — the two sets a relative address may carry.
+pub const IMAGE_EXTENSIONS: &[&str] = &[
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".bmp", ".avif",
+];
+pub const FONT_EXTENSIONS: &[&str] = &[".woff2", ".woff", ".ttf", ".otf"];
+
+/// An image the launcher can show: an `http(s)` address or a `data:image` URI.
 pub fn is_image_ref(value: &str) -> bool {
     let v = value.trim();
     if let Some(data) = v.strip_prefix("data:image/") {
@@ -877,6 +957,66 @@ mod tests {
             r#"{"fontFaces":[{"family":"LAN","src":"data:font/woff2;base64,AA"}]}"#
         )
         .is_ok());
+    }
+
+    #[test]
+    fn a_file_next_to_the_lanpage_is_found() {
+        // `"logo": "logo.png"` is how anyone writes it in a file that sits
+        // next to the image; inside the launcher that address means nothing
+        // until it is resolved against the page it came from.
+        let theme = Theme::parse_at(
+            r#"{"logo":"logo.png","backgroundImage":"img/bg.jpg",
+                "fontFamily":"LAN","fontFaces":[{"family":"LAN","src":"fonts/lan.woff2"}]}"#,
+            Some("http://192.168.0.5/theme.json"),
+        )
+        .expect("a theme");
+        assert_eq!(theme.logo.as_deref(), Some("http://192.168.0.5/logo.png"));
+        assert_eq!(
+            theme.background_image.as_deref(),
+            Some("http://192.168.0.5/img/bg.jpg")
+        );
+        let fonts = theme.font_face_css().expect("font css");
+        assert!(
+            fonts.contains("url(\"http://192.168.0.5/fonts/lan.woff2\")"),
+            "{fonts}"
+        );
+        // An address that is already one stays untouched.
+        let theme = Theme::parse_at(
+            r#"{"logo":"http://other.lan/l.png"}"#,
+            Some("http://192.168.0.5/theme.json"),
+        )
+        .unwrap();
+        assert_eq!(theme.logo.as_deref(), Some("http://other.lan/l.png"));
+    }
+
+    #[test]
+    fn the_ini_may_name_the_file_next_to_it() {
+        let mut theme = Theme::from_ini(&ini(&[
+            ("theme_logo", "logo.png"),
+            ("theme_font_family", "LAN"),
+            ("theme_font_src", "lan.woff2"),
+        ]))
+        .expect("a theme");
+        theme.normalise_for("http://192.168.0.5/launcher.ini");
+        assert_eq!(theme.logo.as_deref(), Some("http://192.168.0.5/logo.png"));
+        assert!(theme
+            .font_face_css()
+            .expect("font css")
+            .contains("http://192.168.0.5/lan.woff2"));
+    }
+
+    #[test]
+    fn a_relative_address_has_to_look_like_a_file() {
+        // Resolving anything at all against the LANPage would turn a typo
+        // into an address and show it as a broken image.
+        let theme = Theme::from_ini(&ini(&[
+            ("theme_logo", "logo"),
+            ("theme_primary", "#29b6f6"),
+        ]))
+        .expect("a theme");
+        assert_eq!(theme.logo, None);
+        let theme = Theme::from_ini(&ini(&[("theme_logo", "bilder/logo.PNG")])).expect("a theme");
+        assert_eq!(theme.logo.as_deref(), Some("bilder/logo.PNG"));
     }
 
     #[test]

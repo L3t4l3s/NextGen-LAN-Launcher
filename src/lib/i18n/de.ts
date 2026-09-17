@@ -105,7 +105,6 @@ export const de: Messages = {
   "detail.folder_key.title": "Offline-Modus",
   "detail.folder_key.text": "Füge diesen Key in Resilio Sync hinzu und wähle als Ordner: {dir}",
 
-  "downloads.title": "Downloads und Installationen",
   "downloads.empty": "Gerade wird nichts geladen. Wähle in der Bibliothek ein Spiel und klicke „Installieren“.",
   "downloads.hints.title": "Hinweise",
   "downloads.hints.text": "Diese Spiele sind spielbar, haben aber beim Einrichten etwas gemeldet.",
@@ -121,7 +120,6 @@ export const de: Messages = {
 
   "lan.transport.lan_mode": "Nur LAN, kein Internet",
 
-  "diag.title": "Diagnose",
   "diag.run": "Prüfung starten",
   "diag.running": "Prüfe …",
   "diag.ok.title": "Alles in Ordnung",
@@ -138,6 +136,9 @@ export const de: Messages = {
   "diag.launch.command": "Befehlszeile",
   "diag.launch.cwd": "Arbeitsverzeichnis",
   "diag.launch.result": "Ergebnis",
+  "diag.launch.output": "Ausgabe",
+  "diag.launch.output.empty": "Das Programm hat nichts ausgegeben.",
+  "diag.launch.output.elevated": "Mit Adminrechten gestartet — die Ausgabe bleibt in dessen eigenem Fenster.",
   "diag.launch.running": "läuft noch (PID {pid})",
   "diag.launch.ended": "beendet mit Code {code}",
   "diag.launch.ended_unknown": "beendet (kein Code gemeldet)",
@@ -145,8 +146,6 @@ export const de: Messages = {
   "diag.restart_transport": "Sync-Dienst neu starten",
   "diag.last_run": "Zuletzt geprüft: {time}",
   "diag.ignored": "Ignorierte Meldungen ({count})",
-  "diag.intro":
-    "Wenn Downloads nicht starten oder hängen, findest du hier die Ursache mit einer Anleitung – meistens mit einem Klick zu beheben.",
 
   "settings.title": "Einstellungen",
   "settings.player": "Spielername",
@@ -165,7 +164,7 @@ export const de: Messages = {
   "settings.library.unknown": "Laufwerk nicht erreichbar",
   "settings.transport": "Synchronisierung",
   "settings.lan_mode": "Nur im LAN synchronisieren (kein Internet-Traffic)",
-  "settings.lan_mode.hint": "Aus dem Haken wird beim nächsten Start des Sync-Dienstes eine Einstellung der Engine.",
+  "settings.lan_mode.hint": "Wird nach einem Neustart des Sync-Dienstes übernommen.",
   "settings.prereqs": "Häufig benötigte Systembibliotheken",
   "settings.prereqs.hint": "ETIs Paket-Installer aus dem Katalog-Ordner richtet die Laufzeitumgebungen ein, die die meisten Spiele brauchen. Er bringt sein eigenes Fenster mit.",
   "settings.prereqs.missing": "Der Paket-Installer (eti_launcher\\bin\\preqsetup.exe, ca. 3,3 GB) ist noch nicht vollständig synchronisiert.",
@@ -174,7 +173,6 @@ export const de: Messages = {
   "settings.prereqs.started": "Paket-Installer gestartet. Folge dem Fenster des Installers.",
   "settings.lanpage": "LANPage",
   "settings.lanpage.hint": "Der Launcher liest launcher.ini von launcher.lan (Name der LAN, Farben, Statistik-Adresse), genau wie der bisherige Launcher.",
-  "settings.send_stats": "Statistik an die LANPage senden (wer spielt was)",
   "settings.theme": "Farbschema",
   "settings.theme.auto": "Automatisch (LAN-Theme, sonst Standard)",
   "settings.theme.default": "NextGen Dark",
@@ -289,6 +287,10 @@ export const de: Messages = {
   "problem.sync.stalled.cause": "Seit {minutes} Min. kommen keine Daten mehr an, obwohl Teilnehmer verbunden sind.",
   "problem.sync.stalled.step.1": "„Reparieren“ prüft, ob die Datei vielleicht schon vollständig ist, und entpackt sie dann sofort.",
   "problem.sync.stalled.step.2": "Bleibt es hängen: Sync anhalten, kurz warten, fortsetzen.",
+
+  "problem.sync.share_error.title": "Sync-Dienst kommt mit dem Ordner nicht klar",
+  "problem.sync.share_error.cause": "Der Sync-Dienst meldet für diese Freigabe einen Fehler ({detail}). Das passiert typischerweise, wenn der Spielordner zwischendurch gelöscht oder verschoben wurde.",
+  "problem.sync.share_error.step.1": "„Reparieren“ meldet die Freigabe neu an – danach läuft der Download wieder.",
 
   "problem.install.archive_incomplete.title": "Archiv noch unvollständig",
   "problem.install.archive_incomplete.cause": "Die Prüfsumme ging nicht auf – es fehlen noch Daten oder die Datei wurde gerade geschrieben. ({detail})",
