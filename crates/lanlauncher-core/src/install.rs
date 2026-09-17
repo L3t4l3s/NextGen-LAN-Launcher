@@ -124,6 +124,16 @@ pub struct Observation {
     pub disk_free: Option<u64>,
 }
 
+/// Whose figure an [`Observation`] speaks with. A change from one to the
+/// other is a jump, not a transfer: the rate must not be measured across it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ByteSource {
+    /// The sync engine's own counter for the share.
+    Engine,
+    /// What lies in the game's folder.
+    Folder,
+}
+
 impl Observation {
     /// How many bytes of this game have arrived.
     ///
@@ -133,6 +143,29 @@ impl Observation {
     /// `<id>.eti` and its `.!sync` twin showed nothing while gigabytes were
     /// landing next to them.
     pub fn bytes_on_disk(&self) -> u64 {
+        self.arrived().0
+    }
+
+    /// The same figure and who it comes from, for the rate: a switch between
+    /// the two sources changes the number without a byte being transferred.
+    pub fn arrived(&self) -> (u64, ByteSource) {
+        // Once the engine has indexed the share, its own figure is the only
+        // honest one: Resilio allocates the target file at its full size
+        // before the first byte arrives, so the folder reads 85 GB while 8
+        // bytes have been received — on an update just as much as on a first
+        // download. "Indexed" means it knows what it counted and its total
+        // matches the size the catalogue promises; while it is still counting
+        // it answers a few hundred bytes or a size of its own, and then the
+        // folder is the better witness.
+        if let Some(t) = &self.transport {
+            let knows_the_share = t.bytes_known
+                && self.catalog_bytes > 0
+                && (t.bytes_total as u128) * 10 >= (self.catalog_bytes as u128) * 9
+                && (t.bytes_total as u128) * 9 <= (self.catalog_bytes as u128) * 10;
+            if knows_the_share {
+                return (t.bytes_done.min(t.bytes_total), ByteSource::Engine);
+            }
+        }
         // An installed game that is updating: the folder still holds the
         // version in use, and the engine counts it along with everything else,
         // so both would read as "almost done" before a byte of the new package
@@ -146,18 +179,23 @@ impl Observation {
                 .archive_len
                 .filter(|len| *len != receipt.archive_bytes)
                 .unwrap_or(0);
-            return beyond_installed
-                .max(swapped_in)
-                .max(self.partial_len.unwrap_or(0));
+            return (
+                beyond_installed
+                    .max(swapped_in)
+                    .max(self.partial_len.unwrap_or(0)),
+                ByteSource::Folder,
+            );
         }
         let engine = self.transport.as_ref().map(|t| t.bytes_done).unwrap_or(0);
         let on_disk = self.bytes_on_disk_only();
-        engine.max(on_disk)
+        if engine > on_disk {
+            (engine, ByteSource::Engine)
+        } else {
+            (on_disk, ByteSource::Folder)
+        }
     }
 
-    /// What this game's own files hold, without the engine's opinion. The
-    /// rate and the stall clock are measured from this: the engine's counter
-    /// jumps when it finishes indexing, and a jump is not a transfer.
+    /// What this game's own files hold, without the engine's opinion.
     pub fn bytes_on_disk_only(&self) -> u64 {
         if let Some(receipt) = &self.receipt {
             let beyond_installed = self.share_bytes.saturating_sub(receipt.archive_bytes);
@@ -341,6 +379,9 @@ pub struct Tracker {
     /// The engine's own byte counter at the previous tick: it moving means
     /// the share is receiving something, wherever that something lands.
     last_engine_bytes: Option<u64>,
+    /// Which figure the last tick counted with: the engine's counter and the
+    /// folder are not the same scale, so the rate restarts when it changes.
+    byte_source: Option<ByteSource>,
     /// Last rate sample `(taken at, bytes)`; the transport's own rate is
     /// preferred, this covers engines that report none.
     rate_sample: Option<(Instant, u64)>,
@@ -369,6 +410,7 @@ impl Tracker {
             indexing_since: None,
             last_engine_log: None,
             last_engine_bytes: None,
+            byte_source: None,
             rate_sample: None,
             rate_bps: 0.0,
             verify_failed_at: None,
@@ -520,11 +562,23 @@ impl Tracker {
             }
         }
 
-        // Track byte progress for stall detection and display.
-        // The engine's figure is for display; the rate and the stall clock
-        // follow this game's own files, which do not jump when the engine
-        // finishes indexing.
-        let bytes_now = obs.bytes_on_disk_only();
+        // Track byte progress for stall detection and display. The figure
+        // that counts is the one the observation trusts — the folder alone
+        // stands still for a file the engine allocated at full size before
+        // transferring it. Where the source changes (the engine finishes
+        // indexing and takes over), the measurement starts again: that step
+        // is a jump, and a jump is not a transfer.
+        let (bytes_now, source) = obs.arrived();
+        if Some(source) != self.byte_source {
+            self.byte_source = Some(source);
+            // Everything measured on the other scale is void, and the stall
+            // clock keeps running: a share that changes witnesses — the
+            // engine finishing its index, or one tick without an answer from
+            // it — has not received a byte for it.
+            self.rate_sample = None;
+            self.rate_bps = 0.0;
+            self.last_bytes = bytes_now;
+        }
         if bytes_now != self.last_bytes {
             self.last_bytes = bytes_now;
             self.last_progress_at = now;
@@ -559,10 +613,13 @@ impl Tracker {
             }
             Phase::Syncing => {
                 if let Some(free) = obs.disk_free {
+                    // What the folder holds, not what has arrived: space the
+                    // engine allocated for a file it has not filled yet is
+                    // taken, and the disk reports it as taken.
                     let needed = obs
                         .catalog_bytes
                         .saturating_mul(2)
-                        .saturating_sub(bytes_now);
+                        .saturating_sub(obs.bytes_on_disk_only());
                     if obs.archive_len.is_none() && free < needed && needed > 0 {
                         self.problem = Some(
                             Problem::new("install.disk_full", Severity::Error)
@@ -573,9 +630,26 @@ impl Tracker {
                         );
                     }
                 }
+                // Resilio allocates the target file at its full size before
+                // the first byte arrives, so "the file is there and its size
+                // stopped changing" is not enough: an 85 GB placeholder is
+                // stable from the first second. The engine has to agree that
+                // most of the share arrived — its own two figures, which also
+                // hold for an update, where the folder counts the installed
+                // package as if it were the new one. At 90 %, so the engine
+                // that hangs at 99 % with a complete file still gets its
+                // verification, and a share whose size it does not know says
+                // nothing either way.
+                let engine_mostly_done = obs.transport.as_ref().is_none_or(|t| {
+                    t.state == ShareState::Complete
+                        || !t.bytes_known
+                        || t.bytes_total == 0
+                        || (t.bytes_done as u128) * 10 >= (t.bytes_total as u128) * 9
+                });
                 let complete_on_disk = obs.archive_len.is_some()
                     && obs.partial_len.is_none()
                     && obs.version_ini.is_some()
+                    && engine_mostly_done
                     && self
                         .archive_stable_since
                         .map(|t| now.duration_since(t) >= policy.stable_for)
@@ -1661,6 +1735,7 @@ mod tests {
             state: ShareState::Downloading,
             bytes_done: 0,
             bytes_total: 782,
+            bytes_known: true,
             files_total: 1,
             peers: 1,
             download_bps: 0,
@@ -1688,6 +1763,7 @@ mod tests {
             state: ShareState::Downloading,
             bytes_done: 9000,
             bytes_total: 10_000,
+            bytes_known: true,
             files_total: 1,
             peers: 1,
             download_bps: 0,
@@ -1763,6 +1839,7 @@ mod tests {
                 },
                 bytes_done: p * 10,
                 bytes_total: 1000,
+                bytes_known: true,
                 files_total: 3,
                 peers: 2,
                 download_bps: 0,
@@ -1880,6 +1957,172 @@ mod tests {
     }
 
     #[test]
+    fn a_file_allocated_at_full_size_is_not_progress() {
+        // Resilio creates the target file at its full size before the first
+        // byte arrives. The folder then holds 85.8 GB while the engine has
+        // received eight of them, so the download looked finished and the
+        // state machine tried to verify an archive that was not there.
+        let mut o = obs(None, None, None, None);
+        o.catalog_bytes = 85_885_187_222;
+        o.share_bytes = 85_885_187_222;
+        o.transport = Some(ShareStatus {
+            dir: "/x".into(),
+            state: ShareState::Downloading,
+            bytes_done: 8,
+            bytes_total: 85_885_187_222,
+            bytes_known: true,
+            files_total: 1,
+            peers: 1,
+            download_bps: 229_991_773,
+            upload_bps: 0,
+            error: None,
+        });
+        assert_eq!(o.bytes_on_disk(), 8);
+    }
+
+    #[test]
+    fn an_allocated_archive_does_not_start_a_verification() {
+        // Same picture one step further: the package already carries its
+        // final name and its `version.ini` sits next to it, but the engine
+        // has transferred almost nothing. Verifying here fails on a file of
+        // zeroes and would repeat for as long as the download runs.
+        let mut t = Tracker::new("siege");
+        t.request_install();
+        let t0 = Instant::now();
+        let mut allocated = obs(Some(1000), None, Some("20250308"), Some(1));
+        allocated.share_bytes = 1000;
+        assert_eq!(t.step(&allocated, &policy(), t0), Action::None);
+        assert_eq!(
+            t.step(&allocated, &policy(), t0 + Duration::from_secs(30)),
+            Action::None,
+            "an archive the engine has not transferred is not ready to verify"
+        );
+        assert_eq!(t.phase, Phase::Syncing);
+        // Once the bytes are really there, the usual path applies: the
+        // archive has been stable since the first tick, so the engine's
+        // agreement is the only thing that was missing.
+        let arrived = obs(Some(1000), None, Some("20250308"), Some(100));
+        assert_eq!(
+            t.step(&arrived, &policy(), t0 + Duration::from_secs(40)),
+            Action::Verify
+        );
+        assert_eq!(t.phase, Phase::Verifying);
+    }
+
+    #[test]
+    fn an_update_waits_for_the_engine_as_well() {
+        // Updating an installed game, the folder is no witness at all: it
+        // holds the package in use, and a new one allocated at its full size
+        // on top of it. Only the engine's two figures say how much of the new
+        // revision is really here.
+        let mut t = Tracker::new("g");
+        t.request_install();
+        // The state the download of an update runs in; the receipt would
+        // otherwise answer for the phase before anything is observed.
+        t.phase = Phase::Syncing;
+        let t0 = Instant::now();
+        let mut o = obs(Some(1000), None, Some("20250309"), Some(50));
+        o.receipt = Some(Receipt {
+            version: 1,
+            game_id: "g".into(),
+            revision: "20250308".into(),
+            installed_at: chrono::Utc::now(),
+            archive_bytes: 900,
+            files: 1,
+            setup_done: true,
+            exe_override: None,
+            adopted: false,
+        });
+        assert_eq!(t.step(&o, &policy(), t0), Action::None);
+        assert_eq!(
+            t.step(&o, &policy(), t0 + Duration::from_secs(30)),
+            Action::None,
+            "half a share is not an archive to verify"
+        );
+        o.transport.as_mut().unwrap().bytes_done = 1000;
+        assert_eq!(
+            t.step(&o, &policy(), t0 + Duration::from_secs(40)),
+            Action::Verify
+        );
+    }
+
+    #[test]
+    fn a_counter_that_is_only_a_stand_in_does_not_hold_a_game_back() {
+        // The web-UI client answers for a share with a state and nothing
+        // countable, and fills in a zero. Read as a figure, that zero says
+        // "nothing has arrived" for ever: the archive on the disk would never
+        // be verified, extracted or played.
+        let mut t = Tracker::new("g");
+        t.request_install();
+        let t0 = Instant::now();
+        let mut o = obs(Some(1000), None, Some("20250308"), Some(0));
+        o.transport.as_mut().unwrap().bytes_known = false;
+        assert_eq!(t.step(&o, &policy(), t0), Action::None);
+        assert_eq!(
+            t.step(&o, &policy(), t0 + Duration::from_secs(20)),
+            Action::Verify
+        );
+    }
+
+    #[test]
+    fn a_change_of_witness_is_not_progress() {
+        // One tick without an answer from the engine puts the folder back in
+        // its place. The number changes, nothing arrived: the stall clock has
+        // to keep running, or a download that hangs while the engine stutters
+        // is never noticed.
+        let mut t = Tracker::new("g");
+        t.request_install();
+        let t0 = Instant::now();
+        let mut o = obs(None, None, None, Some(50));
+        o.share_bytes = 20;
+        t.step(&o, &policy(), t0);
+        let since = t.last_progress_at;
+        o.transport = None;
+        t.step(&o, &policy(), t0 + Duration::from_secs(10));
+        assert_eq!(t.last_progress_at, since, "the stall clock keeps running");
+        assert_eq!(t.rate_bps, 0.0, "and nothing was measured across it");
+    }
+
+    #[test]
+    fn the_rate_is_measured_where_the_bytes_are_counted() {
+        // While the engine is still indexing, the folder is the source; when
+        // it takes over, its counter is a different scale. Measuring across
+        // that step invented a rate — and with a file allocated at full size
+        // the folder alone never moves at all, so the rate has to follow the
+        // engine once it counts.
+        let mut t = Tracker::new("siege");
+        t.request_install();
+        let t0 = Instant::now();
+        let mut o = obs(None, None, None, None);
+        o.share_bytes = 20;
+        o.transport = Some(ShareStatus {
+            dir: "/x".into(),
+            state: ShareState::Downloading,
+            bytes_done: 5,
+            // Far below the catalogue's 1000: the engine is still counting.
+            bytes_total: 10,
+            bytes_known: true,
+            files_total: 1,
+            peers: 1,
+            download_bps: 0,
+            upload_bps: 0,
+            error: None,
+        });
+        t.step(&o, &policy(), t0);
+        t.step(&o, &policy(), t0 + Duration::from_secs(10));
+        assert_eq!(t.rate_bps, 0.0, "nothing moved");
+        // The engine has the share now and is far ahead of the folder.
+        let engine = o.transport.as_mut().unwrap();
+        engine.bytes_total = 1000;
+        engine.bytes_done = 900;
+        t.step(&o, &policy(), t0 + Duration::from_secs(20));
+        assert_eq!(t.rate_bps, 0.0, "the change of source is not a transfer");
+        o.transport.as_mut().unwrap().bytes_done = 950;
+        t.step(&o, &policy(), t0 + Duration::from_secs(30));
+        assert_eq!(t.rate_bps, 5.0, "50 bytes in ten seconds, from the engine");
+    }
+
+    #[test]
     fn engine_stuck_at_99_percent_still_verifies_complete_archive() {
         let mut t = Tracker::new("amongus");
         t.request_install();
@@ -1912,7 +2155,11 @@ mod tests {
         let mut t = Tracker::new("g");
         t.request_install();
         let t0 = Instant::now();
-        let done = obs(Some(800), None, Some("20250308"), Some(80));
+        // The engine says the share is here, the archive is 800 of 1000
+        // bytes: that is the case CRC verification exists for. (It has to be
+        // the engine's word, because a file allocated at its full size looks
+        // just as finished from the folder.)
+        let done = obs(Some(800), None, Some("20250308"), Some(100));
         t.step(&done, &policy(), t0);
         assert_eq!(
             t.step(&done, &policy(), t0 + Duration::from_secs(16)),
@@ -1987,6 +2234,7 @@ mod tests {
             state: ShareState::Downloading,
             bytes_done: 600,
             bytes_total: 1000,
+            bytes_known: true,
             files_total: 1,
             peers: 2,
             download_bps: 9000,
@@ -2075,6 +2323,24 @@ mod tests {
             t.step(&done, &policy(), t0 + Duration::from_secs(1)),
             Action::Verify
         );
+    }
+
+    #[test]
+    fn space_the_engine_has_already_taken_is_not_missing() {
+        // The target file is allocated at its full size before it is filled.
+        // Those bytes are on the disk and the disk reports them as gone, so
+        // the room still needed is measured against the folder, not against
+        // what has arrived — otherwise a download that fits reports "disk
+        // full" the moment the engine reserves its space.
+        let mut t = Tracker::new("g");
+        t.request_install();
+        let t0 = Instant::now();
+        let mut o = obs(None, None, None, Some(0));
+        o.share_bytes = 1000;
+        o.disk_free = Some(1000);
+        t.step(&o, &policy(), t0);
+        t.step(&o, &policy(), t0 + Duration::from_secs(1));
+        assert!(t.problem.is_none(), "{:?}", t.problem);
     }
 
     #[test]

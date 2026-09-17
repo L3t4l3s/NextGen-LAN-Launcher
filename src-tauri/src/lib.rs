@@ -97,6 +97,9 @@ impl SetupHook for AppSetupHook {
         if lines.is_empty() {
             return Ok(());
         }
+        // The setup script is the last line of the batch; the transcript
+        // numbers its sections the same way, so a failure can be tied to it.
+        let setup_line = lines.len();
         let run = crate::fixes::run_admin_lines_at(
             &state,
             &format!("{game_id}-setup"),
@@ -108,6 +111,7 @@ impl SetupHook for AppSetupHook {
         // an error" without either is a dead end for the user.
         // Only a failure: a setup that worked has nothing to explain, and the
         // panel belongs to whatever the user started last.
+        let mut transcript = String::new();
         if let (Some(plan), Err(e)) = (&setup, &run) {
             let log = elevate::batch_log_path(&state.run_dir(), &format!("{game_id}-setup"));
             let mut attempt = crate::state::LaunchAttempt::new(game_id, game_id, "setup", plan);
@@ -116,6 +120,7 @@ impl SetupHook for AppSetupHook {
             attempt.error = Some(e.clone());
             attempt.output = state.launch_output_since(&log, attempt.at);
             attempt.captured = !attempt.output.is_empty();
+            transcript = attempt.output.clone();
             *state.last_launch.write().await = Some(attempt);
         }
         let run = run.map(|_| ());
@@ -136,9 +141,55 @@ impl SetupHook for AppSetupHook {
                 log::warn!("firewall rules for {game_id} not registered at setup: {e}");
                 Ok(())
             }
-            Err(e) => Err(lanlauncher_core::Error::Code(e)),
+            Err(e) => Err(lanlauncher_core::Error::Code(explain_setup_failure(
+                paths,
+                &transcript,
+                setup_line,
+                e,
+            ))),
         }
     }
+}
+
+/// What a failed setup was looking for, where that can be said for certain.
+///
+/// ETI's scripts call helpers from the original launcher's installation
+/// (`%programfiles%\eti\lan launcher\unrar.exe`, `fnr.exe`). On a machine
+/// that never had it cmd answers "The system cannot find the path specified"
+/// and names nothing, and that is what the user was shown: an error nobody
+/// can act on. The script says which programs it wanted, so the missing ones
+/// are named instead.
+///
+/// Only when the game's own script is what failed: the same batch registers
+/// the firewall rules first, and a `netsh` that a policy refused must not be
+/// reported as a missing helper. Where the transcript does not say which line
+/// it was, the original code stands.
+fn explain_setup_failure(
+    paths: &GamePaths,
+    transcript: &str,
+    setup_line: usize,
+    code: String,
+) -> String {
+    if lanlauncher_core::launch::elevate::failed_line(transcript) != Some(setup_line) {
+        return code;
+    }
+    let Ok(script) = std::fs::read_to_string(&paths.setup_script) else {
+        return code;
+    };
+    let missing = lanlauncher_core::launch::windows::missing_tools(
+        &script,
+        &|name| std::env::var(name).ok(),
+        &|path| path.exists(),
+    );
+    if missing.is_empty() {
+        return code;
+    }
+    let list = missing
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("msg.setup_tools_missing|{list}")
 }
 
 /// Only the preview-video folders of the library are exposed to the WebView
@@ -729,6 +780,12 @@ pub fn run() {
                 std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".into()),
                 std::env::var("GDK_BACKEND").unwrap_or_else(|_| "default".into()),
                 std::env::var("NLL_WEBVIEW_FALLBACK").unwrap_or_else(|_| "no".into())
+            );
+            #[cfg(target_os = "linux")]
+            log::info!(
+                "webkit helpers: exec {}, bundle {}",
+                std::env::var("WEBKIT_EXEC_PATH").unwrap_or_else(|_| "system".into()),
+                std::env::var("WEBKIT_INJECTED_BUNDLE_PATH").unwrap_or_else(|_| "system".into())
             );
             for d in [&dirs.config, &dirs.data, &dirs.cache] {
                 let _ = std::fs::create_dir_all(d);

@@ -47,6 +47,10 @@ pub struct ShareStatus {
     pub state: ShareState,
     pub bytes_done: u64,
     pub bytes_total: u64,
+    /// Is `bytes_done` a figure the engine actually gave? The web UI answers
+    /// for some shares with a state and nothing else, and a fabricated zero
+    /// must not be read as "nothing has arrived".
+    pub bytes_known: bool,
     pub files_total: u64,
     pub peers: u32,
     pub download_bps: u64,
@@ -280,6 +284,7 @@ mod tests {
             state: ShareState::Downloading,
             bytes_done: 0,
             bytes_total: 0,
+            bytes_known: true,
             files_total: 0,
             peers,
             download_bps: down,

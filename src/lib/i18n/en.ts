@@ -269,6 +269,8 @@ export const en: Messages = {
   "msg.transport_restarted": "Sync service restarted.",
   "msg.repair_started": "Repair started.",
   "msg.defender_exclusion_added": "Windows Defender exclusion added.",
+  "msg.setup_tools_missing":
+    "The game's setup script calls programs this PC does not have: {detail}. These helpers ship with the old ETI launcher; without them Windows only says “The system cannot find the path specified”. The game is extracted anyway – if it does not start without the setup, installing the ETI launcher or copying those files into that folder fixes it.",
 
   "problem.network.public_profile.title": "Windows network profile is “Public” ({adapter})",
   "problem.network.public_profile.cause":

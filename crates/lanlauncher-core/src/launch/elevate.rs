@@ -333,6 +333,22 @@ fn write_batch_inner(
 /// What the batch echoes into its log for a command that failed.
 const FAILURE_MARKER: &str = "!! exit";
 
+/// Which line of the batch failed, counted from one, where the transcript
+/// says so.
+///
+/// Every line writes its number before it runs and a failure marker after it,
+/// so the first marked section names the command whose exit code the batch
+/// returned. A caller that knows what it put in which line can tell whose
+/// failure it is looking at.
+pub fn failed_line(transcript: &str) -> Option<usize> {
+    transcript
+        .split("--- ")
+        .skip(1)
+        .find(|s| s.contains(FAILURE_MARKER))
+        .and_then(|s| s.lines().next())
+        .and_then(|l| l.trim().parse().ok())
+}
+
 /// The output of the command that failed in a transcript
 /// [`write_batch_logged`] produced, joined into one line.
 ///
@@ -487,6 +503,25 @@ mod tests {
         // A console line that failed has an empty section: no quote is
         // better than quoting the command before it, which worked.
         assert_eq!(last_section("--- 1\r\nOk.\r\n--- 2\r\n!! exit 2\r\n"), "");
+    }
+
+    #[test]
+    fn the_failing_line_is_known_by_number() {
+        // Which line failed decides whether a caller may explain the failure
+        // with what it put in that line.
+        assert_eq!(
+            failed_line("--- 1\r\nOk.\r\n--- 2\r\nWeg.\r\n!! exit 1\r\n"),
+            Some(2)
+        );
+        // The first failure is the one the batch returns.
+        assert_eq!(
+            failed_line("--- 1\r\n!! exit 1\r\n--- 2\r\n!! exit 5\r\n"),
+            Some(1)
+        );
+        // Nothing failed, or nothing survived of the transcript: no claim.
+        assert_eq!(failed_line("--- 1\r\nOk.\r\n"), None);
+        assert_eq!(failed_line("Zugriff verweigert.\r\n"), None);
+        assert_eq!(failed_line(""), None);
     }
 
     #[test]

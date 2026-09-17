@@ -91,6 +91,14 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   (`NLL_RC` im erzeugten Batch). Zeilen, die scheitern dürfen, sind `elevate::BatchLine::optional`
   — `netsh … delete rule` endet mit 1, wenn keine Regel passte. Neue Zeilen ohne diese
   Kennzeichnung gelten als Pflicht.
+- **Vorbelegte Zieldatei:** Resilio legt die Datei sofort in voller Größe an und füllt sie dann.
+  Der Ordner meldet also 85 GB, während acht Byte angekommen sind. Nur die Zahl der Engine taugt
+  als Fortschritt, sobald sie die Freigabe eingelesen hat (`bytes_total` passt dann zur
+  Katalogangabe); vorher ist der Ordner die bessere Quelle. Vor dem Prüfen muss die Engine
+  bestätigen, dass der Großteil da ist (`Observation::bytes_on_disk`, `engine_mostly_done`).
+- **NSIS-Hooks:** `NSIS_HOOK_PREINSTALL` läuft *vor* Tauris Frage „Anwendung beenden?“. Wer dort
+  die Sync-Engine beendet, während der Launcher noch läuft, startet sie nur neu — deshalb beendet
+  `installer-hooks.nsh` erst den Launcher, dann die Engine.
 - **Pfade von der Engine:** Resilio antwortet mit der Windows-Langform, auch für Ordner, die ohne
   sie angemeldet wurden. `transport::normalise_dir` entfernt das Präfix, sonst findet der
   Zustandsautomat die Freigabe des Spiels nicht.

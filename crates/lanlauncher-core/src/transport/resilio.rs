@@ -638,6 +638,8 @@ pub fn parse_api_folder(f: &Value, peers: u32) -> ShareStatus {
         state,
         bytes_done: done,
         bytes_total: total,
+        // `size` is the engine's own count of what this PC holds.
+        bytes_known: f.get("size").is_some(),
         files_total: files,
         peers,
         download_bps: number("down_speed"),
@@ -807,24 +809,29 @@ pub fn parse_gui_folders(v: &Value) -> HashMap<PathBuf, ShareStatus> {
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty())
             .map(str::to_string);
-        let (state, done) = if paused {
-            (ShareState::Paused, 0)
+        // The third value says whether the second is a figure from the
+        // engine or a stand-in. The web UI answers for many shares with a
+        // state and nothing countable, and a zero of ours read as "nothing
+        // has arrived" would stop a finished download from ever being
+        // verified.
+        let (state, done, known) = if paused {
+            (ShareState::Paused, 0, false)
         } else if error.is_some() {
-            (ShareState::Error, 0)
+            (ShareState::Error, 0, false)
         } else if status_text.contains("index") {
-            (ShareState::Indexing, 0)
+            (ShareState::Indexing, 0, false)
         } else if let Some(p) = progress {
             if p >= 100 {
-                (ShareState::Complete, size)
+                (ShareState::Complete, size, true)
             } else {
-                (ShareState::Downloading, size * p / 100)
+                (ShareState::Downloading, size * p / 100, true)
             }
         } else if status_text.contains("synced") || status_text.contains("up to date") {
-            (ShareState::Complete, size)
+            (ShareState::Complete, size, true)
         } else if size == 0 {
-            (ShareState::Pending, 0)
+            (ShareState::Pending, 0, false)
         } else {
-            (ShareState::Downloading, 0)
+            (ShareState::Downloading, 0, false)
         };
         out.insert(
             PathBuf::from(&path),
@@ -833,6 +840,7 @@ pub fn parse_gui_folders(v: &Value) -> HashMap<PathBuf, ShareStatus> {
                 state,
                 bytes_done: done,
                 bytes_total: size,
+                bytes_known: known,
                 files_total: files,
                 peers,
                 download_bps: f.get("down").and_then(as_u64_lenient).unwrap_or(0),
@@ -2005,7 +2013,8 @@ mod tests {
             {"name":"/lan/quake3","size":"910000000","files":3,"status":"Synced","peers":[{},{}]},
             {"path":"/lan/cod4","size":5000,"files":2,"progress":99,"peers":[{}],"down":1000},
             {"name":"/lan/paused","size":10,"paused":true},
-            {"name":"/lan/idx","size":10,"status":"Indexing..."}
+            {"name":"/lan/idx","size":10,"status":"Indexing..."},
+            {"name":"/lan/quiet","size":5000,"files":2,"peers":[{}]}
         ]});
         let f = parse_gui_folders(&v);
         assert_eq!(super::super::peer_summary(f.values()).catalog, None);
@@ -2018,6 +2027,13 @@ mod tests {
         assert_eq!(c.bytes_done, 4950);
         assert_eq!(f[Path::new("/lan/paused")].state, ShareState::Paused);
         assert_eq!(f[Path::new("/lan/idx")].state, ShareState::Indexing);
+        // A share the UI says nothing countable about: the zero below is
+        // ours, and saying so keeps the installer from reading it as "not a
+        // byte has arrived" for the whole download.
+        let quiet = &f[Path::new("/lan/quiet")];
+        assert_eq!(quiet.state, ShareState::Downloading);
+        assert_eq!((quiet.bytes_done, quiet.bytes_known), (0, false));
+        assert!(q.bytes_known && c.bytes_known, "these two were counted");
     }
 
     #[test]

@@ -62,6 +62,17 @@ The log's second line records which renderer setting was in force and whether th
 or Wayland, so a report of a white window can say which combination it was. To keep the
 accelerated path on a machine where it works, set `WEBKIT_DISABLE_DMABUF_RENDERER=0`.
 
+If none of it helps — the Steam Deck is the open case — the interesting messages are the ones
+WebKitGTK writes to the terminal when its web process gives up. They do not reach `launcher.log`,
+so run it once like this and keep the file:
+
+```bash
+./NextGen*.AppImage --safe-graphics 2>&1 | tee ~/nll-terminal.log
+```
+
+`libGL`, `EGL`, `Gdk` and `WebKit` lines in there name the piece that fails; `launcher.log` on its
+own only shows that the interface never reported for duty (no `interface ready` line).
+
 ## Folder mode
 
 If Resilio Sync cannot be started by the launcher, it falls back to folder mode: run Resilio

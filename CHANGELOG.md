@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Ein Paket, das die Engine anlegt, bevor sie es lädt, gilt nicht mehr als fertig: Resilio legt die
+  Zieldatei sofort in voller Größe an (85,8 GB auf der Platte, 8 Byte angekommen), der Launcher hat
+  daraus „fertig" gelesen und ist in eine endlose Prüfung gelaufen. Sobald die Engine die Freigabe
+  eingelesen hat, zählt allein ihre Zahl, und geprüft wird erst, wenn sie den Großteil des Archivs
+  bestätigt.
+- Windows-Installer: Erst wird der Launcher beendet, dann seine Sync-Engine — andersherum hat der
+  noch laufende Launcher die gerade beendete Engine sofort wieder gestartet, und die Installation
+  scheiterte an der belegten Datei. Der Installer wartet danach, bis wirklich nichts mehr aus dem
+  Programmordner läuft.
+- Scheitert die Einrichtung eines Spiels, nennt der Launcher die Programme, die das Skript aufruft
+  und die es auf diesem PC nicht gibt (`unrar.exe`, `fnr.exe` aus dem alten ETI-Launcher). Vorher
+  stand dort nur Windows' „Das System kann den angegebenen Pfad nicht finden" ohne Pfad.
+
 - Linux: `--safe-graphics` schaltet Software-Rendering, kein Compositing und X11 ein und merkt sich
   das (`--no-safe-graphics` nimmt es zurück) — für Geräte, auf denen WebKitGTK sonst ein weißes
   Fenster zeigt. Die Oberfläche meldet sich außerdem beim Start beim Kern; bleibt diese Meldung aus,

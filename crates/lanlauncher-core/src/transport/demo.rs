@@ -105,6 +105,7 @@ impl DemoTransport {
             state,
             bytes_done: reported_done,
             bytes_total: share.total,
+            bytes_known: true,
             files_total: 3,
             peers: if share.paused { 0 } else { 3 },
             download_bps: if state == ShareState::Downloading {

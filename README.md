@@ -142,17 +142,23 @@ again.
 
 ## Open items
 
-- **A white window on SteamOS:** the launcher now turns the webview's DMA-BUF renderer off on
-  Linux, which is the documented cause of a window that opens with the right title and stays
-  blank. Verified only in that the app still starts on an ordinary Linux desktop; whether it is
-  what the Steam Deck needed has to be tried there.
+- **A white window on SteamOS:** unsolved. The launcher turns the webview's DMA-BUF renderer off,
+  and `--safe-graphics` adds software rendering, no compositing and X11 — the documented causes of
+  a window that opens with the right title and stays blank. On a Steam Deck none of it helped.
+  The AppImage was checked here under Xvfb, including two suspicions that turned out not to be
+  it: it renders with the system's `webkit2gtk-4.1` helper directory removed (WebKitGTK finds the
+  copies inside the AppImage by itself) and with `bwrap` gone. It carries its own GTK, WebKit,
+  glib and soup, so what differs on the Deck is the graphics stack below them. What is needed to
+  get further is the output of `./NextGen*.AppImage 2>&1 | tee nll-terminal.log` from the device:
+  the messages WebKit prints when its web process gives up are not in `launcher.log`.
+- **Installer and a running launcher:** the NSIS hook now closes the launcher first and its sync
+  engine second, because the launcher restarts an engine it sees dying — and the installer's own
+  "close the application?" prompt only comes after the hook. It then waits (up to ten seconds)
+  until nothing runs from the install folder any more. Built, not yet run against a real upgrade.
 - **Icon after an upgrade:** the executable carries the right icon (the preview pane proves it),
   but the shell caches icons per path. The NSIS hook calling `SHChangeNotify` is meant to clear
   that on upgrade; whether it does for Explorer, the desktop shortcut and a pinned taskbar entry
   has not been verified against a real upgrade yet.
-- **Installer and the bundled engine:** the NSIS hook stops the Resilio copy under the install
-  folder before overwriting it, so an update no longer fails on the running engine. Tested only in
-  that it builds; whether it catches every case on a real upgrade is open.
 - **What `get_folders` means:** the launcher now reads `size` as the bytes this PC holds,
   `total_size` as the share's size and `down_speed` as the rate — matching what a 2.8.1 engine
   writes in its own log. Verified against that log, not against a running server.
@@ -186,6 +192,11 @@ again.
 - **LANPage logo and stylesheet:** `logo.png` and `launcher.css` from `launcher.lan` are applied
   in automatic theme mode; verified against ETI's LANPage template only, not yet against a live
   page.
+- **Setup scripts and the ETI helper tools:** when a game's `game_setup.cmd` fails, the launcher
+  reads the script, resolves the `%…%` variables and names the programs it calls that are not on
+  this PC — `unrar.exe` and `fnr.exe` from the original launcher's folder are the usual answer to
+  Windows' bare "The system cannot find the path specified". The parsing is covered by tests; the
+  message has not been seen on the machine it was written for yet.
 - **Runtime package installer:** Settings offers ETI's `eti_launcher/bin/preqsetup.exe` (about
   3.3 GB, .NET 4.8, VC++, DirectX 11, PhysX) behind a confirmation like the ETI client; whether
   the installer needs arguments is unknown and untested on hardware.

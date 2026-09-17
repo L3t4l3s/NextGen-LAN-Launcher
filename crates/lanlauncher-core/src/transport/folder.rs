@@ -61,6 +61,8 @@ impl FolderTransport {
             dir: dir.to_path_buf(),
             state,
             bytes_done: done + partial,
+            // Counted from the folder itself, so it is a figure, not a guess.
+            bytes_known: true,
             // unknown total: report what we have; the installer uses the
             // catalog size for the progress bar.
             bytes_total: 0,

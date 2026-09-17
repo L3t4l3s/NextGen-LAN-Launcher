@@ -1,23 +1,32 @@
-; The launcher starts its own Resilio Sync from the install folder. The
-; installer offers to close the launcher, but the engine is a second process
-; and keeps "Resilio Sync.exe" open, so overwriting it fails. Only the copy
-; under $INSTDIR is stopped; a Resilio the user installed themselves is none
-; of our business.
+; The launcher starts its own Resilio Sync from the install folder and keeps
+; it alive, so stopping the engine alone is pointless: the launcher starts a
+; new one, and that one holds "Resilio Sync.exe" when the installer overwrites
+; it. The installer's own "close the application?" prompt runs *after* this
+; hook, so the launcher is closed here first and the engine second.
 ; Matched by path, not by name: the engine may be called "Resilio Sync.exe",
-; "rslsync.exe" or "btsync.exe", and the path is what says it is ours.
+; "rslsync.exe" or "btsync.exe", and the path is what says it is ours. A
+; Resilio the user installed themselves lives elsewhere and is left alone.
 ; The string is delimited with backticks so the shell can use double quotes
 ; and PowerShell single quotes; `\"` is not an escape in NSIS and reached
 ; PowerShell as a literal backslash, which is why the first version of this
 ; hook matched nothing. `$$` is a literal dollar, for PowerShell's `$_`.
 !macro StopBundledResilio
-  DetailPrint "Stopping the bundled sync engine"
-  nsExec::ExecToLog `powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Process -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like '$INSTDIR\resilio\*' } | Stop-Process -Force -ErrorAction SilentlyContinue"`
+  ; `uninstall.exe` is left out of both filters: an upgrade runs it from the
+  ; install folder itself (`_?=$INSTDIR`, no copy to the temp folder), so it
+  ; would be stopping itself.
+  DetailPrint "Closing the launcher and its sync engine"
+  nsExec::ExecToLog `powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Process -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like '$INSTDIR\*' -and $$_.Path -notlike '$INSTDIR\resilio\*' -and $$_.Path -notlike '*\uninstall.exe' } | Stop-Process -Force -ErrorAction SilentlyContinue"`
   Pop $0
-  DetailPrint "Sync engine stop returned $0"
-  ; Whatever is left holding a file there: the engine writes its own folder,
-  ; so a lock that survives the stop above would fail the whole install.
-  nsExec::ExecToLog `powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Process -ErrorAction SilentlyContinue -Name 'Resilio Sync','rslsync','btsync' | Where-Object { $$_.Path -like '$INSTDIR\*' } | Stop-Process -Force -ErrorAction SilentlyContinue"`
+  DetailPrint "Launcher stop returned $0"
+  ; It supervises the engine in a loop, so give the last tick time to pass
+  ; before the engine itself is stopped.
+  Sleep 1000
+  ; Everything still running from the install folder, engine included, and
+  ; anything that came back while we were stopping: up to ten seconds until
+  ; the folder is free. Whatever is left would fail the whole install.
+  nsExec::ExecToLog `powershell -NoProfile -ExecutionPolicy Bypass -Command "for ($$i = 0; $$i -lt 20; $$i++) { $$p = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like '$INSTDIR\*' -and $$_.Path -notlike '*\uninstall.exe' }); if ($$p.Count -eq 0) { exit 0 }; $$p | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500 }; exit 1"`
   Pop $0
+  DetailPrint "Install folder free: $0 (0 = yes)"
   ; Give Windows a moment to release the file handles of everything stopped
   ; above, before the installer starts overwriting them.
   Sleep 1500
