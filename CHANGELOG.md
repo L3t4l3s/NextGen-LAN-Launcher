@@ -2,16 +2,24 @@
 
 ## Unreleased
 
-- Linux/AppImage: GStreamer wird jetzt vollständig mitgeliefert (`bundleMediaFramework: true`).
-  Gemessen am gebauten Abbild: die **zehn Kernbibliotheken** (`libgstreamer-1.0`, `libgstvideo`,
-  `libgstaudio` …) lagen drin — `libwebkit2gtk-4.1` linkt hart dagegen, sie sind nicht optional —
-  aber **kein einziges Plugin**, also kein Decoder, kein Demuxer. Die Plugins kamen vom Rechner und
-  sind an die dortige GStreamer-Version gebunden; in Ubuntus Kern lassen sie sich nicht laden.
-  Damit hatte der Webview auf jedem Rechner mit anderer GStreamer-Version gar keine Medienbasis.
-  Jetzt liegen 269 Plugins im Abbild (`libav`, `openh264`, `isomp4`, `matroska`, `vpx`,
-  `playback`), Kern und Plugins passen also zusammen. Kosten: 94 → 161 MB.
-  **Ungeprüft**, ob das die fehlenden Videos auf dem Steam Deck behebt — dieser Container hat
-  weder D-Bus noch Audiogerät, dort scheitert die Wiedergabe aus anderem Grund.
+- **Linux: Die einfrierende Oberfläche und die stummen Videos waren derselbe Fehler — behoben.**
+  Auf dem Steam Deck stand im `webview.log`: `GStreamer element autoaudiosink not found`,
+  unmittelbar gefolgt von `GLib-GObject-CRITICAL: invalid (NULL) pointer instance` und
+  `g_signal_connect_data: assertion 'G_TYPE_CHECK_INSTANCE (instance)' failed` aus dem
+  WebKit-Renderer. WebKit sucht für jedes `<video>` eine Audio-Senke, findet keine, und ruft dann
+  auf dem Null-Zeiger weiter — der Renderer stirbt, das Fenster bleibt als Standbild stehen und
+  reagiert auf nichts mehr. Genau das passierte beim Durchklicken mehrerer Spiele.
+  Ursache war die Paketierung: die **zehn GStreamer-Kernbibliotheken** lagen im AppImage
+  (`libwebkit2gtk-4.1` linkt hart dagegen, sie sind nicht optional), aber **kein einziges Plugin**
+  — kein Decoder, kein Demuxer, keine Audio-Senke. Die Plugins kamen vom Rechner und lassen sich
+  nur in die GStreamer-Version laden, gegen die sie gebaut wurden. `bundleMediaFramework: true`
+  legt jetzt 269 Plugins daneben (`autodetect`, `pulseaudio`, `libav`, `openh264`, `isomp4`,
+  `matroska`, `vpx`, `playback`), Kern und Plugins stammen also aus einer Quelle.
+  Kosten: 94 → 161 MB.
+  Hier nachgestellt und gegengeprüft, indem die System-Plugins per `GST_PLUGIN_SYSTEM_PATH_1_0`
+  versteckt wurden: mit der alten Paketierung erscheint die Deck-Meldung wörtlich und der Renderer
+  stirbt bei der zweiten Spielauswahl; mit der neuen bleibt die Meldung aus und alle vierzehn
+  Auswahlen laufen durch.
 - Entwicklungsbuilds zeigten keine Cover: der Rückfallpfad auf die mitgelieferten Bilder enthielt
   `..`, und das Asset-Protokoll von Tauri lehnt jeden Pfad mit Verzeichniswechsel ab („cannot
   traverse directory") — einmal pro Spiel im Log. Der Pfad wird jetzt aufgelöst. Ein Paketbau war

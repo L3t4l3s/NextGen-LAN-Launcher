@@ -266,6 +266,17 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   `threads_named_like_a_sync_engine_are_not_taken_for_processes` erzeugt Threads namens `rslsync`
   und prüft die Differenz zwischen roher und gefilterter Tabelle (kein absoluter Wert, sonst
   scheitert er auf einem Rechner, auf dem wirklich Resilio läuft).
+- **GStreamer im AppImage — halb ist schlimmer als gar nicht:** `libwebkit2gtk-4.1` linkt hart
+  gegen zehn GStreamer-Kernbibliotheken, linuxdeploy packt sie also ein (sie stehen auf keiner
+  Ausschlussliste). Die *Plugins* kommen aber nur mit `bundleMediaFramework: true` mit, und ein
+  Plugin lädt ausschließlich in die Kernversion, gegen die es gebaut wurde. Ubuntus Kern plus die
+  Plugins des Zielrechners ist **keine** Medienbasis: WebKit findet nicht einmal `autoaudiosink`,
+  ruft `g_signal_connect_data` auf dem Null-Zeiger und der Renderer stirbt — das Fenster bleibt als
+  Standbild stehen. Auf dem Steam Deck war das die einfrierende Oberfläche beim Durchklicken
+  mehrerer Spiele *und* die fehlenden Vorschauvideos, ein Fehler mit zwei Gesichtern.
+  **Also entweder beides mitliefern oder beides weglassen, nie halb.** Nachstellen lässt sich der
+  Zustand mit `GST_PLUGIN_SYSTEM_PATH_1_0=/nonexistent GST_PLUGIN_PATH_1_0=/nonexistent` — dann
+  zeigt jeder Build ohne gebündelte Plugins die Deck-Meldung.
 - **Clippy:** In `resilio.rs` müssen alle Items vor `mod tests` stehen (`items_after_test_module`).
 - **Fehlertexte:** Tauri-Commands und Fix-Aktionen geben keine deutschen Sätze zurück, sondern Codes
   (`err.<name>` bzw. `msg.<name>`, optional mit `|detail`). Das Frontend übersetzt sie mit

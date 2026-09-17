@@ -18,6 +18,7 @@ the background.
 | Status bar shows "N Hinweise" but Downloads looks empty | Playable games with a warning were filtered out. | Downloads has a "Hinweise" section listing playable games with a problem card. |
 | No covers | `eti_launcher/update/assets.eti` missing, unreadable, or not a (gzip) tar. | Extraction result is logged (`covers: …`); Diagnose shows `catalog.covers_missing` when the file exists but the cache is empty. |
 | Game starts but LAN browser empty (Mac) | Bonjour service inside the bottle, firewall. | See manifest notes (e.g. wc3). |
+| Interface freezes after opening a few games, no preview video (Linux) | The AppImage carried GStreamer's core libraries but none of its plugins, so WebKit found no audio sink, dereferenced null and its renderer died. | Fixed by bundling the plugins as well. On an older build the tell is `GStreamer element autoaudiosink not found` in `webview.log`, followed by `GLib-GObject-CRITICAL`. |
 | Window opens with the right title but stays white (Linux, e.g. SteamOS) | WebKitGTK and the machine's graphics stack disagree, in one of several ways. | The launcher works through its renderer settings by itself, restarting on the next one each time the interface fails to report, and remembers the one that draws. See below. |
 
 Logs: **Diagnose → Log-Ordner öffnen**. Windows: `%LOCALAPPDATA%\xyz.nextgen-lan.launcher\logs\launcher.log`
