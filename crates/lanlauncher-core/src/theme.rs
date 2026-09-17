@@ -83,6 +83,12 @@ pub struct Theme {
     pub radius: u32,
     /// Font stack override.
     pub font_family: Option<String>,
+    /// Font stack for the headings (`h1`-`h3` and the event title in the top
+    /// bar); `None` keeps `font_family`. A LANPage usually sets a display face
+    /// on its headlines that would be unreadable as the body font, and naming
+    /// only one stack meant the launcher either missed that face or wore it
+    /// everywhere.
+    pub heading_font_family: Option<String>,
     /// Font files the event brings along, named one by one. The launcher
     /// writes the `@font-face` rules itself from these; a LANPage never hands
     /// the launcher a stylesheet, so it can bring a font but not a free hand
@@ -209,6 +215,7 @@ impl Default for Theme {
             background_overlay: None,
             radius: 12,
             font_family: None,
+            heading_font_family: None,
             font_faces: Vec::new(),
             icons: BTreeMap::new(),
             legacy_css: None,
@@ -417,54 +424,89 @@ impl Theme {
                 log::warn!("launcher.ini: {key} is not a usable image address: {value}");
             }
         }
-        // A font stack reaches CSS as is, so it may only name families.
-        if let Some(value) = extra
-            .get("theme_font_family")
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty() && v.len() <= 200)
-        {
+        // Body and headings, each a stack and the file for it. A font stack
+        // reaches CSS as is, so it may only name families.
+        for (family_key, slot) in [
+            ("theme_font_family", &mut theme.font_family),
+            ("theme_heading_font_family", &mut theme.heading_font_family),
+        ] {
+            let Some(value) = extra
+                .get(family_key)
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty() && v.len() <= 200)
+            else {
+                continue;
+            };
             if value.contains([';', '{', '}', '<', '>', '(', ')']) {
-                log::warn!("launcher.ini: theme_font_family is not a font stack: {value}");
-            } else {
-                theme.font_family = Some(value.to_string());
-                any = true;
+                log::warn!("launcher.ini: {family_key} is not a font stack: {value}");
+                continue;
             }
+            *slot = Some(value.to_string());
+            any = true;
         }
-        // One font file per ini: `theme_font_src` is the file, the family
+        // One font file per stack: `theme_font_src` is the file, the family
         // comes from `theme_font_family`. A LANPage with more than one weight
-        // is past what three lines in an ini can carry and wants a theme.json.
-        if let Some(src) = extra.get("theme_font_src").map(|v| v.trim()) {
-            match theme.font_family.clone() {
-                None => log::warn!(
-                    "launcher.ini: theme_font_src without theme_font_family, ignored: {src}"
-                ),
-                Some(family) => {
-                    let face = FontFace {
-                        // `"Bebas Neue", sans-serif` is how a font stack is
-                        // written; the family behind it is what @font-face
-                        // needs.
-                        family: family
-                            .split(',')
-                            .next()
-                            .unwrap_or(&family)
-                            .trim()
-                            .trim_matches(['"', '\''])
-                            .to_string(),
-                        src: src.to_string(),
-                        weight: None,
-                        style: None,
-                    };
-                    if face.is_declared_ok() {
-                        theme.font_faces = vec![face];
-                        any = true;
-                    } else {
-                        log::warn!(
-                            "launcher.ini: theme_font_src is not a usable font file for `{}`: {src}",
-                            face.family
-                        );
-                    }
-                }
+        // per family is past what an ini can carry and wants a theme.json.
+        for (src_key, family_key, stack) in [
+            (
+                "theme_font_src",
+                "theme_font_family",
+                theme.font_family.clone(),
+            ),
+            (
+                "theme_heading_font_src",
+                "theme_heading_font_family",
+                theme.heading_font_family.clone(),
+            ),
+        ] {
+            let Some(src) = extra.get(src_key).map(|v| v.trim()) else {
+                continue;
+            };
+            let Some(stack) = stack else {
+                log::warn!("launcher.ini: {src_key} without {family_key}, ignored: {src}");
+                continue;
+            };
+            let face = FontFace {
+                // `"Bebas Neue", sans-serif` is how a font stack is written;
+                // the family behind it is what @font-face needs.
+                family: stack
+                    .split(',')
+                    .next()
+                    .unwrap_or(&stack)
+                    .trim()
+                    .trim_matches(['"', '\''])
+                    .to_string(),
+                src: src.to_string(),
+                weight: None,
+                style: None,
+            };
+            if !face.is_declared_ok() {
+                log::warn!(
+                    "launcher.ini: {src_key} is not a usable font file for `{}`: {src}",
+                    face.family
+                );
+                continue;
             }
+            // One family, one file. The ini gives neither face a weight, so a
+            // second rule under the same name would claim the same family and
+            // win by being later — the body would end up in the headline face,
+            // which is the one thing this key exists to avoid. The same file
+            // named twice is no conflict, just nothing left to add.
+            if let Some(known) = theme
+                .font_faces
+                .iter()
+                .find(|f| f.family.eq_ignore_ascii_case(&face.family))
+            {
+                if known.src != face.src {
+                    log::warn!(
+                        "launcher.ini: {src_key} gives `{}` a second file, ignored: {src}",
+                        face.family
+                    );
+                }
+                continue;
+            }
+            theme.font_faces.push(face);
+            any = true;
         }
         if let Some(raw) = extra.get("theme_radius").map(|r| r.trim()) {
             match raw.parse::<u32>() {
@@ -596,12 +638,22 @@ impl Theme {
         if let Some(overlay) = &self.background_overlay {
             push("bg-overlay", overlay);
         }
-        if let Some(f) = &self.font_family {
-            let cleaned: String = f
-                .chars()
+        // A stack ends up in a declaration of its own, so nothing that could
+        // close it may be in it. `theme.json` is not checked for this on the
+        // way in — a stack that carried a rule would cost the whole theme
+        // instead of just the font.
+        let stack = |f: &String| -> String {
+            f.chars()
                 .filter(|ch| !matches!(ch, ';' | '{' | '}' | '<' | '>'))
-                .collect();
-            push("font-family", &cleaned);
+                .collect()
+        };
+        if let Some(f) = &self.font_family {
+            push("font-family", &stack(f));
+        }
+        // The headings fall back to the body font in CSS, so a theme that says
+        // nothing about them keeps looking the way it did before this key.
+        if let Some(f) = &self.heading_font_family {
+            push("font-family-heading", &stack(f));
         }
         css
     }
@@ -887,6 +939,98 @@ mod tests {
         assert!(theme.font_faces.is_empty());
         assert_eq!(theme.font_family, None);
         assert_eq!(theme.colors.primary, "#29b6f6");
+    }
+
+    #[test]
+    fn the_headings_may_wear_a_font_of_their_own() {
+        // A LANPage puts a display face on its headlines and a readable one
+        // on everything else; one stack for the whole UI can carry only the
+        // second of those.
+        let theme = Theme::parse(
+            r#"{"fontFamily":"Rajdhani, sans-serif","headingFontFamily":"Alfa Slab One, serif",
+                "fontFaces":[{"family":"Rajdhani","src":"http://launcher.lan/r.woff2"},
+                             {"family":"Alfa Slab One","src":"http://launcher.lan/a.woff2"}]}"#,
+        )
+        .expect("a theme");
+        let css = theme.to_css_variables();
+        assert!(
+            css.contains("--font-family: Rajdhani, sans-serif;"),
+            "{css}"
+        );
+        assert!(
+            css.contains("--font-family-heading: Alfa Slab One, serif;"),
+            "{css}"
+        );
+        let fonts = theme.font_face_css().expect("font css");
+        assert!(fonts.contains("font-family: \"Alfa Slab One\";"), "{fonts}");
+        // Saying nothing about the headings leaves the property out; the UI
+        // then falls back to the body font.
+        assert!(!Theme::default()
+            .to_css_variables()
+            .contains("--font-family-heading"));
+    }
+
+    #[test]
+    fn the_ini_can_name_the_heading_font_too() {
+        let theme = Theme::from_ini(&ini(&[
+            ("theme_font_family", "Rajdhani, sans-serif"),
+            ("theme_font_src", "http://launcher.lan/r.woff2"),
+            ("theme_heading_font_family", "\"Alfa Slab One\", serif"),
+            ("theme_heading_font_src", "http://launcher.lan/a.woff2"),
+        ]))
+        .expect("a theme");
+        assert_eq!(
+            theme.heading_font_family.as_deref(),
+            Some("\"Alfa Slab One\", serif")
+        );
+        let fonts = theme.font_face_css().expect("font css");
+        assert!(
+            fonts.contains("url(\"http://launcher.lan/r.woff2\")"),
+            "{fonts}"
+        );
+        assert!(fonts.contains("font-family: \"Alfa Slab One\";"), "{fonts}");
+        // Both stacks on the same file is one rule, not two.
+        let same = Theme::from_ini(&ini(&[
+            ("theme_font_family", "LAN"),
+            ("theme_font_src", "http://launcher.lan/lan.woff2"),
+            ("theme_heading_font_family", "LAN"),
+            ("theme_heading_font_src", "http://launcher.lan/lan.woff2"),
+        ]))
+        .expect("a theme");
+        assert_eq!(same.font_faces.len(), 1);
+        // The same name for two different files is not two fonts: both rules
+        // would claim the family and the later one would dress the whole UI
+        // in the headline face. The first file keeps the name.
+        let clash = Theme::from_ini(&ini(&[
+            ("theme_font_family", "LAN"),
+            ("theme_font_src", "http://launcher.lan/lan-text.woff2"),
+            ("theme_heading_font_family", "LAN"),
+            (
+                "theme_heading_font_src",
+                "http://launcher.lan/lan-display.woff2",
+            ),
+        ]))
+        .expect("a theme");
+        assert_eq!(clash.font_faces.len(), 1);
+        assert_eq!(
+            clash.font_faces[0].src,
+            "http://launcher.lan/lan-text.woff2"
+        );
+        // A heading file without a heading family has no family to attach to
+        // and must not silently borrow the body one.
+        let orphan = Theme::from_ini(&ini(&[
+            ("theme_font_family", "LAN"),
+            ("theme_heading_font_src", "http://launcher.lan/a.woff2"),
+        ]))
+        .expect("a theme");
+        assert!(orphan.font_faces.is_empty());
+        // And a heading stack carrying a rule is dropped like the body one.
+        let bad = Theme::from_ini(&ini(&[
+            ("theme_heading_font_family", "Arial; } body { display: none"),
+            ("theme_primary", "#29b6f6"),
+        ]))
+        .expect("a theme");
+        assert_eq!(bad.heading_font_family, None);
     }
 
     #[test]

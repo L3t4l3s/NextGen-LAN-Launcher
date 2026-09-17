@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Themes können jetzt eine eigene Schrift für die Überschriften nennen (`headingFontFamily` in der
+  `theme.json`, `theme_heading_font_family` samt `theme_heading_font_src` in der `launcher.ini`).
+  Bisher gab es genau einen Schriftstapel für die ganze Oberfläche; die schwere Schrift, die eine
+  LANPage über ihre Überschriften legt, ließ sich damit gar nicht abbilden — als Textschrift wäre
+  sie unlesbar. Sie gilt für `h1`–`h3` und den Veranstaltungsnamen in der Kopfzeile; ohne den
+  Schlüssel bleibt alles bei der bisherigen Schrift.
 - Linux: Das weiße Fenster auf dem Steam Deck hatte einen Namen — WebKitGTK bricht mit
   „Could not create default EGL display: EGL_BAD_PARAMETER. Aborting…" ab, bevor irgendetwas
   gezeichnet wird. Mesa wählt die EGL-Plattform nach `WAYLAND_DISPLAY`, nimmt also Wayland,

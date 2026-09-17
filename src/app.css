@@ -80,6 +80,10 @@ h2,
 h3 {
   margin: 0 0 0.4em;
   line-height: 1.2;
+  /* A LANPage usually wears a display face on its headlines and a readable
+     one everywhere else; `headingFontFamily` is that face, and without it the
+     headings stay on the body font. */
+  font-family: var(--font-family-heading, var(--font-family));
 }
 h1 {
   font-size: 1.7rem;

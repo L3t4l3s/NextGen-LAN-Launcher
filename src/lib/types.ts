@@ -176,6 +176,8 @@ export interface Theme {
   backgroundOverlay?: string | null;
   radius: number;
   fontFamily: string | null;
+  /** Font stack of the headings; falls back to `fontFamily`. */
+  headingFontFamily?: string | null;
   /** Font files of the event; the launcher writes the @font-face rules itself. */
   fontFaces?: FontFace[];
   icons: Record<string, string>;

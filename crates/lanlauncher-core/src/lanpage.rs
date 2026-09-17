@@ -242,6 +242,7 @@ pub fn looks_like_theme(body: &str) -> bool {
         "backgroundImage",
         "backgroundOverlay",
         "fontFamily",
+        "headingFontFamily",
         "fontFaces",
         "icons",
     ]

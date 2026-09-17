@@ -29,6 +29,7 @@ export const defaultTheme: Theme = {
   backgroundOverlay: null,
   radius: 12,
   fontFamily: null,
+  headingFontFamily: null,
   fontFaces: [],
   icons: {},
   legacyCss: null,
@@ -226,8 +227,16 @@ export function applyTheme(theme: Theme) {
   root.style.setProperty("--color-success-text", readableOn(merged.colors.success));
   root.style.setProperty("--color-warning-text", readableOn(merged.colors.warning));
   root.style.setProperty("--radius", `${Math.min(48, Math.max(0, merged.radius))}px`);
-  if (merged.fontFamily) root.style.setProperty("--font-family", merged.fontFamily.replace(/[;{}<>]/g, ""));
-  else root.style.removeProperty("--font-family");
+  // A stack ends up in a declaration of its own, so what could close it goes.
+  // The headings fall back to the body font in CSS, so leaving the property
+  // unset is how a theme without a headline face keeps looking as it did.
+  for (const [cssVar, stack] of [
+    ["--font-family", merged.fontFamily],
+    ["--font-family-heading", merged.headingFontFamily],
+  ] as const) {
+    if (stack) root.style.setProperty(cssVar, stack.replace(/[;{}<>]/g, ""));
+    else root.style.removeProperty(cssVar);
+  }
   root.dataset.themeMode = merged.mode;
   const hasImage = !!merged.backgroundImage && /^(https?:\/\/|data:image\/)/.test(merged.backgroundImage);
   if (hasImage) {

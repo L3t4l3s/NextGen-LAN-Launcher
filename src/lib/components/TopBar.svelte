@@ -67,6 +67,12 @@
     flex-direction: column;
     line-height: 1.15;
   }
+  /* The event's name is the launcher's headline, so it wears the headline
+     font of the theme where there is one. The launcher's own name below it
+     stays on the body font — two display lines in a 60px bar is one too many. */
+  .titles strong {
+    font-family: var(--font-family-heading, var(--font-family));
+  }
   /* Everything in the bar follows the bar's own text colour; a theme that
      names `headerText` must not leave the tabs in the body's colour. */
   .titles small {
