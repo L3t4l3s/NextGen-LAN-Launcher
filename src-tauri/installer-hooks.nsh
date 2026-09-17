@@ -21,6 +21,17 @@
   ; It supervises the engine in a loop, so give the last tick time to pass
   ; before the engine itself is stopped.
   Sleep 1000
+  ; The engine identified by what it was started with, not by where it lives:
+  ; a Resilio that copied itself elsewhere still runs with our config path on
+  ; its command line. Two guards around that: never this PowerShell itself
+  ; (the pattern it looks for stands on its own command line, so without
+  ; `$$PID` it would stop itself and whatever came after it would keep
+  ; running), and only a sync engine by name — the identifier is also the
+  ; name of the data and log folders, so an editor with `launcher.log` open,
+  ; or a game script running from `…\run\`, matches the text as well.
+  nsExec::ExecToLog `powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $$_.ProcessId -ne $$PID -and ($$_.Name -like '*sync*' -or $$_.Name -like '*resilio*') -and $$_.CommandLine -like '*xyz.nextgen-lan.launcher*' } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"`
+  Pop $0
+  DetailPrint "Sync engine stop returned $0"
   ; Everything still running from the install folder, engine included, and
   ; anything that came back while we were stopping: up to ten seconds until
   ; the folder is free. Whatever is left would fail the whole install.

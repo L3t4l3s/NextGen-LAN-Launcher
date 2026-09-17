@@ -45,12 +45,25 @@ pub enum ShareState {
 pub struct ShareStatus {
     pub dir: PathBuf,
     pub state: ShareState,
+    /// What the engine counts as finished — for Resilio the bytes of the
+    /// files it has completed, so a share transferring one big package stays
+    /// at the size of the little `version.ini` beside it until the end. That
+    /// makes it a poor progress bar and a good answer to "may this be
+    /// verified yet".
     pub bytes_done: u64,
     pub bytes_total: u64,
-    /// Is `bytes_done` a figure the engine actually gave? The web UI answers
-    /// for some shares with a state and nothing else, and a fabricated zero
-    /// must not be read as "nothing has arrived".
+    /// What has arrived, finished or not: the engine's own figure, or the
+    /// bytes its peers report having sent where those are further along.
+    pub bytes_received: u64,
+    /// Is `bytes_received` a figure the engine actually gave? The web UI
+    /// answers for some shares with a state and nothing else, and a
+    /// fabricated zero must not be read as "nothing has arrived".
     pub bytes_known: bool,
+    /// Does `bytes_done` really mean "finished"? Only then does it answer
+    /// whether an archive may be verified. The web UI's percentage covers
+    /// the file in flight and cannot say, and where nobody can say, the disk
+    /// decides.
+    pub finished_known: bool,
     pub files_total: u64,
     pub peers: u32,
     pub download_bps: u64,
@@ -68,7 +81,7 @@ impl ShareStatus {
                 0.0
             }
         } else {
-            (self.bytes_done as f64 / self.bytes_total as f64).clamp(0.0, 1.0)
+            (self.bytes_received as f64 / self.bytes_total as f64).clamp(0.0, 1.0)
         }
     }
 }
@@ -284,7 +297,9 @@ mod tests {
             state: ShareState::Downloading,
             bytes_done: 0,
             bytes_total: 0,
+            bytes_received: 0,
             bytes_known: true,
+            finished_known: true,
             files_total: 0,
             peers,
             download_bps: down,

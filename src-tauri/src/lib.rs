@@ -153,16 +153,16 @@ impl SetupHook for AppSetupHook {
 
 /// What a failed setup was looking for, where that can be said for certain.
 ///
-/// ETI's scripts call helpers from the original launcher's installation
-/// (`%programfiles%\eti\lan launcher\unrar.exe`, `fnr.exe`). On a machine
-/// that never had it cmd answers "The system cannot find the path specified"
-/// and names nothing, and that is what the user was shown: an error nobody
-/// can act on. The script says which programs it wanted, so the missing ones
-/// are named instead.
+/// "The system cannot find the path specified" is what cmd answers and all it
+/// answers — an error nobody can act on. The script itself says what it
+/// reached for: a program inside the game's folder that the package did not
+/// bring (`cd local`, `"OpenAL\oalinst.exe"`), or a helper of the original
+/// launcher (`%programfiles%\eti\lan launcher\unrar.exe`) on a machine that
+/// never had it. Those are named instead.
 ///
 /// Only when the game's own script is what failed: the same batch registers
 /// the firewall rules first, and a `netsh` that a policy refused must not be
-/// reported as a missing helper. Where the transcript does not say which line
+/// reported as a missing file. Where the transcript does not say which line
 /// it was, the original code stands.
 fn explain_setup_failure(
     paths: &GamePaths,
@@ -176,20 +176,16 @@ fn explain_setup_failure(
     let Ok(script) = std::fs::read_to_string(&paths.setup_script) else {
         return code;
     };
-    let missing = lanlauncher_core::launch::windows::missing_tools(
+    let missing = lanlauncher_core::launch::windows::missing_paths(
         &script,
+        &paths.share_dir,
         &|name| std::env::var(name).ok(),
         &|path| path.exists(),
     );
     if missing.is_empty() {
         return code;
     }
-    let list = missing
-        .iter()
-        .map(|p| p.display().to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("msg.setup_tools_missing|{list}")
+    format!("msg.setup_paths_missing|{}", missing.join(", "))
 }
 
 /// Only the preview-video folders of the library are exposed to the WebView

@@ -103,6 +103,25 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   AppImage entfernt `without_appimage_paths` zusätzlich alle Pfade unter `$APPDIR`, sonst lädt das
   Spiel die Bibliotheken aus dem Abbild. `prefer_a_renderer_that_draws` läuft vor dem Log-Plugin:
   dort loggen bringt nichts, die `webview:`-Zeile beim Start sagt, was gilt.
+- **`size` von `get_folders`:** zählt nur *fertige* Dateien. Ein Spiel, dessen einziges großes
+  Paket noch lädt, meldet die acht Byte der `version.ini` daneben — für den ganzen Download.
+  `ShareStatus` trennt das deshalb: `bytes_done` ist die Zahl der Engine (fertige Dateien) und
+  entscheidet zusammen mit `finished_known`, ob geprüft werden darf; die Web-UI kann „fertig“ nicht
+  beantworten und setzt `finished_known = false`, dann entscheidet ihre Prozentzahl.
+  `bytes_received` aus den `download`-Zählern von `get_folder_peers` ist der Fortschritt. Die Zähler gelten pro
+  Engine-Sitzung und gelten nicht pro Übertragung, deshalb führt `resilio::Transfer` (privat, eine
+  Buchführung je Freigabe, Zähler je Gegenstelle) nur deren
+  *Zuwächse* (ein gefallener Zähler addiert nichts, eine neue Revision setzt zurück) und
+  `Tracker::high_water` hält die Anzeige je Quelle. Die Rate kommt aus `down_speed` der Engine und
+  gilt als Lebenszeichen, solange sie `Downloading` meldet (beim Indizieren meldet sie
+  Fantasieraten). Geprüft wird nur, was die Engine als fertig meldet — auch „Reparieren“ erzwingt
+  das nicht.
+- **Setup-Skripte lesen:** `launch::windows::missing_paths` folgt einem ETI-Skript wie cmd:
+  `set`-Variablen, `cd`/`pushd` (`%~dp0` = Spielordner), Programme relativ zum aktuellen Ordner,
+  bloße Namen über den `PATH` (sonst gilt `reg.exe` als fehlend), `md` angelegte Ordner, `if`/
+  `goto` machen das Arbeitsverzeichnis unbekannt. Einmalig gegen alle 32 `game_setup.cmd` aus dem
+  öffentlichen Repo eti-lan/LAN-Launcher laufen gelassen (nicht im Repo, das Prüfgerüst war ein
+  Wegwerf-Beispiel); im Test steht ein Skript, das deren Formen zusammenfasst.
 - **Vorbelegte Zieldatei:** Resilio legt die Datei sofort in voller Größe an und füllt sie dann.
   Der Ordner meldet also 85 GB, während acht Byte angekommen sind. Nur die Zahl der Engine taugt
   als Fortschritt, sobald sie die Freigabe eingelesen hat (`bytes_total` passt dann zur

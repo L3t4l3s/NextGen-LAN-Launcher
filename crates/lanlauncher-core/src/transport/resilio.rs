@@ -211,6 +211,14 @@ pub struct ResilioClient {
     /// Cleared once a build has refused `getversion`, so the probe does not
     /// pay for a request that will never work on this engine.
     gui_has_getversion: Arc<AtomicBool>,
+    /// What the peers' counters stood at when the share's current transfer
+    /// began, per folder. The counters are cumulative for the engine's
+    /// session and do not start again for a second transfer of the same
+    /// share, so an update would otherwise report the first download's bytes
+    /// as its own.
+    transfers: Arc<Mutex<HashMap<String, Transfer>>>,
+    /// Held for the length of a folder reading, see [`ResilioClient::folders`].
+    reading: Arc<tokio::sync::Mutex<()>>,
     /// Last folder snapshot and when it was taken. A snapshot costs one
     /// `get_folders` plus one `get_folder_peers` per share, and three loops
     /// (install tick, rates, health) ask for it independently; within this
@@ -242,6 +250,8 @@ impl ResilioClient {
                 .expect("reqwest client"),
             gui_token: Arc::new(Mutex::new(None)),
             gui_has_getversion: Arc::new(AtomicBool::new(true)),
+            transfers: Arc::new(Mutex::new(HashMap::new())),
+            reading: Arc::new(tokio::sync::Mutex::new(())),
             folder_cache: Arc::new(Mutex::new(None)),
         }
     }
@@ -447,6 +457,16 @@ impl ResilioClient {
     }
 
     pub async fn remove_folder(&self, dir: &Path, key: Option<&ShareKey>) -> Result<()> {
+        // Whatever its peers had sent belongs to a download that is over: a
+        // share added again starts from nothing, not from those bytes.
+        if let Ok(mut transfers) = self.transfers.lock() {
+            // Not removed: the engine's counters survive a share being taken
+            // away and added again, so the bookkeeping has to as well — only
+            // what it counted belongs to the download that was cancelled.
+            if let Some(transfer) = transfers.get_mut(&crate::transport::normalise_dir(dir)) {
+                transfer.start_over();
+            }
+        }
         let dir_s = dir.to_string_lossy().to_string();
         if self.has_api_key() {
             let secret = key.map(|k| k.expose().to_string()).unwrap_or_default();
@@ -473,22 +493,50 @@ impl ResilioClient {
         Ok(v.as_array().cloned().unwrap_or_default())
     }
 
+    /// What has arrived of a share.
+    ///
+    /// Where the engine answered, the peers' counters move this share's
+    /// bookkeeping on; where it did not, what that bookkeeping already holds
+    /// stands, because dropping back to the finished files would put a
+    /// running download at "8 B of 150.9 GB" again for one tick.
+    fn received(&self, dir: &Path, status: &ShareStatus, samples: Option<&[PeerSample]>) -> u64 {
+        let Ok(mut transfers) = self.transfers.lock() else {
+            return status.bytes_done;
+        };
+        let transfer = transfers
+            .entry(crate::transport::normalise_dir(dir))
+            .or_default();
+        match samples {
+            Some(samples) => transfer.step(status.bytes_total, status.bytes_done, samples),
+            None => transfer.arrived(status.bytes_total, status.bytes_done),
+        }
+    }
+
     /// The folder snapshot, at most `max_age` old. Everything that only wants
     /// to display the state uses this; [`ResilioClient::folders`] itself is
     /// for the places that must see the engine as it is right now.
     pub async fn folders_cached(&self, max_age: Duration) -> Result<HashMap<PathBuf, ShareStatus>> {
-        if let Ok(cache) = self.folder_cache.lock() {
-            if let Some((at, folders)) = cache.as_ref() {
-                if at.elapsed() <= max_age {
-                    return Ok(folders.clone());
-                }
-            }
+        if let Some(folders) = self.cached(max_age) {
+            return Ok(folders);
         }
-        let folders = self.folders().await?;
+        let _one_at_a_time = self.reading.lock().await;
+        // Someone else may have been reading while this call waited for its
+        // turn; that answer is as fresh as the one this would fetch.
+        if let Some(folders) = self.cached(max_age) {
+            return Ok(folders);
+        }
+        let folders = self.read_folders().await?;
         if let Ok(mut cache) = self.folder_cache.lock() {
             *cache = Some((Instant::now(), folders.clone()));
         }
         Ok(folders)
+    }
+
+    /// The snapshot if it is younger than `max_age`.
+    fn cached(&self, max_age: Duration) -> Option<HashMap<PathBuf, ShareStatus>> {
+        let cache = self.folder_cache.lock().ok()?;
+        let (at, folders) = cache.as_ref()?;
+        (at.elapsed() <= max_age).then(|| folders.clone())
     }
 
     /// Forget the snapshot: after adding, removing or pausing a share the
@@ -501,6 +549,11 @@ impl ResilioClient {
 
     /// The folder list without the peer count: one request, whatever the
     /// number of shares. Used for the rates in the status bar.
+    ///
+    /// Without them there is nothing to count what has arrived with, so
+    /// `bytes_received` is the coarse figure of the finished files. That is
+    /// enough for what this listing is for and wrong for a progress bar, so
+    /// the install tick takes [`ResilioClient::folders_cached`] instead.
     pub async fn folders_without_peers(&self) -> Result<HashMap<PathBuf, ShareStatus>> {
         if !self.has_api_key() {
             // The web UI answers everything in one document, and that
@@ -526,7 +579,18 @@ impl ResilioClient {
     /// All folders known to the engine, keyed by directory. One request plus
     /// one per share for the peer counts, so callers that only display the
     /// state take [`ResilioClient::folders_cached`] instead.
+    ///
+    /// One reader at a time: three loops ask independently, and the counters
+    /// are read as differences from the reading before. Two calls in flight
+    /// together could deliver their readings out of order, and the same bytes
+    /// would be counted twice.
     pub async fn folders(&self) -> Result<HashMap<PathBuf, ShareStatus>> {
+        let _one_at_a_time = self.reading.lock().await;
+        self.read_folders().await
+    }
+
+    /// The reading itself; the caller holds [`ResilioClient::reading`].
+    async fn read_folders(&self) -> Result<HashMap<PathBuf, ShareStatus>> {
         if self.has_api_key() {
             let v = self.api("get_folders", &[]).await?;
             let mut out = HashMap::new();
@@ -534,7 +598,7 @@ impl ResilioClient {
                 let dir = crate::paths::strip_verbatim(PathBuf::from(
                     f.get("dir").and_then(Value::as_str).unwrap_or(""),
                 ));
-                let peers = match self
+                let answered = self
                     .api(
                         "get_folder_peers",
                         &[(
@@ -542,17 +606,27 @@ impl ResilioClient {
                             f.get("secret").and_then(Value::as_str).unwrap_or(""),
                         )],
                     )
-                    .await
-                {
-                    Ok(p) => p.as_array().map(|a| a.len() as u32).unwrap_or(0),
+                    .await;
+                // How many the engine listed, and how many of those carry
+                // counters we can read: a peer entry this parser does not
+                // recognise is still a peer, and reporting none of them turns
+                // a stalled download into "no sources".
+                let mut listed = 0;
+                let samples: Option<Vec<PeerSample>> = match answered {
+                    Ok(p) => {
+                        let entries = p.as_array().cloned().unwrap_or_default();
+                        listed = entries.len() as u32;
+                        Some(entries.iter().filter_map(parse_api_peer).collect())
+                    }
                     // Without a peer count a download looks sourceless in the
                     // UI, so the reason belongs in the log.
                     Err(e) => {
                         log::debug!("no peer count for {}: {e}", dir.display());
-                        0
+                        None
                     }
                 };
-                let status = parse_api_folder(&f, peers);
+                let mut status = parse_api_folder(&f, listed);
+                status.bytes_received = self.received(&dir, &status, samples.as_deref());
                 out.insert(dir, status);
             }
             Ok(out)
@@ -603,7 +677,12 @@ pub fn parse_api_folder(f: &Value, peers: u32) -> ShareStatus {
     // finished share from one that has just started; saying "complete" then
     // would send a half-downloaded archive to the CRC check.
     let announced = f.get("total_size").and_then(as_u64_lenient);
-    let total = announced.unwrap_or(done).max(done);
+    // What the engine says the share holds, and 0 where it does not say: an
+    // older build without `total_size` must not look as if the bytes it has
+    // *are* the share, or every file it finishes reads as the share growing
+    // and being replaced.
+    let total = announced.unwrap_or(0);
+    let for_state = announced.unwrap_or(done).max(done);
     let files = number("total_files").max(number("files"));
     let error = f.get("error").and_then(Value::as_i64).unwrap_or(0);
     let indexing = f.get("indexing").and_then(Value::as_i64).unwrap_or(0) != 0;
@@ -623,7 +702,7 @@ pub fn parse_api_folder(f: &Value, peers: u32) -> ShareStatus {
         // share contains, the few files it knows about can look complete on
         // their own, and the CRC check would then fail on a partial archive.
         ShareState::Complete
-    } else if total == 0 {
+    } else if for_state == 0 {
         // The share is registered but no peer has announced its contents yet.
         ShareState::Pending
     } else {
@@ -638,13 +717,122 @@ pub fn parse_api_folder(f: &Value, peers: u32) -> ShareStatus {
         state,
         bytes_done: done,
         bytes_total: total,
-        // `size` is the engine's own count of what this PC holds.
+        // Without the peers' counters (this is one request earlier) the
+        // finished files are all there is to go by.
+        bytes_received: done,
+        // `size` is the engine's own count of finished files.
         bytes_known: f.get("size").is_some(),
+        finished_known: f.get("size").is_some(),
         files_total: files,
         peers,
         download_bps: number("down_speed"),
         upload_bps: number("up_speed"),
         error: (error != 0).then(|| format!("resilio error {error}")),
+    }
+}
+
+/// What one share's peers have sent during the transfer that is running now.
+///
+/// Their `download` counters are cumulative for the engine's *session*: they
+/// begin again when it restarts or a peer drops out, they do not begin again
+/// for a second transfer of the same share, and no reading of them on its own
+/// says how much of this package is here. Their *increases* do, so those are
+/// what is added up.
+#[derive(Debug, Clone, Default)]
+struct Transfer {
+    seen: bool,
+    total: u64,
+    finished: u64,
+    /// The last counter of each peer, by its id. Per peer, because a peer
+    /// that drops out of the list and comes back brings its whole session
+    /// total with it: against one sum over all of them that reads as tens of
+    /// gigabytes arriving at once.
+    last: HashMap<String, u64>,
+    counted: u64,
+    /// This share has been transferred before in this engine session, so the
+    /// files it calls finished are the package from before.
+    restarted: bool,
+}
+
+impl Transfer {
+    /// One reading of the counters; returns what has arrived.
+    fn step(&mut self, total: u64, finished: u64, peers: &[PeerSample]) -> u64 {
+        // A share starts over when it loses ground — the package it had is
+        // replaced, so the finished files or the size fall back — or when a
+        // share that *was* complete is given another size: that is an update,
+        // and Resilio keeps the old files until the new package is whole, so
+        // nothing falls at all. A total that merely grows while the share is
+        // still incomplete is an engine learning the size (one without
+        // `total_size` answers with what it has), and resetting on that would
+        // keep the count at nothing for ever.
+        let was_complete = self.total > 0 && self.finished >= self.total;
+        let started_over = self.seen
+            && (finished < self.finished
+                || total < self.total
+                || (was_complete && total != self.total));
+        if started_over {
+            self.start_over();
+        }
+        let mut arrived = 0u64;
+        for peer in peers {
+            match self.last.get_mut(&peer.id) {
+                // Only what came in since this peer's own last reading. A
+                // counter that fell — a reconnect — adds nothing and carries
+                // on from the new figure.
+                Some(before) => {
+                    if !started_over {
+                        arrived += peer.down.saturating_sub(*before);
+                    }
+                    *before = peer.down;
+                }
+                // A peer not counted yet. What it has sent arrived while it
+                // was connected to us, so it counts — unless this transfer
+                // has just started over, where its counter is the one from
+                // the transfer before.
+                None => {
+                    if !started_over {
+                        arrived += peer.down;
+                    }
+                    self.last.insert(peer.id.clone(), peer.down);
+                }
+            }
+        }
+        self.counted += arrived;
+        self.seen = true;
+        self.total = total;
+        self.finished = finished;
+        self.arrived(total, finished)
+    }
+
+    /// This share is being transferred again: what the counters hold belongs
+    /// to the transfer before it. Their marks stay — the counters carry on,
+    /// so what a peer sends *next* is measured from where it stands now, and
+    /// a peer that is not in this reading keeps the mark it had rather than
+    /// coming back as a new one with its whole session on the counter.
+    fn start_over(&mut self) {
+        self.counted = 0;
+        self.restarted = true;
+    }
+
+    /// The figure without a fresh reading.
+    ///
+    /// Once a share has started over, only what the peers sent since counts:
+    /// during an update the finished files are still the *old* package, and
+    /// taking the larger of the two would leave the bar at 100 % for the
+    /// whole download. On a first download the two are read together — the
+    /// finished files are the little `version.ini`, and before the first
+    /// reading of the counters they are all there is.
+    fn arrived(&self, total: u64, finished: u64) -> u64 {
+        let arrived = if self.restarted {
+            self.counted
+        } else {
+            self.counted.max(finished)
+        };
+        if total > 0 {
+            arrived.min(total)
+        } else {
+            arrived
+        }
     }
 }
 
@@ -814,33 +1002,41 @@ pub fn parse_gui_folders(v: &Value) -> HashMap<PathBuf, ShareStatus> {
         // state and nothing countable, and a zero of ours read as "nothing
         // has arrived" would stop a finished download from ever being
         // verified.
-        let (state, done, known) = if paused {
-            (ShareState::Paused, 0, false)
+        // Four values: the state, what is *finished* (which decides whether
+        // an archive may be verified — below 100 % nothing is), what has
+        // arrived (the web UI's own percentage covers the file in flight),
+        // and whether either is a figure from the engine at all.
+        let (state, finished, received, known) = if paused {
+            (ShareState::Paused, 0, 0, false)
         } else if error.is_some() {
-            (ShareState::Error, 0, false)
+            (ShareState::Error, 0, 0, false)
         } else if status_text.contains("index") {
-            (ShareState::Indexing, 0, false)
+            (ShareState::Indexing, 0, 0, false)
         } else if let Some(p) = progress {
             if p >= 100 {
-                (ShareState::Complete, size, true)
+                (ShareState::Complete, size, size, true)
             } else {
-                (ShareState::Downloading, size * p / 100, true)
+                (ShareState::Downloading, 0, size * p / 100, true)
             }
         } else if status_text.contains("synced") || status_text.contains("up to date") {
-            (ShareState::Complete, size, true)
+            (ShareState::Complete, size, size, true)
         } else if size == 0 {
-            (ShareState::Pending, 0, false)
+            (ShareState::Pending, 0, 0, false)
         } else {
-            (ShareState::Downloading, 0, false)
+            (ShareState::Downloading, 0, 0, false)
         };
         out.insert(
             PathBuf::from(&path),
             ShareStatus {
                 dir: PathBuf::from(&path),
                 state,
-                bytes_done: done,
+                bytes_done: finished,
                 bytes_total: size,
+                bytes_received: received,
                 bytes_known: known,
+                // Its percentage covers the file in flight, so below 100 %
+                // the web UI has no answer to "how much is finished".
+                finished_known: state == ShareState::Complete,
                 files_total: files,
                 peers,
                 download_bps: f.get("down").and_then(as_u64_lenient).unwrap_or(0),
@@ -2024,7 +2220,9 @@ mod tests {
         assert_eq!(q.bytes_total, 910_000_000);
         let c = &f[Path::new("/lan/cod4")];
         assert_eq!(c.state, ShareState::Downloading);
-        assert_eq!(c.bytes_done, 4950);
+        // 99 % arrived, nothing finished: the last percent is the file that
+        // would be verified.
+        assert_eq!((c.bytes_done, c.bytes_received), (0, 4950));
         assert_eq!(f[Path::new("/lan/paused")].state, ShareState::Paused);
         assert_eq!(f[Path::new("/lan/idx")].state, ShareState::Indexing);
         // A share the UI says nothing countable about: the zero below is
@@ -2033,7 +2231,13 @@ mod tests {
         let quiet = &f[Path::new("/lan/quiet")];
         assert_eq!(quiet.state, ShareState::Downloading);
         assert_eq!((quiet.bytes_done, quiet.bytes_known), (0, false));
-        assert!(q.bytes_known && c.bytes_known, "these two were counted");
+        // The finished share's figure is one the engine gave; the one at
+        // 99 % has a progress bar but no answer to "how much is finished".
+        assert!(q.finished_known, "synced: its size is what it holds");
+        assert!(
+            c.bytes_known && !c.finished_known,
+            "99 % is progress, and no answer to what is finished"
+        );
     }
 
     #[test]
@@ -2155,6 +2359,90 @@ mod tests {
             .unwrap();
         let f = c.folders().await.unwrap();
         assert_eq!(f[Path::new("/lan/quake3")].peers, 1);
+    }
+
+    #[tokio::test]
+    async fn a_download_counts_what_the_peers_sent_not_the_finished_files() {
+        // `size` is 8 — the `version.ini` beside the package — while 5 GB of
+        // the package itself have arrived. Reading `size` as the progress
+        // showed "8 B of 150.9 GB" at full speed for hours.
+        let base = mock_server(vec![
+            ("method=get_folders", r#"[{"dir":"/lan/siege","secret":"BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","size":8,"total_size":150900000000,"files":1,"total_files":2,"error":0,"indexing":0,"down_speed":229991773}]"#),
+            ("method=get_folder_peers", r#"[{"id":"a","name":"sync-server-2","download":3000000000,"upload":0},{"id":"b","name":"pc-2","download":2000000000,"upload":17}]"#),
+        ])
+        .await;
+        let c = ResilioClient::new(base, "u", "p", Some("KEY".into()));
+        let f = c.folders().await.unwrap();
+        let siege = &f[Path::new("/lan/siege")];
+        assert_eq!(siege.bytes_received, 5_000_000_000, "what the peers sent");
+        assert_eq!(siege.bytes_done, 8, "what the engine calls finished");
+        assert_eq!(siege.bytes_total, 150_900_000_000);
+        assert_eq!(siege.peers, 2);
+        assert_eq!(siege.download_bps, 229_991_773);
+        // An engine without `total_size` says what it holds and nothing
+        // about the share: "unknown", not "this is all of it" — otherwise
+        // every finished file reads as the share changing size.
+        let older = parse_api_folder(
+            &json!({"dir":"/lan/g","size":500,"files":1,"total_files":2,"error":0,"indexing":0}),
+            1,
+        );
+        assert_eq!((older.bytes_done, older.bytes_total), (500, 0));
+        assert_eq!(older.state, ShareState::Downloading);
+
+        // The web UI answers with a percentage over the whole share, the
+        // file in flight included: that is progress, and no answer to what is
+        // finished — so the disk decides when to verify, as it did before
+        // this launcher ever asked the engine.
+        let ui = parse_gui_folders(&json!({"folders":[
+            {"name":"/lan/siege","size":"150900000000","files":2,"progress":1,"peers":[{}]}
+        ]}));
+        let siege_ui = &ui[Path::new("/lan/siege")];
+        assert_eq!(siege_ui.bytes_received, 1_509_000_000);
+        assert!(siege_ui.bytes_known && !siege_ui.finished_known);
+
+        // The bookkeeping behind it, on the readings that break a simpler
+        // rule: a counter that starts again, a share fetched a second time,
+        // and a tick without an answer from the engine.
+        let peer = |id: &str, down: u64| PeerSample {
+            id: id.to_string(),
+            peer: SharePeer {
+                name: id.to_string(),
+                connection: None,
+                synced: false,
+                download_bps: 0,
+                upload_bps: 0,
+            },
+            down,
+            up: 0,
+        };
+        let mut t = Transfer::default();
+        // First sight: the engine's session began with this download.
+        assert_eq!(t.step(1000, 0, &[peer("a", 300)]), 300);
+        assert_eq!(t.step(1000, 0, &[peer("a", 500)]), 500);
+        // A second peer joins with a counter of its own.
+        assert_eq!(t.step(1000, 0, &[peer("a", 500), peer("b", 100)]), 600);
+        // One drops out of the list and comes back with its total: only what
+        // it sent since counts, not its whole session again.
+        assert_eq!(t.step(1000, 0, &[peer("a", 600)]), 700);
+        assert_eq!(t.step(1000, 0, &[peer("a", 600), peer("b", 150)]), 750);
+        // A peer reconnects and starts at zero: nothing un-arrives.
+        assert_eq!(t.step(1000, 0, &[peer("a", 0), peer("b", 150)]), 750);
+        assert_eq!(t.step(1000, 0, &[peer("a", 50), peer("b", 150)]), 800);
+        // Finished, and nothing above the share's own size.
+        assert_eq!(t.step(1000, 1000, &[peer("a", 400)]), 1000);
+        // An update: the share was complete and is given another size, and
+        // Resilio keeps the old files until the new package is whole — so
+        // nothing falls back, and that is the only sign that a second
+        // transfer has begun. The counters carry on, this transfer does not,
+        // and the old package's bytes are not counted as the new one's.
+        assert_eq!(t.step(2000, 1000, &[peer("a", 420)]), 0);
+        assert_eq!(t.step(2000, 1000, &[peer("a", 450)]), 30);
+        assert_eq!(t.step(2000, 1000, &[peer("a", 500)]), 80);
+        // A tick the engine did not answer keeps the figure.
+        assert_eq!(t.arrived(2000, 1000), 80);
+        // A share whose size the engine does not know yet is not capped.
+        let mut unknown = Transfer::default();
+        assert_eq!(unknown.step(0, 0, &[peer("a", 2000)]), 2000);
     }
 
     #[tokio::test]
