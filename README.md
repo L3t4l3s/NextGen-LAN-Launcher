@@ -71,6 +71,12 @@ chmod +x nextgen/*.AppImage
 ./nextgen/NextGen\ LAN\ Launcher_*.AppImage
 ```
 
+If the window opens with the right title but stays white, the webview's DMA-BUF renderer is the
+reason (WebKitGTK 2.42+ against several Linux drivers). The launcher switches it off for itself;
+the log's second line says whether a build does. On one that does not, start it as
+`WEBKIT_DISABLE_DMABUF_RENDERER=1 ./NextGen*.AppImage`. More levers in
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#a-white-window-on-linux).
+
 If Ark shows the zip but extracts nothing, `unzip` in Konsole does the job — GitHub's artifact zips
 carry no folders, and Ark's "open" view is not an extraction. Should the AppImage complain about
 FUSE, start it as `./nextgen/NextGen*.AppImage --appimage-extract-and-run`. For a permanent entry, move the
@@ -136,6 +142,10 @@ again.
 
 ## Open items
 
+- **A white window on SteamOS:** the launcher now turns the webview's DMA-BUF renderer off on
+  Linux, which is the documented cause of a window that opens with the right title and stays
+  blank. Verified only in that the app still starts on an ordinary Linux desktop; whether it is
+  what the Steam Deck needed has to be tried there.
 - **Icon after an upgrade:** the executable carries the right icon (the preview pane proves it),
   but the shell caches icons per path. The NSIS hook calling `SHChangeNotify` is meant to clear
   that on upgrade; whether it does for Explorer, the desktop shortcut and a pinned taskbar entry

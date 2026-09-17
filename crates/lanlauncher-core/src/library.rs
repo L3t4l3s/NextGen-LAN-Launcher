@@ -154,6 +154,10 @@ impl Library {
     /// Root to use for a new install: where the game already is, else the
     /// default root when `needed_bytes` fit there, else the root with the
     /// most free space that fits, else the default root anyway.
+    ///
+    /// Enumerates the volumes, so this belongs on the install path, not in a
+    /// loop: everything that only wants to know where a game *is* takes
+    /// [`Library::game_paths`].
     pub fn choose_root_for(&self, game_id: &str, needed_bytes: u64) -> Option<&LibraryRoot> {
         // A game that is already somewhere needs no volume enumeration at
         // all; only a new one pays for the snapshot, and then once for every

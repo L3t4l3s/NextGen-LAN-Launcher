@@ -18,10 +18,37 @@ the background.
 | Status bar shows "N Hinweise" but Downloads looks empty | Playable games with a warning were filtered out. | Downloads has a "Hinweise" section listing playable games with a problem card. |
 | No covers | `eti_launcher/update/assets.eti` missing, unreadable, or not a (gzip) tar. | Extraction result is logged (`covers: …`); Diagnose shows `catalog.covers_missing` when the file exists but the cache is empty. |
 | Game starts but LAN browser empty (Mac) | Bonjour service inside the bottle, firewall. | See manifest notes (e.g. wc3). |
+| Window opens with the right title but stays white (Linux, e.g. SteamOS) | WebKitGTK 2.42+ draws through DMA-BUF, which several drivers answer with nothing. | The launcher sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` for itself before the window is created; the log's second line says so. See below when it is still white. |
 
 Logs: **Diagnose → Log-Ordner öffnen**. Windows: `%LOCALAPPDATA%\xyz.nextgen-lan.launcher\logs\launcher.log`
 (not the Roaming folder that holds `settings.json`), macOS: `~/Library/Logs/xyz.nextgen-lan.launcher/`,
 Linux: `~/.local/share/xyz.nextgen-lan.launcher/logs/`. The first line names version and commit.
+
+## A white window on Linux
+
+The window appears, the title is right, the content never comes. That is the webview, not the
+launcher: WebKitGTK 2.42 and newer render through DMA-BUF, and several Linux graphics stacks
+(SteamOS on the Steam Deck among them) show nothing at all through that path.
+
+The launcher sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` for itself at start. Whether a given build
+does is in the log's second line (`webview: WEBKIT_DISABLE_DMABUF_RENDERER=…`); on a build from
+before that, or to try it by hand, start the AppImage from a terminal:
+
+```bash
+WEBKIT_DISABLE_DMABUF_RENDERER=1 ./NextGen\ LAN\ Launcher_*.AppImage
+```
+
+Still white? The next levers, one at a time:
+
+```bash
+WEBKIT_DISABLE_COMPOSITING_MODE=1 ./NextGen*.AppImage   # older WebKitGTK, same symptom
+GDK_BACKEND=x11 ./NextGen*.AppImage                     # on a Wayland session
+./NextGen*.AppImage --appimage-extract-and-run          # when FUSE is the problem
+```
+
+The log's second line records which renderer setting was in force and whether the session is X11
+or Wayland, so a report of a white window can say which combination it was. To keep the
+accelerated path on a machine where it works, set `WEBKIT_DISABLE_DMABUF_RENDERER=0`.
 
 ## Folder mode
 

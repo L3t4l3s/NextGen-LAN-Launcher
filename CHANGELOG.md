@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Linux: Das Fenster blieb auf SteamOS (Steam Deck) weiß — WebKitGTK 2.42+ zeichnet über DMA-BUF,
+  was etliche Grafikstacks mit einem leeren Fenster beantworten. Der Launcher schaltet den
+  DMA-BUF-Renderer für sich ab (`WEBKIT_DISABLE_DMABUF_RENDERER=1`, außer der Benutzer setzt den
+  Wert selbst) und schreibt in die zweite Logzeile, welche Einstellung galt und ob die Sitzung X11
+  oder Wayland ist.
+
 - Ein Download zählt jetzt alles, was in der Freigabe liegt, nicht nur die oberste Ebene: ein Paket,
   das als Ordner ankommt, stand sonst bei „1,6 KB von 115,5 GB", während der Sync mit voller Rate
   lief. Solange die Engine eine Rate meldet, gilt ein Download außerdem nie als hängend — ein

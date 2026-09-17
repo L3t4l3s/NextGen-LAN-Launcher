@@ -470,13 +470,14 @@ pub(crate) fn build_manager(
         transport,
         catalog,
         move |game| {
-            // The same rule the install command follows, so "where it is
-            // downloading" and "where the launcher looks" cannot disagree:
-            // where the game already is, else a root with room for it.
+            // Cheap on purpose: this runs for every tracked game on every
+            // tick, and asking the volumes for their free space per game per
+            // tick is what `game_paths_for` is for — the install command asks
+            // once and creates the folder, and that is what is found here.
             lib_for_paths
                 .read()
                 .ok()
-                .and_then(|l| l.game_paths_for(&game.id, game.size_bytes.saturating_mul(2)))
+                .and_then(|l| l.game_paths(&game.id))
         },
         move |game, paths| manifests.resolve_for(&game.id, paths),
         Arc::new(AppSetupHook {
@@ -487,7 +488,29 @@ pub(crate) fn build_manager(
     Arc::new(manager)
 }
 
+/// WebKitGTK 2.42 and newer draw through DMA-BUF. Several Linux graphics
+/// stacks answer that with nothing at all: the window appears, with the right
+/// title, and stays white — seen on SteamOS on a Steam Deck, and reported for
+/// the same combination by every other GTK webview app.
+///
+/// Turning the DMA-BUF renderer off is the fix, and it is applied everywhere
+/// on Linux rather than guessed per machine: a white window makes the
+/// launcher useless, while the cost is accelerated compositing — noticeable
+/// at most on the preview video of a game's detail page. Whoever knows their
+/// machine draws fine sets `WEBKIT_DISABLE_DMABUF_RENDERER=0` and keeps it.
+///
+/// Called first thing in [`run`], before the webview exists and while the
+/// process is still single-threaded.
+#[cfg(target_os = "linux")]
+fn prefer_a_renderer_that_draws() {
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+}
+
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    prefer_a_renderer_that_draws();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -516,6 +539,14 @@ pub fn run() {
                 "NextGen LAN Launcher {} starting; log dir {}",
                 app_version(),
                 dirs.logs.display()
+            );
+            // A white window on Linux is almost always the webview's DMA-BUF
+            // renderer; the log should say which way this run went.
+            #[cfg(target_os = "linux")]
+            log::info!(
+                "webview: WEBKIT_DISABLE_DMABUF_RENDERER={}, session {}",
+                std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").unwrap_or_else(|_| "unset".into()),
+                std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".into())
             );
             for d in [&dirs.config, &dirs.data, &dirs.cache] {
                 let _ = std::fs::create_dir_all(d);
