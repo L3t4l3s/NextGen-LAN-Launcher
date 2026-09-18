@@ -85,10 +85,15 @@ class AppStore {
       // startup load finishes, which may be before the first get_games.
       await listen("install-status", (payload) => {
         const list = payload as GameStatus[];
+        // Root selection may have moved an unfinished download to another
+        // drive. Refresh metadata on installation so the displayed path is
+        // the actual installed location, not the pre-download suggestion.
+        const newlyInstalled = list.some((s) => s.installedRevision && s.installedRevision !== this.statuses[s.gameId]?.installedRevision);
         const next: Record<string, GameStatus> = {};
         for (const s of list) next[s.gameId] = s;
         this.statuses = next;
         this.recordSpeeds(list);
+        if (newlyInstalled) void this.reloadGames().catch(() => {});
       });
       await listen("transport-health", (payload) => {
         this.health = payload as TransportHealth;

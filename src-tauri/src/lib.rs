@@ -243,7 +243,7 @@ pub(crate) fn demo_catalog() -> Catalog {
     Catalog::from_connection(&conn).expect("demo catalog")
 }
 
-/// Load the catalog from the default library root, if present.
+/// Load the first readable catalog across all library roots, default first.
 /// `extract_covers` re-unpacks `assets.eti` into the cover cache; skip it when
 /// only `game.db` changed.
 pub(crate) fn load_catalog_from_library(
@@ -251,9 +251,7 @@ pub(crate) fn load_catalog_from_library(
     dirs: &AppDirs,
     extract_covers: bool,
 ) -> Option<Catalog> {
-    let root = library.default_root()?;
-    let db = root.path.join(lanlauncher_core::paths::CATALOG_RELATIVE);
-    let catalog = Catalog::load(&db).ok()?;
+    let (root, catalog) = library.load_catalog()?;
     // Both lists exist only in the LAN's catalog; log them so a report from a
     // test PC shows what the share offers (the UI for tools is not built yet).
     if !catalog.tools.is_empty() {
@@ -303,24 +301,33 @@ pub(crate) fn load_catalog_from_library(
 
 /// (size, mtime) of a file, `None` when absent.
 pub(crate) type Stamp = Option<(u64, Option<std::time::SystemTime>)>;
-/// Stamps of `game.db` and `assets.eti` under the default root.
-pub(crate) type CatalogSig = (Stamp, Stamp);
+/// Paths and stamps across all roots: a database arriving on a secondary
+/// drive must wake the watcher too, even when its size/mtime match another.
+pub(crate) type CatalogSig = (Vec<(PathBuf, Stamp)>, Vec<(PathBuf, Stamp)>);
 
-pub(crate) fn catalog_signature(root: Option<&std::path::Path>) -> CatalogSig {
-    let stamp = |p: PathBuf| -> Stamp {
+pub(crate) fn catalog_signature(library: &Library) -> CatalogSig {
+    let stamp = |p: &std::path::Path| -> Stamp {
         let meta = std::fs::metadata(p).ok()?;
         Some((meta.len(), meta.modified().ok()))
     };
-    match root {
-        Some(r) => (
-            stamp(r.join(lanlauncher_core::paths::CATALOG_RELATIVE)),
-            stamp(r.join(lanlauncher_core::paths::ASSETS_RELATIVE)),
-        ),
-        None => (None, None),
-    }
+    let collect = |relative: &str| {
+        library
+            .roots
+            .iter()
+            .map(|r| {
+                let path = r.path.join(relative);
+                let signature = stamp(&path);
+                (path, signature)
+            })
+            .collect()
+    };
+    (
+        collect(lanlauncher_core::paths::CATALOG_RELATIVE),
+        collect(lanlauncher_core::paths::ASSETS_RELATIVE),
+    )
 }
 
-/// Re-read the catalog from the default library root and hand it to the
+/// Re-read the catalog from the configured library roots and hand it to the
 /// install manager. `None` when no readable `game.db` exists (yet). On
 /// success the file signature is recorded so the watcher stays quiet.
 /// `adopt` runs the install manager's `adopt_existing()` afterwards; the
@@ -336,7 +343,7 @@ pub(crate) async fn reload_catalog(
     // runs (an explicit refresh must not be swallowed).
     let _serial = state.catalog_reload.lock().await;
     let library = state.settings.read().await.library.clone();
-    let sig = catalog_signature(library.default_root().map(|r| r.path.as_path()));
+    let sig = catalog_signature(&library);
     // Claim the signature before the (slow) load so the watcher does not
     // start a second extraction of the same assets.eti meanwhile; on failure
     // the previous signature is restored. Only this function writes the
@@ -344,7 +351,7 @@ pub(crate) async fn reload_catalog(
     let previous = state
         .catalog_sig
         .lock()
-        .map(|mut s| std::mem::replace(&mut *s, sig))
+        .map(|mut s| std::mem::replace(&mut *s, sig.clone()))
         .ok();
     let dirs = state.dirs.clone();
     // SQLite open + archive extraction are blocking work; keep them off the
@@ -1513,7 +1520,7 @@ pub fn run() {
                 running: RwLock::new(Vec::new()),
                 last_launch: RwLock::new(None),
                 transport_error: RwLock::new(None),
-                catalog_sig: std::sync::Mutex::new((None, None)),
+                catalog_sig: std::sync::Mutex::new(CatalogSig::default()),
                 catalog_reload: tokio::sync::Mutex::new(()),
                 startup_catalog: RwLock::new(None),
             });
@@ -1621,7 +1628,7 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
                 let lib = library.read().map(|l| l.clone()).unwrap_or_default();
                 // Signature before the load: a game.db swapped in while the
                 // load runs must show up as changed to the watcher.
-                let sig = catalog_signature(lib.default_root().map(|r| r.path.as_path()));
+                let sig = catalog_signature(&lib);
                 let loaded = load_catalog_from_library(&lib, &st2.dirs, true);
                 if loaded.is_some() {
                     if let Ok(mut s) = st2.catalog_sig.lock() {
@@ -1758,26 +1765,26 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
         }
         // Signature of the last attempt made by this loop; a changed but
         // unloadable catalog is tried once per change, not every 10 s.
-        let mut tried: CatalogSig = (None, None);
+        let mut tried = CatalogSig::default();
         // Ticks since the last load of any kind, for the blind reload.
         let mut idle_ticks = 0u32;
         loop {
             tokio::time::sleep(Duration::from_secs(CATALOG_POLL)).await;
-            let root = st.default_root_path().await;
-            let now = catalog_signature(root.as_deref());
+            let library = st.settings.read().await.library.clone();
+            let now = catalog_signature(&library);
             // `last` is the signature of the last successful load, wherever it
             // happened (startup, settings change, this loop). While nothing was
             // ever loaded, an unchanged game.db is retried: the file may have
             // been locked or half-synced at start. A vanished game.db keeps the
             // old catalog.
-            let last = st.catalog_sig.lock().map(|s| *s).unwrap_or((None, None));
-            let ever_loaded = last.0.is_some();
+            let last = st.catalog_sig.lock().map(|s| s.clone()).unwrap_or_default();
+            let ever_loaded = last.0.iter().any(|(_, stamp)| stamp.is_some());
             let changed = now != last && (now != tried || !ever_loaded);
             idle_ticks += 1;
             let due = idle_ticks >= CATALOG_BLIND_RELOAD_TICKS;
-            if now.0.is_some() && (changed || due || !ever_loaded) {
+            if now.0.iter().any(|(_, stamp)| stamp.is_some()) && (changed || due || !ever_loaded) {
                 idle_ticks = 0;
-                tried = now;
+                tried = now.clone();
                 let assets_changed = now.1 != last.1 || !ever_loaded;
                 // A reload nobody asked for is not worth a log line every five
                 // minutes; only a real change is.

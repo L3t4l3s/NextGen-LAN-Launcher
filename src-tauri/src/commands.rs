@@ -716,6 +716,7 @@ pub async fn save_settings(
     new.save(&state.settings_path()).map_err(err)?;
     let old_root = current.library.default_root().map(|r| r.path.clone());
     let new_root = new.library.default_root().map(|r| r.path.clone());
+    let library_changed = current.library != new.library;
     let catalog_changed = current.catalog_key != new.catalog_key || old_root != new_root;
     // Binary and API key both go into the engine config: restart on change.
     let binary_changed = current.resilio_binary != new.resilio_binary
@@ -748,20 +749,18 @@ pub async fn save_settings(
             }
         }
         crate::register_catalog_share(&state).await;
-        // The wizard runs its diagnostics right after saving the first root;
-        // load the catalog now instead of waiting for the file watcher. Covers
-        // are only re-extracted when the root moved; a key change touches no
-        // files. Runs in the background so Save returns immediately.
-        if old_root != new_root {
-            let st = state.inner().clone();
-            tauri::async_runtime::spawn(async move {
-                if let Some(n) = crate::reload_catalog(&st, true, true).await {
-                    use tauri::Emitter;
-                    log::info!("catalog loaded after settings change: {n} games");
-                    let _ = app.emit(crate::CATALOG_EVENT, n);
-                }
-            });
-        }
+    }
+    // Newly added secondary roots may already contain a catalog. Load in
+    // the background without waiting for the periodic file watcher.
+    if library_changed && !state.demo {
+        let st = state.inner().clone();
+        tauri::async_runtime::spawn(async move {
+            if let Some(n) = crate::reload_catalog(&st, true, true).await {
+                use tauri::Emitter;
+                log::info!("catalog loaded after settings change: {n} games");
+                let _ = app.emit(crate::CATALOG_EVENT, n);
+            }
+        });
     }
     Ok(new)
 }
@@ -787,8 +786,11 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
 
     checks.push("transport".into());
     let transport = state.transport.read().await.clone();
+    let mut catalog_connected = false;
     if let Some(t) = &transport {
         let health = t.health().await;
+        catalog_connected =
+            health.running && health.api_reachable && health.server_found == Some(true);
         problems.extend(diagnostics::check_transport(&health));
         // The bundled (or downloaded) engine runs in place and no installer
         // added firewall rules for it; a system Resilio or ETI's btsync.exe
@@ -906,14 +908,19 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
         checks.push("catalog".into());
         let catalog = state.catalog().await;
         if catalog.games.is_empty() && !state.demo {
-            problems.push(
-                lanlauncher_core::problem::Problem::new(
-                    "catalog.missing",
-                    lanlauncher_core::problem::Severity::Warning,
-                )
-                .step("catalog.missing.step.wait")
-                .step("catalog.missing.step.peers"),
-            );
+            let share = if let (Some(t), Some(root)) = (&transport, settings.library.default_root())
+            {
+                t.share_status(&root.path.join(lanlauncher_core::paths::LAUNCHER_SHARE_ID))
+                    .await
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            };
+            problems.push(diagnostics::catalog_pending_problem(
+                catalog_connected,
+                share.as_ref(),
+            ));
         }
         if !catalog.skipped_rows.is_empty() {
             problems.push(

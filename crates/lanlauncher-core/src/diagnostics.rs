@@ -6,9 +6,33 @@
 
 use crate::library::Library;
 use crate::problem::{FixAction, Problem, Severity};
-use crate::transport::TransportHealth;
+use crate::transport::{ShareState, ShareStatus, TransportHealth};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+
+/// Missing data is not itself a network fault while a healthy catalog share
+/// is connecting, syncing or waiting for the loader. Never invent a percent.
+pub fn catalog_pending_problem(connected: bool, share: Option<&ShareStatus>) -> Problem {
+    if connected
+        && !share.is_some_and(|s| matches!(s.state, ShareState::Paused | ShareState::Error))
+    {
+        let state = match share.map(|s| s.state) {
+            Some(ShareState::Downloading) => "downloading",
+            Some(ShareState::Indexing) => "indexing",
+            Some(ShareState::Complete) => "reading",
+            _ => "connecting",
+        };
+        let mut problem = Problem::new("catalog.loading", Severity::Info).param("state", state);
+        if let Some(s) = share.filter(|s| s.bytes_known && s.bytes_total > 0) {
+            problem = problem.param("progress", format!("{:.0}", s.progress() * 100.0));
+        }
+        problem.step("catalog.loading.step.wait")
+    } else {
+        Problem::new("catalog.missing", Severity::Warning)
+            .step("catalog.missing.step.wait")
+            .step("catalog.missing.step.peers")
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -458,6 +482,45 @@ pub fn check_orphans(our_pid: Option<u32>) -> Vec<Problem> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn catalog_loading_is_informational_but_offline_or_paused_needs_action() {
+        let connecting = catalog_pending_problem(true, None);
+        assert_eq!(connecting.code, "catalog.loading");
+        assert_eq!(connecting.severity, Severity::Info);
+        assert!(!connecting.params.contains_key("progress"));
+        let mut share = ShareStatus {
+            dir: "LAN/eti_launcher".into(),
+            state: ShareState::Downloading,
+            bytes_done: 8,
+            bytes_total: 1000,
+            bytes_received: 430,
+            bytes_known: true,
+            finished_known: true,
+            files_total: 2,
+            peers: 1,
+            download_bps: 100,
+            upload_bps: 0,
+            error: None,
+        };
+        let loading = catalog_pending_problem(true, Some(&share));
+        assert_eq!(loading.params["progress"], "43");
+        assert_eq!(loading.params["state"], "downloading");
+        share.bytes_known = false;
+        assert!(!catalog_pending_problem(true, Some(&share))
+            .params
+            .contains_key("progress"));
+        for state in [ShareState::Paused, ShareState::Error] {
+            share.state = state;
+            let problem = catalog_pending_problem(true, Some(&share));
+            assert_eq!(problem.code, "catalog.missing");
+            assert_eq!(problem.severity, Severity::Warning);
+            assert!(!problem.steps.is_empty());
+        }
+        assert_eq!(
+            catalog_pending_problem(false, None).severity,
+            Severity::Warning
+        );
+    }
     use super::*;
 
     #[test]

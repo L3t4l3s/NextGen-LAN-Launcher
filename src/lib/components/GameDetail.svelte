@@ -222,6 +222,7 @@
       {#if game.publisher}<dt>{t("detail.publisher")}</dt><dd>{game.publisher}</dd>{/if}
       <dt>{t("detail.revision")}</dt><dd>{formatRevision(game.revision, lang)}</dd>
       {#if status?.installedRevision}<dt>{t("detail.installed_revision")}</dt><dd>{formatRevision(status.installedRevision, lang)}</dd>{/if}
+      {#if status?.installedRevision && game.shareDir}<dt>{t("detail.install_path")}</dt><dd class="install-path">{game.shareDir}{game.shareDir.endsWith("\\") || game.shareDir.endsWith("/") ? "" : game.shareDir.includes("\\") ? "\\" : "/"}local</dd>{/if}
     </dl>
 
     {#if game.readme}
@@ -381,6 +382,7 @@
   dd {
     margin: 0;
   }
+  .install-path { overflow-wrap: anywhere; user-select: text; }
   .readme {
     white-space: pre-line;
     font-size: 0.92rem;

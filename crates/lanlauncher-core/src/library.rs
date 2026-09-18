@@ -104,6 +104,21 @@ pub struct Library {
 }
 
 impl Library {
+    /// Search every configured root, preferring the effective default. A
+    /// missing, locked or partially synced database must not hide a usable
+    /// catalog on another drive.
+    pub fn load_catalog(&self) -> Option<(&LibraryRoot, crate::catalog::Catalog)> {
+        let default = self.default_root();
+        default
+            .into_iter()
+            .chain(self.roots.iter().filter(|r| Some(*r) != default))
+            .find_map(|root| {
+                crate::catalog::Catalog::load(&root.path.join(crate::paths::CATALOG_RELATIVE))
+                    .ok()
+                    .map(|catalog| (root, catalog))
+            })
+    }
+
     pub fn default_root(&self) -> Option<&LibraryRoot> {
         self.roots
             .iter()
@@ -379,6 +394,37 @@ fn relocate_download_inner(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn catalog_search_checks_secondary_roots_and_prefers_a_readable_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first");
+        let second = dir.path().join("second");
+        let mut library = Library::default();
+        library.add_root(LibraryRoot::new(&first));
+        library.add_root(LibraryRoot::new(&second));
+        assert!(library.load_catalog().is_none());
+        let write_catalog = |root: &Path| {
+            let db = root.join(crate::paths::CATALOG_RELATIVE);
+            std::fs::create_dir_all(db.parent().unwrap()).unwrap();
+            rusqlite::Connection::open(db)
+                .unwrap()
+                .execute_batch(include_str!("../tests/fixtures/game_db_fixture.sql"))
+                .unwrap();
+        };
+        write_catalog(&second);
+        assert_eq!(library.load_catalog().unwrap().0.path, second);
+        // A partial database in the default root must not mask the second.
+        std::fs::create_dir_all(first.join(crate::paths::CATALOG_RELATIVE).parent().unwrap())
+            .unwrap();
+        std::fs::write(first.join(crate::paths::CATALOG_RELATIVE), b"incomplete").unwrap();
+        assert_eq!(library.load_catalog().unwrap().0.path, second);
+        std::fs::remove_file(first.join(crate::paths::CATALOG_RELATIVE)).unwrap();
+        write_catalog(&first);
+        assert_eq!(library.load_catalog().unwrap().0.path, first);
+        library.roots[0].is_default = false;
+        library.roots[1].is_default = true;
+        assert_eq!(library.load_catalog().unwrap().0.path, second);
+    }
 
     #[test]
     fn a_new_game_goes_where_it_fits() {

@@ -6,6 +6,7 @@
   import { builtinThemes } from "$lib/theme";
   import type { LibrarySpace, Settings } from "$lib/types";
   import { onDestroy, onMount } from "svelte";
+  import { defaultRootIndex } from "$lib/library";
 
   let draft = $state<Settings | null>(null);
   let space = $state<LibrarySpace[]>([]);
@@ -116,12 +117,12 @@
         </div>
         <p class="hint">{t("settings.library.hint")}</p>
         <ul class="roots">
-          {#each draft.library.roots as root (root.path)}
+          {#each draft.library.roots as root, index (root.path)}
             {@const s = spaceFor(root.path)}
+            {@const isDefault = index === defaultRootIndex(draft.library.roots)}
             <li>
               <div class="grow">
                 <strong>{root.path}</strong>
-                {#if root.isDefault}<span class="badge ready">{t("settings.library.default")}</span>{/if}
                 <div class="hint">
                   {#if s?.freeBytes != null}
                     {t("settings.library.free", { free: formatBytes(s.freeBytes), total: formatBytes(s.totalBytes ?? 0) })} · {t("settings.library.games", { count: s.games })}
@@ -133,7 +134,7 @@
                   <div class="progress"><span style:width={`${Math.round((1 - s.freeBytes / s.totalBytes) * 100)}%`}></span></div>
                 {/if}
               </div>
-              {#if !root.isDefault}<button class="ghost" onclick={() => makeDefault(root.path)}>{t("settings.library.make_default")}</button>{/if}
+              {#if isDefault}<span class="badge ready">{t("settings.library.default")}</span>{:else}<button class="ghost" onclick={() => makeDefault(root.path)}>{t("settings.library.make_default")}</button>{/if}
               <button class="ghost danger" onclick={() => removeRoot(root.path)} disabled={app.bootstrap?.demo}>{t("settings.library.remove")}</button>
             </li>
           {/each}

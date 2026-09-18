@@ -27,6 +27,7 @@
     for (const k of Object.keys(p)) {
       if (k.endsWith("_bytes")) p[k] = formatBytes(Number(p[k]));
       if (k === "detail") p[k] = userText(p[k]);
+      if (k === "state" && problem.code === "catalog.loading") p[k] = t(`catalog.state.${p[k]}`);
     }
     return p;
   });
@@ -74,6 +75,12 @@
   {#if has(`problem.${problem.code}.cause`)}
     <p class="cause">{t(`problem.${problem.code}.cause`, params)}</p>
   {/if}
+  {#if problem.code === "catalog.loading"}
+    <div class="catalog-progress" role="status">
+      <progress max="100" value={problem.params.progress === undefined ? undefined : Number(problem.params.progress)} aria-label={t("problem.catalog.loading.title")}></progress>
+      {#if problem.params.progress !== undefined}<span>{problem.params.progress}%</span>{/if}
+    </div>
+  {/if}
   {#if problem.steps.length && !compact}
     <ol>
       {#each problem.steps as step (step)}
@@ -84,6 +91,8 @@
 </div>
 
 <style>
+  .catalog-progress { display: flex; gap: 0.6rem; align-items: center; margin-top: 0.5rem; }
+  progress { width: 100%; accent-color: var(--color-primary); }
   .problem {
     border: 1px solid var(--color-border);
     border-left: 4px solid var(--color-text-muted);

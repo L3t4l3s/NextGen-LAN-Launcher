@@ -10,13 +10,14 @@
   let lastLaunch = $state<LaunchAttempt | null>(null);
   let running = $state(false);
 
-  async function run() {
+  async function run(background = false) {
+    if (running) return;
     running = true;
     try {
       report = await api.diagnostics();
       lastLaunch = await api.lastLaunch();
     } catch (e) {
-      app.toast("error", userText(e));
+      if (!background) app.toast("error", userText(e));
     } finally {
       running = false;
     }
@@ -45,7 +46,13 @@
     return l.exitCode === null ? t("diag.launch.ended_unknown") : t("diag.launch.ended", { code: l.exitCode });
   });
 
-  onMount(run);
+  onMount(() => { void run(); });
+  const catalogLoading = $derived(report?.problems.some((p) => p.code === "catalog.loading"));
+  $effect(() => {
+    if (!report?.problems.some((p) => p.code === "catalog.loading" || p.code === "catalog.missing")) return;
+    const timer = setInterval(() => void run(true), 10_000);
+    return () => clearInterval(timer);
+  });
 
   const errors = $derived(report?.problems.filter((p) => p.severity === "error").length ?? 0);
   const warnings = $derived(report?.problems.filter((p) => p.severity === "warning").length ?? 0);
@@ -118,9 +125,9 @@
         class:warn={errors === 0 && warnings > 0}
         title={t("diag.last_run", { time: new Date(report.generatedAt).toLocaleTimeString() })}
       >
-        <span class="mark">{errors > 0 || warnings > 0 ? "⚠" : "✓"}</span>
+        <span class="mark">{errors > 0 || warnings > 0 ? "⚠" : catalogLoading ? "…" : "✓"}</span>
         <strong>
-          {#if errors > 0}{t("diag.summary.error", { count: errors })}{:else if warnings > 0}{t("diag.summary.warning", { count: warnings })}{:else}{t("diag.ok.title")}{/if}
+          {#if errors > 0}{t("diag.summary.error", { count: errors })}{:else if warnings > 0}{t("diag.summary.warning", { count: warnings })}{:else if catalogLoading}{t("problem.catalog.loading.title")}{:else}{t("diag.ok.title")}{/if}
         </strong>
       </span>
     {:else}
@@ -133,11 +140,11 @@
       <button class="ghost" onclick={openWebUi} disabled={!webUi} title={webUi ? t("diag.web_ui.hint") : t("diag.web_ui.unavailable")}>{t("diag.web_ui")}</button>
     {/if}
     <button class="ghost" onclick={restartTransport}>{t("diag.restart_transport")}</button>
-    <button class="primary" onclick={run} disabled={running}>{running ? t("diag.running") : t("diag.run")}</button>
+    <button class="primary" onclick={() => run()} disabled={running}>{running ? t("diag.running") : t("diag.run")}</button>
   </div>
 
   {#if report}
-    {#if errors === 0 && warnings === 0}
+    {#if errors === 0 && warnings === 0 && !catalogLoading}
       <p class="muted ok-text">{t("diag.ok.text")}</p>
     {/if}
 

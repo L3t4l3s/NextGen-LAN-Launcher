@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Einrichtungsassistent mit übernehmbarem Vorschlag `C:\LAN`, mehreren Spiele-Ordnern
+  und klarer Standard-Markierung; vorhandene Kataloge werden in allen Ordnern gesucht.
+- Netzwerk-Check zeigt beim Katalog-Laden den aktuellen Zustand und „Bitte warten“
+  statt einer pauschalen Warnung und aktualisiert sich automatisch.
+- Installierte Spiele zeigen ihren Installationspfad in den Details.
+
+- Neue App-Icons für Windows, macOS und Linux sowie für Kopfzeile und Browser-Favicon übernommen;
+  eingebranntes Schachbrett entfernt und die Zwischenflächen echt transparent freigestellt.
+
 - Beim ersten Start wird der Spielername als Resilio-Identität übernommen. Die
   Ersteinrichtung legt den fehlenden Identitätsschlüssel an. Vorhandene Identitäten
   bleiben erhalten: Resilio 2.8.1 erlaubt über diesen Endpunkt kein Umbenennen.
