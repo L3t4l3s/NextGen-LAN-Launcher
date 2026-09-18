@@ -160,12 +160,6 @@ impl Library {
     /// loop: everything that only wants to know where a game *is* takes
     /// [`Library::game_paths`].
     pub fn choose_root_for(&self, game_id: &str, needed_bytes: u64) -> Option<&LibraryRoot> {
-        // A game that is already somewhere needs no volume enumeration at
-        // all; only a new one pays for the snapshot, and then once for every
-        // root rather than once per root.
-        if let Some(r) = self.locate_game_with_content(game_id) {
-            return Some(r);
-        }
         let disks = DiskTable::refresh();
         self.choose_root_with(game_id, needed_bytes, |p| disks.free_for(p))
     }
@@ -179,7 +173,21 @@ impl Library {
         free_for: impl Fn(&Path) -> Option<u64>,
     ) -> Option<&LibraryRoot> {
         if let Some(r) = self.locate_game_with_content(game_id) {
-            return Some(r);
+            let paths = GamePaths::new(&r.path, game_id);
+            // Installed games stay put. An unfinished download only stays
+            // when the remaining reservation fits; otherwise resume it on
+            // a configured volume with room for the entire installation.
+            let remaining = needed_bytes.saturating_sub(download_bytes(&paths.share_dir));
+            if paths.local_dir.exists()
+                || paths.receipt.exists()
+                || free_for(&r.path).is_none_or(|free| free >= remaining)
+                || !self.roots.iter().any(|other| {
+                    other.path != r.path
+                        && free_for(&other.path).is_some_and(|free| free >= needed_bytes)
+                })
+            {
+                return Some(r);
+            }
         }
         // The root the user marked as the default is a choice, not a
         // suggestion: free space only decides when that one has no room.
@@ -252,6 +260,123 @@ impl Library {
     }
 }
 
+/// Logical bytes already reserved for a download; extracted data and sync
+/// bookkeeping are not part of the archive reservation.
+pub fn download_bytes(dir: &Path) -> u64 {
+    walkdir::WalkDir::new(dir)
+        .into_iter()
+        .filter_entry(|e| {
+            e.depth() == 0
+                || !e.file_type().is_dir()
+                || !matches!(e.file_name().to_str(), Some("local" | ".sync"))
+                    && !e.file_name().to_string_lossy().starts_with(".nll-")
+        })
+        .filter_map(std::result::Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .filter_map(|e| e.metadata().ok())
+        .fold(0u64, |sum, m| sum.saturating_add(m.len()))
+}
+
+/// Move an unfinished download after the transport has released it. Cross-
+/// volume copies are published only once complete; the original is retained
+/// on any copy failure. Installed games and symlinks are never relocated.
+pub fn relocate_download(source: &GamePaths, destination: &GamePaths) -> std::io::Result<()> {
+    relocate_download_inner(source, destination, true)
+}
+
+fn relocate_download_inner(
+    source: &GamePaths,
+    destination: &GamePaths,
+    rename_first: bool,
+) -> std::io::Result<()> {
+    use std::io::{Error, ErrorKind};
+    if source.local_dir.exists() || source.receipt.exists() {
+        return Err(Error::other("cannot relocate an installed game"));
+    }
+    for entry in walkdir::WalkDir::new(&source.share_dir) {
+        if entry.map_err(Error::other)?.file_type().is_symlink() {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "download contains a symlink",
+            ));
+        }
+    }
+    if destination.share_dir.exists() {
+        // Only an actually empty folder may be replaced.
+        std::fs::remove_dir(&destination.share_dir)?;
+    }
+    let parent = destination
+        .share_dir
+        .parent()
+        .ok_or_else(|| Error::other("missing root"))?;
+    std::fs::create_dir_all(parent)?;
+    if rename_first && std::fs::rename(&source.share_dir, &destination.share_dir).is_ok() {
+        return Ok(());
+    }
+    let id = source
+        .share_dir
+        .file_name()
+        .ok_or_else(|| Error::other("missing game id"))?
+        .to_string_lossy();
+    let staging = parent.join(format!(".nll-moving-{id}"));
+    // create_dir, not create_dir_all: never reuse another attempt's data.
+    std::fs::create_dir(&staging)?;
+    let copied = (|| {
+        for entry in walkdir::WalkDir::new(&source.share_dir).min_depth(1) {
+            let entry = entry.map_err(Error::other)?;
+            let target = staging.join(
+                entry
+                    .path()
+                    .strip_prefix(&source.share_dir)
+                    .map_err(Error::other)?,
+            );
+            if entry.file_type().is_symlink() {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "download contains a symlink",
+                ));
+            } else if entry.file_type().is_dir() {
+                std::fs::create_dir(&target)?;
+            } else if entry.file_type().is_file() {
+                std::fs::copy(entry.path(), &target)?;
+            } else {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "download contains a special file",
+                ));
+            }
+        }
+        Ok(())
+    })();
+    if let Err(e) = copied {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(e);
+    }
+    let backup = source.share_dir.with_file_name(format!(".nll-moved-{id}"));
+    if backup.exists() {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(Error::new(
+            ErrorKind::AlreadyExists,
+            "previous relocation backup exists",
+        ));
+    }
+    if let Err(e) = std::fs::rename(&source.share_dir, &backup) {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(e);
+    }
+    if let Err(e) = std::fs::rename(&staging, &destination.share_dir) {
+        let _ = std::fs::rename(&backup, &source.share_dir);
+        return Err(e);
+    }
+    if let Err(e) = std::fs::remove_dir_all(&backup) {
+        log::warn!(
+            "download relocated; old copy remains at {}: {e}",
+            backup.display()
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -272,6 +397,7 @@ mod tests {
         // free space says.
         std::fs::create_dir_all(small.join("quake3")).unwrap();
         std::fs::write(small.join("quake3").join("quake3.eti"), b"x").unwrap();
+        std::fs::create_dir(small.join("quake3").join("local")).unwrap();
         let paths = lib.game_paths_for("quake3", u64::MAX).unwrap();
         assert_eq!(paths.share_dir, small.join("quake3"));
 
@@ -362,10 +488,69 @@ mod tests {
             lib.empty_leftovers("bf4", &big.join("bf4")),
             vec![small.join("bf4")]
         );
-        // Once something is in it, it is an install again and stays put.
+        // A partial download can move when its current volume has no room.
         std::fs::write(small.join("bf4").join("bf4.eti.!sync"), b"x").unwrap();
-        assert_eq!(lib.choose_root_with("bf4", 500, free).unwrap().path, small);
+        assert_eq!(lib.choose_root_with("bf4", 500, free).unwrap().path, big);
         assert!(lib.empty_leftovers("bf4", &big.join("bf4")).is_empty());
+        // Already reserved archive space is subtracted before deciding.
+        std::fs::write(small.join("bf4").join("bf4.eti.!sync"), [0; 490]).unwrap();
+        assert_eq!(lib.choose_root_with("bf4", 500, free).unwrap().path, small);
+        // A selected destination beats a locked empty old `.sync` folder.
+        std::fs::remove_file(small.join("bf4").join("bf4.eti.!sync")).unwrap();
+        std::fs::create_dir(big.join("bf4")).unwrap();
+        std::fs::write(big.join("bf4").join(".nll-download"), []).unwrap();
+        assert_eq!(lib.game_paths("bf4").unwrap().share_dir, big.join("bf4"));
+    }
+
+    #[test]
+    fn relocation_preserves_partial_download_and_protects_installed_games() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = GamePaths::new(&dir.path().join("small"), "g");
+        let destination = GamePaths::new(&dir.path().join("big"), "g");
+        std::fs::create_dir_all(source.share_dir.join(".sync")).unwrap();
+        std::fs::write(source.share_dir.join("g.eti.!sync"), b"partial").unwrap();
+        std::fs::write(source.share_dir.join(".sync/ID"), b"metadata").unwrap();
+        relocate_download(&source, &destination).unwrap();
+        assert!(!source.share_dir.exists());
+        assert_eq!(
+            std::fs::read(destination.share_dir.join("g.eti.!sync")).unwrap(),
+            b"partial"
+        );
+        assert_eq!(
+            std::fs::read(destination.share_dir.join(".sync/ID")).unwrap(),
+            b"metadata"
+        );
+        std::fs::create_dir(&destination.local_dir).unwrap();
+        assert!(relocate_download(&destination, &source).is_err());
+        assert!(destination.local_dir.is_dir());
+    }
+
+    #[test]
+    fn cross_volume_copy_keeps_metadata_and_refuses_to_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = GamePaths::new(&dir.path().join("a"), "g");
+        let target = GamePaths::new(&dir.path().join("b"), "g");
+        std::fs::create_dir_all(source.share_dir.join(".sync")).unwrap();
+        std::fs::write(source.share_dir.join("g.eti.!sync"), b"partial").unwrap();
+        std::fs::write(source.share_dir.join(".sync/ID"), b"metadata").unwrap();
+        relocate_download_inner(&source, &target, false).unwrap();
+        assert!(!source.share_dir.exists());
+        assert_eq!(
+            std::fs::read(target.share_dir.join("g.eti.!sync")).unwrap(),
+            b"partial"
+        );
+        assert_eq!(
+            std::fs::read(target.share_dir.join(".sync/ID")).unwrap(),
+            b"metadata"
+        );
+        std::fs::create_dir_all(&source.share_dir).unwrap();
+        std::fs::write(source.share_dir.join("keep.txt"), b"keep").unwrap();
+        assert!(relocate_download_inner(&target, &source, false).is_err());
+        assert_eq!(
+            std::fs::read(source.share_dir.join("keep.txt")).unwrap(),
+            b"keep"
+        );
+        assert!(target.share_dir.exists());
     }
 
     #[test]

@@ -121,6 +121,9 @@ pub struct Observation {
     /// successful extraction yields a warning, never a re-download).
     pub required_files_ok: bool,
     pub transport: Option<ShareStatus>,
+    /// Resilio preallocates files. Never use their logical size as download
+    /// progress, including while indexing or during an API outage.
+    pub managed_sync: bool,
     pub disk_free: Option<u64>,
 }
 
@@ -150,6 +153,16 @@ impl Observation {
     /// The same figure and who it comes from, for the rate: a switch between
     /// the two sources changes the number without a byte being transferred.
     pub fn arrived(&self) -> (u64, ByteSource) {
+        if self.managed_sync {
+            return (
+                self.transport
+                    .as_ref()
+                    .filter(|t| t.bytes_known)
+                    .map(|t| t.bytes_received)
+                    .unwrap_or(0),
+                ByteSource::Engine,
+            );
+        }
         // Once the engine has indexed the share, its own figure is the only
         // honest one: Resilio allocates the target file at its full size
         // before the first byte arrives, so the folder reads 85 GB while 8
@@ -304,6 +317,7 @@ impl Observation {
             local_present,
             required_files_ok,
             transport: None,
+            managed_sync: false,
             disk_free: disks.free_for(&paths.share_dir),
         }
     }
@@ -393,6 +407,7 @@ pub struct Tracker {
     /// without an answer from the engine cannot lift the engine's mark to the
     /// placeholder's size, and the engine's own mark survives that tick.
     high_water: [u64; 2],
+    last_total: u64,
     /// Last rate sample `(taken at, bytes)`; the transport's own rate is
     /// preferred, this covers engines that report none.
     rate_sample: Option<(Instant, u64)>,
@@ -423,6 +438,7 @@ impl Tracker {
             last_engine_bytes: None,
             byte_source: None,
             high_water: [0, 0],
+            last_total: 0,
             rate_sample: None,
             rate_bps: 0.0,
             verify_failed_at: None,
@@ -443,6 +459,7 @@ impl Tracker {
         self.last_progress_at = Instant::now();
         self.indexing_since = None;
         self.high_water = [0, 0];
+        self.last_total = 0;
     }
 
     /// Repair: forget verification failures and re-run the pipeline from
@@ -461,6 +478,7 @@ impl Tracker {
         self.last_progress_at = Instant::now();
         self.indexing_since = None;
         self.high_water = [0, 0];
+        self.last_total = 0;
         self.rate_sample = None;
         self.rate_bps = 0.0;
     }
@@ -589,13 +607,28 @@ impl Tracker {
             self.high_water = [0, 0];
         }
         let (arrived, source) = obs.arrived();
+        if obs.managed_sync {
+            if let Some(total) = obs
+                .transport
+                .as_ref()
+                .filter(|t| t.bytes_known)
+                .map(|t| t.bytes_total)
+                .filter(|t| *t > 0)
+            {
+                self.last_total = total;
+            }
+        }
         // The peers' counters begin again at zero when the engine restarts or
         // a peer drops out, and a download that has come 60 GB must not read
         // as 0 GB for it — but only against what the same witness said
         // before. One tick without an answer from the engine would otherwise
         // lift the mark to the size of the placeholder the folder reports.
         let mark = &mut self.high_water[source as usize];
-        *mark = (*mark).max(arrived);
+        *mark = if obs.managed_sync && obs.transport.as_ref().is_some_and(|t| t.bytes_known) {
+            arrived
+        } else {
+            (*mark).max(arrived)
+        };
         let bytes_now = *mark;
         if Some(source) != self.byte_source {
             self.byte_source = Some(source);
@@ -640,6 +673,13 @@ impl Tracker {
                 Action::None
             }
             Phase::Syncing => {
+                if self
+                    .problem
+                    .as_ref()
+                    .is_some_and(|p| p.code == "install.disk_full")
+                {
+                    self.problem = None;
+                }
                 if let Some(free) = obs.disk_free {
                     // What the folder holds, not what has arrived: space the
                     // engine allocated for a file it has not filled yet is
@@ -654,7 +694,10 @@ impl Tracker {
                                 .param("free_bytes", free)
                                 .param("needed_bytes", needed)
                                 .step("install.disk_full.step.free")
-                                .step("install.disk_full.step.other_root"),
+                                .step("install.disk_full.step.other_root")
+                                .with_fix(FixAction::RepairGame {
+                                    game_id: self.game_id.clone(),
+                                }),
                         );
                     }
                 }
@@ -670,20 +713,21 @@ impl Tracker {
                 // where it knows, it decides, and nothing overrides that. A
                 // check asked for by hand would read the same placeholder,
                 // and waiting turns it into an archive just as little.
-                let engine_mostly_done = obs.transport.as_ref().is_none_or(|t| {
+                let engine_mostly_done = (!obs.managed_sync || obs.transport.is_some())
+                    && obs.transport.as_ref().is_none_or(|t| {
                     let nine_tenths =
                         |bytes: u64| (bytes as u128) * 10 >= (t.bytes_total as u128) * 9;
                     t.state == ShareState::Complete
-                        || t.bytes_total == 0
+                        || (!obs.managed_sync && t.bytes_total == 0)
                         // What the engine calls finished is the best answer …
-                        || (t.finished_known && nine_tenths(t.bytes_done))
+                        || (t.bytes_total > 0 && t.finished_known && nine_tenths(t.bytes_done))
                         // … and where it does not count finished files, its
                         // own progress is the next best: the web UI's
                         // percentage covers the file in flight.
-                        || (!t.finished_known && t.bytes_known && nine_tenths(t.bytes_received))
+                        || (t.bytes_total > 0 && !t.finished_known && t.bytes_known && nine_tenths(t.bytes_received))
                         // Nothing countable at all: the disk decides, as it
                         // did before this launcher asked the engine.
-                        || (!t.finished_known && !t.bytes_known)
+                        || (!obs.managed_sync && !t.finished_known && !t.bytes_known)
                 });
                 let complete_on_disk = obs.archive_len.is_some()
                     && obs.partial_len.is_none()
@@ -782,7 +826,9 @@ impl Tracker {
                     // The first reading is not progress: it is the first
                     // reading. Only a change from one tick to the next is.
                     let previous = self.last_engine_bytes.replace(t.bytes_received);
-                    if previous.is_some_and(|before| before != t.bytes_received) {
+                    if previous.is_some_and(|before| before != t.bytes_received)
+                        || (t.state == ShareState::Downloading && t.download_bps > 0)
+                    {
                         self.last_progress_at = now;
                         self.indexing_since = None;
                     }
@@ -861,13 +907,20 @@ impl Tracker {
         // few hundred bytes for a package of many gigabytes; taking it at face
         // value turned every download into "0 B of 782 B". The catalog's own
         // figure is the floor.
-        let total = obs
+        let reported_total = obs
             .transport
             .as_ref()
+            .filter(|t| !obs.managed_sync || t.bytes_known)
             .map(|t| t.bytes_total)
-            .unwrap_or(0)
-            .max(obs.catalog_bytes)
-            .max(1);
+            .unwrap_or(0);
+        let total = if obs.managed_sync && reported_total > 0 {
+            reported_total
+        } else if obs.managed_sync && self.last_total > 0 {
+            self.last_total
+        } else {
+            reported_total.max(obs.catalog_bytes)
+        }
+        .max(1);
         let done = match self.phase {
             Phase::Ready | Phase::UpdateAvailable => total,
             // Never below what this download already reached: the engine's
@@ -875,7 +928,11 @@ impl Tracker {
             // reads as a download starting over.
             _ => {
                 let (arrived, source) = obs.arrived();
-                arrived.max(self.high_water[source as usize])
+                if obs.managed_sync && obs.transport.as_ref().is_some_and(|t| t.bytes_known) {
+                    arrived
+                } else {
+                    arrived.max(self.high_water[source as usize])
+                }
             }
         };
         let progress = match self.phase {
@@ -1122,6 +1179,44 @@ impl InstallManager {
     fn paths_for(&self, game: &Game) -> Result<GamePaths> {
         (self.resolve_paths)(game)
             .ok_or_else(|| Error::Settings("no library root configured".into()))
+    }
+
+    /// Start (or resume) installing a game.
+    pub async fn relocate_download(&self, game_id: &str, destination: GamePaths) -> Result<()> {
+        let game = self.game(game_id).await?;
+        let mut trackers = self.trackers.lock().await;
+        if self.work.lock().await.contains_key(game_id) {
+            return Err(Error::Settings(
+                "installation is busy verifying or extracting".into(),
+            ));
+        }
+        let source = self.paths_for(&game)?;
+        if source.share_dir == destination.share_dir || !source.share_dir.exists() {
+            return Ok(());
+        }
+        self.transport.remove_share(&source.share_dir).await?;
+        let from = source.clone();
+        let to = destination.clone();
+        let moved =
+            tokio::task::spawn_blocking(move || crate::library::relocate_download(&from, &to))
+                .await
+                .map_err(|e| Error::Settings(e.to_string()))?;
+        if let Err(e) = moved {
+            let _ = self
+                .transport
+                .add_share(
+                    &game.key,
+                    &source.share_dir,
+                    &ShareOptions {
+                        lan_only: self.lan_only,
+                        paused: false,
+                    },
+                )
+                .await;
+            return Err(Error::io(&destination.share_dir, e));
+        }
+        trackers.remove(game_id);
+        Ok(())
     }
 
     /// Start (or resume) installing a game.
@@ -1567,6 +1662,7 @@ impl InstallManager {
             let manifest = (self.resolve_manifest)(&game, &paths);
             let required = required_files_for(manifest.as_ref(), Manifest::current_platform());
             let mut obs = Observation::from_disk(&paths, &game, &required, &disks);
+            obs.managed_sync = self.transport.kind() == crate::transport::TransportKind::Resilio;
             obs.transport = share_statuses
                 .get(&crate::transport::normalise_dir(&paths.share_dir))
                 .cloned();
@@ -1916,6 +2012,7 @@ mod tests {
                 error: None,
             }),
             disk_free: Some(1 << 40),
+            managed_sync: false,
         }
     }
 
@@ -2549,6 +2646,77 @@ mod tests {
         t.step(&o, &policy(), Instant::now());
         t.step(&o, &policy(), Instant::now());
         assert_eq!(t.problem.as_ref().unwrap().code, "install.disk_full");
+        o.disk_free = Some(2000);
+        t.step(&o, &policy(), Instant::now());
+        assert!(
+            t.problem.is_none(),
+            "space warnings must clear after freeing space"
+        );
+    }
+
+    #[test]
+    fn managed_progress_ignores_preallocation_and_catalog_estimates() {
+        let mut o = obs(None, Some(10_000), None, Some(0));
+        o.managed_sync = true;
+        o.catalog_bytes = 30_000;
+        let mut tracker = Tracker::new("g");
+        tracker.request_install();
+        let now = Instant::now();
+        tracker.step(&o, &policy(), now);
+        assert_eq!(tracker.status(&o, &policy(), now, false).progress, 0.0);
+        o.transport.as_mut().unwrap().bytes_received = 430;
+        tracker.step(&o, &policy(), now);
+        assert_eq!(tracker.status(&o, &policy(), now, false).progress, 0.43);
+        // A provisional index must not shrink the denominator underneath
+        // the last known progress (430 / 8 would otherwise display 99%).
+        let engine = o.transport.as_mut().unwrap();
+        engine.state = ShareState::Indexing;
+        engine.bytes_known = false;
+        engine.bytes_total = 8;
+        tracker.step(&o, &policy(), now);
+        assert_eq!(tracker.status(&o, &policy(), now, false).progress, 0.43);
+        // An API outage cannot replace 43% with the placeholder's size.
+        o.transport = None;
+        tracker.step(&o, &policy(), now);
+        assert_eq!(tracker.status(&o, &policy(), now, false).bytes_done, 430);
+        assert_eq!(tracker.status(&o, &policy(), now, false).progress, 0.43);
+        // The engine may correct its index; display that authoritative value.
+        o.transport = obs(None, None, None, Some(33)).transport;
+        tracker.step(&o, &policy(), now);
+        assert_eq!(tracker.status(&o, &policy(), now, false).progress, 0.33);
+    }
+
+    #[test]
+    fn active_network_transfer_does_not_stall_at_an_unchanged_percentage() {
+        let mut o = obs(None, Some(1000), None, Some(1));
+        o.managed_sync = true;
+        o.transport.as_mut().unwrap().download_bps = 100_000;
+        let mut tracker = Tracker::new("g");
+        tracker.request_install();
+        let now = Instant::now();
+        tracker.step(&o, &policy(), now);
+        let later = now + Duration::from_secs(180);
+        tracker.step(&o, &policy(), later);
+        assert!(!tracker.status(&o, &policy(), later, false).stalled);
+        assert!(tracker.problem.is_none());
+        o.transport.as_mut().unwrap().download_bps = 0;
+        tracker.step(&o, &policy(), later + Duration::from_secs(130));
+        assert_eq!(tracker.problem.as_ref().unwrap().code, "sync.stalled");
+    }
+
+    #[test]
+    fn managed_api_outage_does_not_verify_a_placeholder() {
+        let mut o = obs(Some(1000), None, Some("20250308"), None);
+        o.managed_sync = true;
+        let mut tracker = Tracker::new("g");
+        tracker.request_install();
+        let now = Instant::now();
+        tracker.step(&o, &policy(), now);
+        assert_eq!(
+            tracker.step(&o, &policy(), now + Duration::from_secs(30)),
+            Action::None
+        );
+        assert_eq!(tracker.phase, Phase::Syncing);
     }
 
     fn fixture(name: &str) -> std::path::PathBuf {

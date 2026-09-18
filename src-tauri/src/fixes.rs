@@ -338,8 +338,7 @@ pub async fn apply(
             Ok("msg.transport_restarted".into())
         }
         FixAction::RepairGame { game_id } => {
-            let m = state.manager.read().await.clone().ok_or("err.not_ready")?;
-            m.repair(&game_id).await.map_err(|e| e.to_string())?;
+            crate::commands::repair_game_inner(state, &game_id).await?;
             Ok("msg.repair_started".into())
         }
         FixAction::OpenFolder { path } => {

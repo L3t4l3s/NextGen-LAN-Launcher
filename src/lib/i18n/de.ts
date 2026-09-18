@@ -94,6 +94,7 @@ export const de: Messages = {
   "detail.manifest.autodetect": "Startdatei wird nach der Installation automatisch gesucht.",
   "detail.manifest.none": "Für dieses Spiel gibt es noch kein Startprofil für {platform}. Nach der Installation kannst du die Startdatei selbst wählen.",
   "detail.progress": "{done} von {total}",
+  "detail.total": "Gesamtgröße: {total}",
   "detail.peers": "{count} Teilnehmer",
   "card.no_source": "Keine Quelle",
   "card.stalled": "Hängt",

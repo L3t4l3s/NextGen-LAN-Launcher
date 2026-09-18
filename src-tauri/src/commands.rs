@@ -245,32 +245,41 @@ fn only_sync(dir: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-#[tauri::command]
-pub async fn install_game(state: State<'_, Arc<AppState>>, game_id: String) -> Cmd<()> {
-    // The manager first: an empty folder created before it exists would pin
-    // the game to that root for good, with nothing tracking it.
-    let manager = manager(&state).await?;
+async fn prepare_install_root(
+    state: &AppState,
+    manager: &lanlauncher_core::install::InstallManager,
+    game_id: &str,
+) -> Cmd<Option<std::path::PathBuf>> {
     // Which root a new game goes to is decided here, once, by free space:
     // creating the folder is what every later lookup follows. Asking per
     // lookup would enumerate the volumes hundreds of times per round.
     let mut created: Option<std::path::PathBuf> = None;
-    if let Some(game) = state.catalog().await.game(&game_id) {
+    if let Some(game) = state.catalog().await.game(game_id) {
         // The same snapshot the manager resolves paths from, so the folder is
-        // created where the download will look for it. Writing the snapshot
-        // here instead would skip the media-scope update the sync loop does.
+        // created where the download will look for it.
         let library = state.library.read().ok().map(|l| l.clone());
         let needed = game.size_bytes.saturating_mul(2);
-        if let Some((paths, leftovers)) = library.and_then(|l| {
+        if let Some((paths, leftovers, relocate)) = library.and_then(|l| {
             let paths = l.game_paths_for(&game.id, needed)?;
             let leftovers = l.empty_leftovers(&game.id, &paths.share_dir);
-            Some((paths, leftovers))
+            let relocate = l.game_paths(&game.id).is_some_and(|old| {
+                old.share_dir != paths.share_dir
+                    && old.share_dir.exists()
+                    && !leftovers.contains(&old.share_dir)
+            });
+            Some((paths, leftovers, relocate))
         }) {
+            if relocate {
+                manager
+                    .relocate_download(&game.id, paths.clone())
+                    .await
+                    .map_err(err)?;
+            }
             // An empty folder from a cancelled attempt in another root would
             // send every later lookup to the wrong disk — and the engine may
             // still have a share registered on it, which is what leaves a
             // download wedged at "folder not found".
             let transport = state.transport.read().await.clone();
-            let mut stuck = Vec::new();
             for dir in leftovers {
                 if let Some(t) = &transport {
                     if let Err(e) = t.remove_share(&dir).await {
@@ -308,29 +317,9 @@ pub async fn install_game(state: State<'_, Arc<AppState>>, game_id: String) -> C
                     Ok(()) => log::info!("removed the empty leftover folder {}", dir.display()),
                     Err(e) => {
                         log::warn!("leftover folder {} stays: {e}", dir.display());
-                        stuck.push(dir);
                     }
                 }
             }
-            // A folder that will not go (the engine may still hold it after
-            // a restart, when it no longer knows the key) must not block the
-            // install — but the download has to run where every later lookup
-            // will search, or it would report no progress for ever.
-            let paths = match stuck.first() {
-                None => paths,
-                Some(dir) => {
-                    let fallback = state
-                        .library
-                        .read()
-                        .ok()
-                        .and_then(|l| l.game_paths(&game.id));
-                    log::warn!(
-                        "{} could not be removed; installing where the lookup points instead",
-                        dir.display()
-                    );
-                    fallback.unwrap_or(paths)
-                }
-            };
             let free = lanlauncher_core::library::disk_space(&paths.share_dir).map(|(f, _)| f);
             log::info!(
                 "installing {} into {} (needs {} bytes, {} free)",
@@ -342,11 +331,26 @@ pub async fn install_game(state: State<'_, Arc<AppState>>, game_id: String) -> C
             let existed = paths.share_dir.exists();
             std::fs::create_dir_all(&paths.share_dir)
                 .map_err(|e| format!("err.create_folder|{}: {e}", paths.share_dir.display()))?;
+            // A marker makes the selected root discoverable even while the
+            // engine has not written a file yet. An old locked `.sync` folder
+            // must never redirect this download back to the full volume.
+            let marker = paths.share_dir.join(".nll-download");
+            if !marker.exists() {
+                std::fs::File::create_new(&marker)
+                    .map_err(|e| format!("err.create_folder|{}: {e}", marker.display()))?;
+            }
             if !existed {
                 created = Some(paths.share_dir.clone());
             }
         }
     }
+    Ok(created)
+}
+
+#[tauri::command]
+pub async fn install_game(state: State<'_, Arc<AppState>>, game_id: String) -> Cmd<()> {
+    let manager = manager(&state).await?;
+    let created = prepare_install_root(&state, &manager, &game_id).await?;
     match manager.install(&game_id).await {
         Ok(()) => Ok(()),
         Err(e) => {
@@ -354,6 +358,7 @@ pub async fn install_game(state: State<'_, Arc<AppState>>, game_id: String) -> C
             // this root: the empty folder is what every later lookup follows.
             // `remove_dir` only removes it while it is still empty.
             if let Some(dir) = created {
+                let _ = std::fs::remove_file(dir.join(".nll-download"));
                 if let Err(e) = std::fs::remove_dir(&dir) {
                     log::warn!(
                         "install of {game_id} failed and {} could not be removed: {e}",
@@ -368,21 +373,29 @@ pub async fn install_game(state: State<'_, Arc<AppState>>, game_id: String) -> C
 
 #[tauri::command]
 pub async fn repair_game(state: State<'_, Arc<AppState>>, game_id: String) -> Cmd<()> {
+    repair_game_inner(&state, &game_id).await
+}
+
+pub(crate) async fn repair_game_inner(state: &AppState, game_id: &str) -> Cmd<()> {
     // A repair usually follows something the user just did to the folder;
     // the engine's state has to be read fresh, not from the last snapshot.
     if let Some(t) = state.transport.read().await.as_ref() {
         t.invalidate();
     }
-    manager(&state).await?.repair(&game_id).await.map_err(err)
+    let manager = manager(state).await?;
+    prepare_install_root(state, &manager, game_id).await?;
+    manager.repair(game_id).await.map_err(err)
 }
 
 #[tauri::command]
 pub async fn pause_game(state: State<'_, Arc<AppState>>, game_id: String, paused: bool) -> Cmd<()> {
-    manager(&state)
-        .await?
-        .set_paused(&game_id, paused)
-        .await
-        .map_err(err)
+    let manager = manager(&state).await?;
+    if !paused {
+        prepare_install_root(&state, &manager, &game_id).await?;
+        // Re-register if preparing the root relocated an unfinished share.
+        manager.install(&game_id).await.map_err(err)?;
+    }
+    manager.set_paused(&game_id, paused).await.map_err(err)
 }
 
 /// Stop a download and delete its data. Returns `true` when an installed
@@ -706,9 +719,16 @@ pub async fn save_settings(
     let catalog_changed = current.catalog_key != new.catalog_key || old_root != new_root;
     // Binary and API key both go into the engine config: restart on change.
     let binary_changed = current.resilio_binary != new.resilio_binary
-        || current.resilio_api_key != new.resilio_api_key;
+        || current.resilio_api_key != new.resilio_api_key
+        || current.player_name != new.player_name;
     *current = new.clone();
     drop(current);
+    // Publish library changes before returning from Save: an immediate
+    // install must see all configured roots, not last polling round's list.
+    if let Ok(mut library) = state.library.write() {
+        let old = std::mem::replace(&mut *library, new.library.clone());
+        crate::update_media_scope(&app, &old.roots, &new.library);
+    }
     if binary_changed && new.transport == TransportMode::Managed && !state.demo {
         // A different engine binary only takes effect with a fresh transport;
         // the error, if any, is shown by the next diagnostics run.

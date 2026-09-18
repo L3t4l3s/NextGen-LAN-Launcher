@@ -164,16 +164,13 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   `ShareStatus` trennt das deshalb: `bytes_done` ist die Zahl der Engine (fertige Dateien) und
   entscheidet zusammen mit `finished_known`, ob geprüft werden darf; die Web-UI kann „fertig“ nicht
   beantworten und setzt `finished_known = false`, dann entscheidet ihre Prozentzahl.
-  `bytes_received` aus den `download`-Zählern von `get_folder_peers` ist der Fortschritt. Die Zähler gelten pro
-  Engine-Sitzung und gelten nicht pro Übertragung, deshalb führt `resilio::Transfer` (privat, eine
-  Buchführung je Freigabe, Zähler je Gegenstelle) nur deren
-  *Zuwächse* (ein gefallener Zähler addiert nichts, eine neue Revision setzt zurück) und
-  `Tracker::high_water` hält die Anzeige je Quelle. Die fertigen Dateien gehen **nie** in den
-  Fortschritt ein: bei einem Update sind das die Dateien des *alten* Pakets, und ob eine
-  Übertragung ein Update ist, lässt sich aus den Antworten der Engine nicht ablesen. Die Rate der Zeile kommt aus `down_speed` der Engine,
-  gilt aber *nicht* als Lebenszeichen — dafür zählt allein, dass sich `bytes_received` bewegt
-  (beim Indizieren meldet die Engine Fantasieraten). Geprüft wird nur, was die Engine als fertig meldet — auch „Reparieren“ erzwingt
-  das nicht.
+  Der Fortschritt kommt bevorzugt aus `getsyncfolders.down_status` (0–100, auch Nachkommastellen),
+  genau wie in der Web-UI von Resilio 2.8.1.1390. Auch mit API-Key wird diese Zahl gelesen;
+  API-Rate und fertige Bytes bleiben getrennt erhalten. Ohne Web-UI dienen nur die Zuwächse
+  der Peer-Zähler als Rückfall, deren erste Messung ist eine Baseline. Fertige Dateien und
+  alte Sitzungszähler dürfen keinen Anfangsfortschritt erzeugen. `down_speed > 0` gilt im
+  Zustand `Downloading` als Lebenszeichen, nicht beim Indizieren. Eine gerundete Prozentzahl
+  kann bei großen Paketen länger als zwei Minuten gleich bleiben, obwohl Daten ankommen.
 - **Setup-Skripte lesen:** `launch::windows::missing_paths` folgt einem ETI-Skript wie cmd:
   `set`-Variablen, `cd`/`pushd` (`%~dp0` = Spielordner), Programme relativ zum aktuellen Ordner,
   bloße Namen über den `PATH` (sonst gilt `reg.exe` als fehlend), `md` angelegte Ordner, `if`/
@@ -182,9 +179,23 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   Wegwerf-Beispiel); im Test steht ein Skript, das deren Formen zusammenfasst.
 - **Vorbelegte Zieldatei:** Resilio legt die Datei sofort in voller Größe an und füllt sie dann.
   Der Ordner meldet also 85 GB, während acht Byte angekommen sind. Nur die Zahl der Engine taugt
-  als Fortschritt, sobald sie die Freigabe eingelesen hat (`bytes_total` passt dann zur
-  Katalogangabe); vorher ist der Ordner die bessere Quelle. Vor dem Prüfen muss die Engine
+  als Fortschritt. Bei verwaltetem Resilio wird deshalb auch beim Indizieren und während
+  API-Ausfällen nie auf Dateigrößen zurückgefallen. Die Kataloggröße ist eine Schätzung und
+  darf einen echten Resilio-Prozentwert nicht verzerren. Vor dem Prüfen muss die Engine
   bestätigen, dass der Großteil da ist (`Observation::bytes_on_disk`, `engine_mostly_done`).
+- **Resilio-Identität:** Die Web-UI von 2.8.1.1390 verwendet `setuseridentity&username=…`,
+  danach `getmasterfolder` und nur bei fehlendem Schlüssel `setmfsecret`. Diese Folge wurde
+  mit einem separaten Windows-Testprofil ausgeführt. Vorher `useridentity` lesen: Der
+  Endpunkt verweigert Änderungen bestehender Identitäten mit „Can not apply identity“.
+  Deshalb wird nur eine fehlende Identität angelegt, keine bestehende ersetzt. Wenn der
+  Einrichtungsassistent den Spielernamen speichert, startet die verwaltete Engine neu.
+  Web-UI-Login und Identität sind getrennt.
+- **Spieleordner:** Einstellungen veröffentlichen die Bibliotheksliste sofort. Ein
+  `.nll-download`-Marker hält die gewählte Wurzel fest, wenn ein alter leerer `.sync`-Ordner
+  noch gesperrt ist. Unfertige Downloads dürfen bei Platzmangel auf eine passende Wurzel
+  wechseln; `local/` und Receipts sperren installierte Spiele gegen automatisches Verschieben.
+  Beim Laufwerkswechsel wird zuerst vollständig kopiert und erst dann der neue Ordner
+  veröffentlicht. Die Engine muss die alte Freigabe vorher freigeben.
 - **NSIS-Hooks:** `NSIS_HOOK_PREINSTALL` läuft *vor* Tauris Frage „Anwendung beenden?“. Wer dort
   die Sync-Engine beendet, während der Launcher noch läuft, startet sie nur neu — deshalb beendet
   `installer-hooks.nsh` erst den Launcher, dann die Engine.

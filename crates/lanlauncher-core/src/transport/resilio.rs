@@ -85,6 +85,8 @@ pub struct ResilioConfig {
     pub api_key: Option<String>,
     pub lan_only: bool,
     pub upload_limit_kbs: u32,
+    /// Display identity in the managed engine, separate from WebUI login.
+    pub player_name: String,
 }
 
 impl ResilioConfig {
@@ -110,6 +112,7 @@ impl ResilioConfig {
             api_key: None,
             lan_only: true,
             upload_limit_kbs: 0,
+            player_name: String::new(),
         }
     }
 
@@ -337,8 +340,48 @@ impl ResilioClient {
             }
         }
         let text = resp.error_for_status()?.text().await?;
-        serde_json::from_str(&text)
-            .map_err(|e| Error::Transport(format!("GUI {action}: bad JSON: {e}")))
+        let value: Value = serde_json::from_str(&text)
+            .map_err(|e| Error::Transport(format!("GUI {action}: bad JSON: {e}")))?;
+        if value
+            .get("status")
+            .and_then(Value::as_u64)
+            .is_some_and(|s| s >= 400)
+            || value.get("error").is_some_and(|e| match e {
+                Value::Number(n) => n.as_i64() != Some(0),
+                Value::String(s) => !s.is_empty() && s != "0",
+                _ => false,
+            })
+        {
+            return Err(Error::Transport(format!("GUI {action}: {value}")));
+        }
+        Ok(value)
+    }
+
+    /// Same onboarding sequence as the bundled 2.8.1 WebUI. Identities are
+    /// immutable in this version: only initialize a missing one, never unlink
+    /// an existing identity or replace its master key to change its name.
+    pub async fn ensure_player_identity(&self, name: &str) -> Result<()> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Ok(());
+        }
+        let identity = self.gui("useridentity", &[]).await?;
+        if identity
+            .pointer("/value/username")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+        {
+            self.gui("setuseridentity", &[("username", name)]).await?;
+        }
+        let master = self.gui("getmasterfolder", &[]).await?;
+        if master
+            .pointer("/value/secret")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+        {
+            self.gui("setmfsecret", &[]).await?;
+        }
+        Ok(())
     }
 
     pub fn has_api_key(&self) -> bool {
@@ -421,7 +464,7 @@ impl ResilioClient {
                 .gui(
                     "addsyncfolder",
                     &[
-                        ("name", dir_s.as_str()),
+                        ("path", dir_s.as_str()),
                         ("secret", key.expose()),
                         ("selectivesync", "0"),
                     ],
@@ -477,10 +520,34 @@ impl ResilioClient {
             .await
             .map(|_| ())
         } else {
-            let secret = key.map(|k| k.expose().to_string()).unwrap_or_default();
+            let listing = self.gui("getsyncfolders", &[]).await?;
+            let folders = listing
+                .get("folders")
+                .or_else(|| listing.pointer("/value/folders"))
+                .and_then(Value::as_array)
+                .ok_or_else(|| Error::Transport("Resilio returned no folder listing".into()))?;
+            let target = crate::transport::normalise_dir(dir);
+            let Some(folder) = folders.iter().find(|folder| {
+                folder
+                    .get("path")
+                    .or_else(|| folder.get("name"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|path| crate::transport::normalise_dir(Path::new(path)) == target)
+            }) else {
+                return Ok(());
+            };
+            let id = folder
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| Error::Transport("Resilio folder has no id".into()))?;
+            // Disconnect only this device; keep all files for relocation.
             self.gui(
                 "removefolder",
-                &[("name", dir_s.as_str()), ("secret", secret.as_str())],
+                &[
+                    ("folderid", id),
+                    ("deletedirectory", "false"),
+                    ("fromalldevices", "false"),
+                ],
             )
             .await
             .map(|_| ())
@@ -605,6 +672,16 @@ impl ResilioClient {
     async fn read_folders(&self) -> Result<HashMap<PathBuf, ShareStatus>> {
         if self.has_api_key() {
             let v = self.api("get_folders", &[]).await?;
+            // The API counts finished files and session traffic; the WebUI
+            // exposes the actual per-folder download percentage, including
+            // partial files and resumed transfers. Keep API rates unchanged.
+            let gui = match self.gui("getsyncfolders", &[("discovery", "1")]).await {
+                Ok(v) => parse_gui_folders(&v),
+                Err(e) => {
+                    log::debug!("WebUI progress unavailable: {e}");
+                    HashMap::new()
+                }
+            };
             let mut out = HashMap::new();
             for f in v.as_array().cloned().unwrap_or_default() {
                 let dir = crate::paths::strip_verbatim(PathBuf::from(
@@ -642,13 +719,21 @@ impl ResilioClient {
                 if countable {
                     status.bytes_received = received;
                 } else {
-                    // Nothing to count with on this engine: the finished
-                    // files are then the only figure there is — too small
-                    // during a download and the old package during an update,
-                    // but a figure, where a zero of ours would be a claim.
-                    status.bytes_received = status.bytes_done;
+                    // No transfer counters: finished files may belong to an
+                    // old revision. Mark progress unknown until the WebUI
+                    // or a fresh peer reading can answer it.
+                    status.bytes_received = 0;
                 }
-                status.bytes_known = countable || status.finished_known;
+                status.bytes_known = countable;
+                if let Some(progress) = gui
+                    .values()
+                    .find(|g| super::normalise_dir(&g.dir) == super::normalise_dir(&dir))
+                    .filter(|g| g.bytes_known && g.bytes_total > 0)
+                {
+                    status.bytes_received = progress.bytes_received;
+                    status.bytes_total = progress.bytes_total;
+                    status.bytes_known = true;
+                }
                 out.insert(dir, status);
             }
             Ok(out)
@@ -808,14 +893,9 @@ impl Transfer {
                     }
                     *before = peer.down;
                 }
-                // A peer not counted yet. What it has sent arrived while it
-                // was connected to us, so it counts — unless this transfer
-                // has just started over, where its counter is the one from
-                // the transfer before.
+                // A new peer's first sample is a session baseline, not this
+                // download's bytes. It may include an earlier revision.
                 None => {
-                    if !started_over {
-                        arrived += peer.down;
-                    }
                     self.last.insert(peer.id.clone(), peer.down);
                 }
             }
@@ -1020,12 +1100,22 @@ pub fn parse_gui_folders(v: &Value) -> HashMap<PathBuf, ShareStatus> {
             .get("status")
             .map(|s| s.to_string().to_ascii_lowercase())
             .unwrap_or_default();
-        let progress = f.get("progress").and_then(as_u64_lenient);
-        let error = f
-            .get("error")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string);
+        // Resilio 2.8.1's own progress bar reads down_status (0..100),
+        // not `progress`. Preserve fractional percentages.
+        let progress = f
+            .get("down_status")
+            .or_else(|| f.get("progress"))
+            .and_then(|p| p.as_f64().or_else(|| p.as_str()?.parse().ok()))
+            .filter(|p: &f64| p.is_finite())
+            .map(|p| p.clamp(0.0, 100.0));
+        let status_code = f.get("status").and_then(Value::as_u64);
+        let error = f.get("error").and_then(|e| match e {
+            Value::String(s) if !s.is_empty() && s != "0" => Some(s.clone()),
+            Value::Number(n) if n.as_u64() != Some(0) && n.as_u64() != Some(700) => {
+                Some(format!("resilio error {n}"))
+            }
+            _ => None,
+        });
         // The third value says whether the second is a figure from the
         // engine or a stand-in. The web UI answers for many shares with a
         // state and nothing countable, and a zero of ours read as "nothing
@@ -1035,17 +1125,29 @@ pub fn parse_gui_folders(v: &Value) -> HashMap<PathBuf, ShareStatus> {
         // an archive may be verified — below 100 % nothing is), what has
         // arrived (the web UI's own percentage covers the file in flight),
         // and whether either is a figure from the engine at all.
-        let (state, finished, received, known) = if paused {
+        let (state, finished, received, known) = if paused || status_code == Some(1) {
             (ShareState::Paused, 0, 0, false)
         } else if error.is_some() {
             (ShareState::Error, 0, 0, false)
-        } else if status_text.contains("index") {
+        } else if status_text.contains("index")
+            || f.get("loading").and_then(Value::as_bool) == Some(true)
+            || f.get("remoteindexing").and_then(Value::as_bool) == Some(true)
+        {
             (ShareState::Indexing, 0, 0, false)
+        } else if status_code == Some(7)
+            && f.get("remoteindexing").and_then(Value::as_bool) != Some(true)
+        {
+            (ShareState::Complete, size, size, true)
         } else if let Some(p) = progress {
-            if p >= 100 {
+            if p >= 100.0 {
                 (ShareState::Complete, size, size, true)
             } else {
-                (ShareState::Downloading, 0, size * p / 100, true)
+                (
+                    ShareState::Downloading,
+                    0,
+                    (size as f64 * p / 100.0) as u64,
+                    true,
+                )
             }
         } else if status_text.contains("synced") || status_text.contains("up to date") {
             (ShareState::Complete, size, size, true)
@@ -1068,8 +1170,16 @@ pub fn parse_gui_folders(v: &Value) -> HashMap<PathBuf, ShareStatus> {
                 finished_known: state == ShareState::Complete,
                 files_total: files,
                 peers,
-                download_bps: f.get("down").and_then(as_u64_lenient).unwrap_or(0),
-                upload_bps: f.get("up").and_then(as_u64_lenient).unwrap_or(0),
+                download_bps: f
+                    .get("down_speed")
+                    .or_else(|| f.get("down"))
+                    .and_then(as_u64_lenient)
+                    .unwrap_or(0),
+                upload_bps: f
+                    .get("up_speed")
+                    .or_else(|| f.get("up"))
+                    .and_then(as_u64_lenient)
+                    .unwrap_or(0),
                 error,
             },
         );
@@ -1403,7 +1513,15 @@ impl Transport for ResilioTransport {
         if let Ok(mut c) = self.child.lock() {
             *c = Some(child);
         }
-        self.wait_for_api(Duration::from_secs(20)).await
+        self.wait_for_api(Duration::from_secs(20)).await?;
+        if let Err(e) = self
+            .client
+            .ensure_player_identity(&self.config.player_name)
+            .await
+        {
+            log::warn!("cannot set Resilio player identity: {e}");
+        }
+        Ok(())
     }
 
     async fn stop(&self) -> Result<()> {
@@ -2378,6 +2496,117 @@ mod tests {
     }
 
     #[test]
+    fn parses_the_progress_fields_used_by_resilio_281() {
+        let folders = parse_gui_folders(&json!({"folders":[
+            {"path":"/lan/new","size":10000,"status":3,"down_status":0,"down_speed":8000},
+            {"path":"/lan/resumed","size":10000,"status":3,"down_status":"43.25","progress":99},
+            {"path":"/lan/done","size":10000,"status":7},
+            {"path":"/lan/indexing","size":10000,"status":7,"loading":true,"down_status":100},
+            {"path":"/lan/remote-indexing","size":10000,"status":7,"remoteindexing":true,"down_status":100},
+            {"path":"/lan/error","size":10000,"status":3,"error":123}
+        ]}));
+        let fresh = &folders[Path::new("/lan/new")];
+        assert_eq!(fresh.bytes_received, 0);
+        assert!(fresh.bytes_known);
+        assert_eq!(fresh.download_bps, 8000);
+        let resumed = &folders[Path::new("/lan/resumed")];
+        assert_eq!(resumed.bytes_received, 4325);
+        assert!(!resumed.finished_known);
+        assert_eq!(folders[Path::new("/lan/done")].state, ShareState::Complete);
+        assert_eq!(
+            folders[Path::new("/lan/indexing")].state,
+            ShareState::Indexing
+        );
+        assert_eq!(folders[Path::new("/lan/error")].state, ShareState::Error);
+        assert_eq!(
+            folders[Path::new("/lan/remote-indexing")].state,
+            ShareState::Indexing
+        );
+    }
+
+    #[tokio::test]
+    async fn identity_onboarding_preserves_existing_identity_and_master_key() {
+        for existing in [false, true] {
+            let (base, seen) = mock_server_recording(
+                vec![
+                    ("/gui/token.html", 200, "<div id='token'>TOK</div>"),
+                    ("action=setuseridentity", 200, r#"{"status":200}"#),
+                    (
+                        "action=useridentity",
+                        200,
+                        if existing {
+                            r#"{"status":200,"value":{"username":"Existing player"}}"#
+                        } else {
+                            r#"{"status":200,"value":{}}"#
+                        },
+                    ),
+                    (
+                        "action=getmasterfolder",
+                        200,
+                        if existing {
+                            r#"{"status":200,"value":{"secret":"existing"}}"#
+                        } else {
+                            r#"{"status":200,"value":{}}"#
+                        },
+                    ),
+                    ("action=setmfsecret", 200, r#"{"status":200,"error":0}"#),
+                ],
+                None,
+                None,
+            )
+            .await;
+            let client = ResilioClient::new(base, "u", "p", Some("KEY".into()));
+            client
+                .ensure_player_identity("Player & Friends")
+                .await
+                .unwrap();
+            let requests = seen.lock().unwrap();
+            assert_eq!(
+                requests
+                    .iter()
+                    .any(|r| r.contains("username=Player+%26+Friends")),
+                !existing
+            );
+            assert_eq!(
+                requests.iter().any(|r| r.contains("action=setmfsecret")),
+                !existing
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn api_uses_webui_progress_but_keeps_its_download_rate() {
+        let base = mock_server(vec![
+            ("/gui/token.html", "<div id='token'>TOK</div>"),
+            ("method=get_folders", r#"[{"dir":"/lan/g","secret":"test","size":8,"total_size":1000,"files":1,"total_files":2,"down_speed":12345}]"#),
+            ("method=get_folder_peers", r#"[{"id":"peer","download":990000}]"#),
+            ("action=getsyncfolders", r#"{"folders":[{"path":"/lan/g","size":1000,"status":3,"down_status":43,"down_speed":1}]}"#),
+        ]).await;
+        let client = ResilioClient::new(base, "u", "p", Some("KEY".into()));
+        let folders = client.folders().await.unwrap();
+        let folder = &folders[Path::new("/lan/g")];
+        assert_eq!(folder.bytes_received, 430);
+        assert_eq!(folder.bytes_done, 8);
+        assert_eq!(folder.download_bps, 12345);
+        assert_eq!(folder.state, ShareState::Downloading);
+    }
+
+    #[tokio::test]
+    async fn gui_application_errors_do_not_look_like_success() {
+        let base = mock_server(vec![
+            ("/gui/token.html", "<div id='token'>TOK</div>"),
+            ("action=useridentity", r#"{"status":200,"value":{}}"#),
+            (
+                "action=setuseridentity",
+                r#"{"status":500,"error":"rejected"}"#,
+            ),
+        ])
+        .await;
+        let client = ResilioClient::new(base, "u", "p", None);
+        assert!(client.ensure_player_identity("Player").await.is_err());
+    }
+
+    #[test]
     fn gui_folders_report_catalog_peers() {
         let v = json!({"folders":[
             {"name":"/lan/quake3","size":"1","files":1,"status":"Synced","peers":[{},{}]},
@@ -2511,7 +2740,10 @@ mod tests {
         let c = ResilioClient::new(base, "u", "p", Some("KEY".into()));
         let f = c.folders().await.unwrap();
         let siege = &f[Path::new("/lan/siege")];
-        assert_eq!(siege.bytes_received, 5_000_000_000, "what the peers sent");
+        assert_eq!(
+            siege.bytes_received, 0,
+            "session totals are only a baseline"
+        );
         assert_eq!(siege.bytes_done, 8, "what the engine calls finished");
         assert_eq!(siege.bytes_total, 150_900_000_000);
         assert_eq!(siege.peers, 2);
@@ -2529,8 +2761,8 @@ mod tests {
         let q = &f[Path::new("/lan/q")];
         assert_eq!(
             (q.bytes_received, q.bytes_known),
-            (8, true),
-            "the finished files, the only figure such an engine gives"
+            (0, false),
+            "finished files are not a measurement of download progress"
         );
         assert_eq!(q.peers, 1, "it is still a peer");
 
@@ -2572,20 +2804,20 @@ mod tests {
             counted: true,
         };
         let mut t = Transfer::default();
-        // First sight: the engine's session began with this download.
-        assert_eq!(t.step(1000, 0, &[peer("a", 300)]), 300);
-        assert_eq!(t.step(1000, 0, &[peer("a", 500)]), 500);
+        // First sight: session history must not start a new download at 30%.
+        assert_eq!(t.step(1000, 0, &[peer("a", 300)]), 0);
+        assert_eq!(t.step(1000, 0, &[peer("a", 500)]), 200);
         // A second peer joins with a counter of its own.
-        assert_eq!(t.step(1000, 0, &[peer("a", 500), peer("b", 100)]), 600);
+        assert_eq!(t.step(1000, 0, &[peer("a", 500), peer("b", 100)]), 200);
         // One drops out of the list and comes back with its total: only what
         // it sent since counts, not its whole session again.
-        assert_eq!(t.step(1000, 0, &[peer("a", 600)]), 700);
-        assert_eq!(t.step(1000, 0, &[peer("a", 600), peer("b", 150)]), 750);
+        assert_eq!(t.step(1000, 0, &[peer("a", 600)]), 300);
+        assert_eq!(t.step(1000, 0, &[peer("a", 600), peer("b", 150)]), 350);
         // A peer reconnects and starts at zero: nothing un-arrives.
-        assert_eq!(t.step(1000, 0, &[peer("a", 0), peer("b", 150)]), 750);
-        assert_eq!(t.step(1000, 0, &[peer("a", 50), peer("b", 150)]), 800);
+        assert_eq!(t.step(1000, 0, &[peer("a", 0), peer("b", 150)]), 350);
+        assert_eq!(t.step(1000, 0, &[peer("a", 50), peer("b", 150)]), 400);
         // Finished, and nothing above the share's own size.
-        assert_eq!(t.step(1000, 1000, &[peer("a", 400)]), 1000);
+        assert_eq!(t.step(1000, 1000, &[peer("a", 400)]), 750);
         // An update: the share was complete and is given another size, and
         // Resilio keeps the old files until the new package is whole — so
         // nothing falls back, and that is the only sign that a second
@@ -2601,24 +2833,25 @@ mod tests {
         let mut running = Transfer::default();
         assert_eq!(
             running.step(1000, 950, &[peer("a", 300)]),
-            300,
-            "what the peers sent, not the package from before"
+            0,
+            "a pre-existing session total is not download progress"
         );
-        assert_eq!(running.step(1000, 950, &[peer("a", 400)]), 400);
+        assert_eq!(running.step(1000, 950, &[peer("a", 400)]), 100);
 
         // A reading without a size (an engine without `total_size`) does not
         // make a share forget how big it is: the update after it is still
         // recognised.
         let mut u = Transfer::default();
-        assert_eq!(u.step(1000, 0, &[peer("a", 100)]), 100);
-        assert_eq!(u.step(1000, 1000, &[peer("a", 900)]), 900);
-        assert_eq!(u.step(0, 1000, &[peer("a", 900)]), 900, "no size, no news");
+        assert_eq!(u.step(1000, 0, &[peer("a", 100)]), 0);
+        assert_eq!(u.step(1000, 1000, &[peer("a", 900)]), 800);
+        assert_eq!(u.step(0, 1000, &[peer("a", 900)]), 800, "no size, no news");
         assert_eq!(u.step(2000, 1000, &[peer("a", 950)]), 0, "still an update");
         // A tick the engine did not answer keeps the figure.
         assert_eq!(t.arrived(2000, 1000), 80);
         // A share whose size the engine does not know yet is not capped.
         let mut unknown = Transfer::default();
-        assert_eq!(unknown.step(0, 0, &[peer("a", 2000)]), 2000);
+        assert_eq!(unknown.step(0, 0, &[peer("a", 2000)]), 0);
+        assert_eq!(unknown.step(0, 0, &[peer("a", 5000)]), 3000);
     }
 
     #[tokio::test]
@@ -2631,6 +2864,37 @@ mod tests {
         let c = ResilioClient::new(base, "u", "p", Some("KEY".into()));
         let err = c.remove_folder(Path::new("/x"), None).await.unwrap_err();
         assert!(err.to_string().contains("error 3"));
+    }
+
+    #[tokio::test]
+    async fn gui_disconnect_preserves_files_and_other_devices() {
+        let (base, seen) = mock_server_recording(
+            vec![
+                ("/gui/token.html", 200, "<div id='token'>TOK</div>"),
+                (
+                    "action=getsyncfolders",
+                    200,
+                    r#"{"folders":[{"id":"folder-123","path":"/lan/game"}]}"#,
+                ),
+                ("action=removefolder", 200, r#"{"status":200}"#),
+            ],
+            None,
+            None,
+        )
+        .await;
+        let client = ResilioClient::new(base, "u", "p", None);
+        client
+            .remove_folder(Path::new("/lan/game"), None)
+            .await
+            .unwrap();
+        let requests = seen.lock().unwrap();
+        let request = requests
+            .iter()
+            .find(|r| r.contains("action=removefolder"))
+            .unwrap();
+        assert!(request.contains("folderid=folder-123"));
+        assert!(request.contains("deletedirectory=false"));
+        assert!(request.contains("fromalldevices=false"));
     }
 
     #[tokio::test]

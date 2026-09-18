@@ -501,6 +501,7 @@ pub(crate) async fn build_transport(state: &AppState) -> (Arc<dyn Transport>, Op
                     cfg.lan_only = lan_only;
                     cfg.listening_port = port;
                     cfg.api_key = api_key;
+                    cfg.player_name = state.settings.read().await.player_name.clone();
                     let t = ResilioTransport::new(cfg);
                     match t.start().await {
                         Ok(()) => (Arc::new(t), None),

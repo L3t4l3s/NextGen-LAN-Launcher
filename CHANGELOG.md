@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Beim ersten Start wird der Spielername als Resilio-Identität übernommen. Die
+  Ersteinrichtung legt den fehlenden Identitätsschlüssel an. Vorhandene Identitäten
+  bleiben erhalten: Resilio 2.8.1 erlaubt über diesen Endpunkt kein Umbenennen.
+- Downloads lesen den Prozentwert aus Resilios Web-UI (`down_status`), auch mit
+  aktiviertem API-Key. Reservierte Dateigrößen und alte Sitzungszähler erzeugen
+  keinen künstlichen Fortschritt mehr. Laufender Datenempfang verhindert falsche
+  Hängerwarnungen. Angezeigt werden Prozent, Gesamtgröße und Geschwindigkeit.
+- Speicherplatzwarnungen verschwinden nach Freigabe von Platz. Neu konfigurierte
+  Spieleordner gelten sofort; leere gesperrte Altordner erzwingen keinen Rückfall
+  auf ein volles Laufwerk. Unfertige Downloads können beim Installieren/Fortsetzen
+  auf einen Spieleordner mit genügend Platz umziehen, bestehende Installationen
+  bleiben erhalten.
+
 - **Linux: Proton wird jetzt gefunden, statt nur konfiguriert.** Auf dem Steam Deck meldete der
   Launcher beim Spielstart „no Wine, CrossOver or Proton found", obwohl Proton installiert war —
   und zwar zu Recht: es gab überhaupt keine Suche. Wine wurde über `PATH` gesucht, CrossOver an

@@ -101,7 +101,7 @@
                    launcher checks or unpacks an archive none of them moves,
                    and showing them there reads as a stuck download. -->
               {#if transferring(status)}
-                <span>{t("detail.progress", { done: formatBytes(status.bytesDone), total: formatBytes(status.bytesTotal) })}</span>
+                <span>{t("detail.total", { total: formatBytes(status.bytesTotal) })}</span>
                 {#if status.downloadBps}<span>{formatSpeed(status.downloadBps)}</span>{/if}
                 <span>{t("detail.peers", { count: status.peers })}</span>
                 <!-- Which disk it is going to: with several library folders

@@ -215,8 +215,11 @@ again.
   does not block it. A stricter policy still can, and then the failure carries the message `netsh`
   printed and the warning can be hidden.
 - **Real Resilio operation:** the client speaks the documented Sync API (`/api`, with an API key)
-  and falls back to the GUI endpoints. Both can only be verified against a running sync server.
-  The install logic deliberately does not depend on either.
+  and also reads `getsyncfolders.down_status`, the percentage used by Resilio's own WebUI.
+  Player-identity onboarding was exercised against an isolated Windows 2.8.1.1390 process;
+  progress fields were checked against that build's bundled WebUI code. Downloads from a
+  real LAN sync server, resumed updates, and relocation while a real engine releases file
+  handles still need LAN verification. CRC verification remains mandatory before extraction.
 - **Bundled Resilio:** release builds and the full CI matrix ship the official binary pinned by
   version and SHA-256 in `resilio.lock.json`, currently build 2.8.1.1390 for all four platforms.
   Resilio 3.x requires a Resilio account for its free licence, 2.8.1 does not, the ETI sync
