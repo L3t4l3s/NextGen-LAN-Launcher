@@ -294,7 +294,7 @@ again.
   refreshed with `tools/update-covers.sh`), so the library shows artwork without a sync server.
   Covers from the LAN's `eti_launcher/update/assets.eti` replace them; videos still come only
   from the share (`video/<id>.mp4`).
-- **macOS/Linux launch profiles:** six games have curated profiles; every other game gets a profile
+- **macOS/Linux launch profiles:** eight games have curated profiles; every other game gets a profile
   derived from `game_start.cmd` (91 of 158 ETI scripts start exactly one executable) or the user
   picks the executable on first launch.
 - Roadmap: LANPage inside the launcher, a LAN-Share file-sharing view, TS3/Discord integration.
