@@ -176,11 +176,12 @@ again.
   output.
 - **Proton itself, once found:** the search for it is covered by tests that build a Steam Deck's
   layout in a temporary folder — two libraries, the SD card among them, a symlinked root, a
-  `compatibilitytools.d` entry and a Flatpak Steam. What cannot be checked here is a game actually
-  starting through Proton: there is no Proton and no Windows game in this environment, so the
-  invocation (`proton run <exe>` with `STEAM_COMPAT_DATA_PATH` and
-  `STEAM_COMPAT_CLIENT_INSTALL_PATH`) is unchanged from before and still only reasoned about.
-  Untested, to be checked on the LAN.
+  `compatibilitytools.d` entry and a Flatpak Steam. The AppImage was also run on SteamOS against a
+  harmless real Windows executable from the installed Proton. This exposed that a direct Proton
+  call, unlike Steam, must create `STEAM_COMPAT_DATA_PATH` before Proton opens `pfx.lock`. With
+  that fixed, `proton run <exe>` created the isolated prefix and displayed the Windows program;
+  `STEAM_COMPAT_CLIENT_INSTALL_PATH`, the working directory and process environment were checked
+  on the running child.
 - **Installer and a running launcher:** unsolved. The NSIS hook closes the launcher first and its
   sync engine second (the launcher restarts an engine it sees dying, and the installer's own
   "close the application?" prompt only comes after the hook), waits until nothing runs from the
@@ -191,10 +192,10 @@ again.
 - **The environment a game is started in:** what the launcher forces on itself to get its own
   window drawn (software rendering, an X11 backend, an EGL platform) is put back to the value it
   had before, and under an AppImage every path into the mount plus the image's own `GDK_BACKEND`
-  and `GTK_THEME` are taken out of the child's environment. The rules are covered by tests; that a
-  game actually starts better for it has only been reasoned, not run — there is no Linux game here
-  to start. The sync engine is deliberately left as it is: it runs from the same AppImage and does
-  so successfully on the Deck.
+  and `GTK_THEME` are taken out of the child's environment. The rules are covered by tests and the
+  environment of a Windows process running through Proton was inspected on the Deck: it contained
+  no AppImage mount, marker or forced WebKit/graphics setting. The sync engine is deliberately left
+  as it is: it runs from the same AppImage and does so successfully on the Deck.
 - **Icon after an upgrade:** the executable carries the right icon (the preview pane proves it),
   but the shell caches icons per path. The NSIS hook calling `SHChangeNotify` is meant to clear
   that on upgrade; whether it does for Explorer, the desktop shortcut and a pinned taskbar entry

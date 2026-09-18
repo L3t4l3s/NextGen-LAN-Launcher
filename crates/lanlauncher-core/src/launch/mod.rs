@@ -337,6 +337,7 @@ pub async fn spawn_elevated(
 }
 
 pub async fn spawn(plan: &LaunchPlan, log: Option<&Path>) -> Result<(u32, ExitWatch)> {
+    ensure_proton_prefix(plan)?;
     let mut cmd = tokio::process::Command::new(&plan.program);
     cmd.current_dir(&plan.cwd);
     // Before the plan's own environment: a manifest may set one of these
@@ -371,6 +372,27 @@ pub async fn spawn(plan: &LaunchPlan, log: Option<&Path>) -> Result<(u32, ExitWa
         .spawn()
         .map_err(|e| Error::Launch(format!("cannot start {}: {e}", plan.program.display())))?;
     Ok(watch(child))
+}
+
+/// Proton locks the compatibility-data directory before it creates `pfx/`.
+/// Steam normally creates that outer directory for it; a standalone launcher
+/// has to do the same or Proton exits immediately while opening `pfx.lock`.
+fn ensure_proton_prefix(plan: &LaunchPlan) -> Result<()> {
+    let Some(value) = plan.env.get("STEAM_COMPAT_DATA_PATH") else {
+        return Ok(());
+    };
+    if value.is_empty() {
+        return Err(Error::Launch(
+            "STEAM_COMPAT_DATA_PATH must not be empty".into(),
+        ));
+    }
+    let path = PathBuf::from(value);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        plan.cwd.join(path)
+    };
+    std::fs::create_dir_all(&path).map_err(|e| Error::io(path, e))
 }
 
 /// The environment variable in which the launcher records what it forced on
@@ -565,6 +587,26 @@ fn is_unix_executable(_m: &std::fs::Metadata) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn creates_the_outer_proton_prefix_before_launch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("game/local");
+        let prefix = cwd.join("relative-prefix");
+        let plan = LaunchPlan {
+            program: PathBuf::from("proton"),
+            args: Vec::new(),
+            cwd,
+            env: BTreeMap::from([("STEAM_COMPAT_DATA_PATH".into(), "relative-prefix".into())]),
+            runner: "Proton".into(),
+            needs_elevation: false,
+            raw_command_line: None,
+        };
+
+        ensure_proton_prefix(&plan).unwrap();
+
+        assert!(prefix.is_dir());
+    }
 
     #[test]
     fn a_game_does_not_inherit_the_appimage() {
