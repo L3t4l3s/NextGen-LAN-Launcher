@@ -181,7 +181,12 @@ again.
   call, unlike Steam, must create `STEAM_COMPAT_DATA_PATH` before Proton opens `pfx.lock`. With
   that fixed, `proton run <exe>` created the isolated prefix and displayed the Windows program;
   `STEAM_COMPAT_CLIENT_INSTALL_PATH`, the working directory and process environment were checked
-  on the running child.
+  on the running child. A subsequent launch of the real 32-bit Unity build of Among Us exposed a
+  second distinction that Notepad could not: an automatically discovered legacy
+  `ULWGL-Proton-8.0-5-3` hung while creating the graphics device, whereas the installed Proton
+  11.0 and Proton Experimental both opened a visible, usable game. Automatic selection therefore
+  prefers current official Steam releases, with `Experimental`/`Hotfix` next and unrelated custom
+  tools last; an explicitly configured Proton path still overrides discovery.
 - **Installer and a running launcher:** unsolved. The NSIS hook closes the launcher first and its
   sync engine second (the launcher restarts an engine it sees dying, and the installer's own
   "close the application?" prompt only comes after the hook), waits until nothing runs from the
