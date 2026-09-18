@@ -384,6 +384,17 @@ impl ResilioClient {
         Ok(())
     }
 
+    /// Resilio 2.8.1 remembers an empty address as an acknowledged prompt.
+    /// Never overwrite an existing choice or submit an email subscription.
+    pub async fn dismiss_newsletter_prompt(&self) -> Result<()> {
+        let answer = self.gui("isemailset", &[]).await?;
+        if answer.get("value").and_then(Value::as_bool) == Some(false) {
+            self.gui("setemail", &[("email", ""), ("target", "onboarding")])
+                .await?;
+        }
+        Ok(())
+    }
+
     pub fn has_api_key(&self) -> bool {
         self.api_key.is_some()
     }
@@ -1521,6 +1532,9 @@ impl Transport for ResilioTransport {
         {
             log::warn!("cannot set Resilio player identity: {e}");
         }
+        if let Err(e) = self.client.dismiss_newsletter_prompt().await {
+            log::warn!("cannot dismiss Resilio newsletter prompt: {e}");
+        }
         Ok(())
     }
 
@@ -2522,6 +2536,38 @@ mod tests {
             folders[Path::new("/lan/remote-indexing")].state,
             ShareState::Indexing
         );
+    }
+
+    #[tokio::test]
+    async fn newsletter_dismissal_uses_empty_address_and_preserves_existing_choice() {
+        for existing in [false, true] {
+            let (base, seen) = mock_server_recording(
+                vec![
+                    ("/gui/token.html", 200, "<div id='token'>TOK</div>"),
+                    (
+                        "action=isemailset",
+                        200,
+                        if existing {
+                            r#"{"status":200,"value":true}"#
+                        } else {
+                            r#"{"status":200,"value":false}"#
+                        },
+                    ),
+                    ("action=setemail", 200, r#"{"status":200}"#),
+                ],
+                None,
+                None,
+            )
+            .await;
+            let client = ResilioClient::new(base, "u", "p", None);
+            client.dismiss_newsletter_prompt().await.unwrap();
+            let requests = seen.lock().unwrap();
+            let sent = requests.iter().find(|r| r.contains("action=setemail"));
+            assert_eq!(sent.is_some(), !existing);
+            if let Some(request) = sent {
+                assert!(request.contains("email=&target=onboarding"));
+            }
+        }
     }
 
     #[tokio::test]

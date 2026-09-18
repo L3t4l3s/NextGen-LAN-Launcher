@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Ordnerzeilen im Einrichtungsassistenten verbreitert, abgeschnittene Fokusrahmen
+  korrigiert und „Entfernen“ beim einzigen Spieleordner ausgeblendet.
+- Resilio-Start und Neustarts serialisiert; doppelte Katalog-Anmeldung beim
+  Einrichten vermieden und fehlgeschlagene Anmeldungen automatisch erneut versucht.
+- „Resilio neu starten“ direkt an den Hinweisen zu fehlenden Teilnehmern/Servern
+  angeboten; Newsletter-Abfrage ohne Hinterlegen einer E-Mail-Adresse deaktiviert.
+
 - Einrichtungsassistent mit übernehmbarem Vorschlag `C:\LAN`, mehreren Spiele-Ordnern
   und klarer Standard-Markierung; vorhandene Kataloge werden in allen Ordnern gesucht.
 - Netzwerk-Check zeigt beim Katalog-Laden den aktuellen Zustand und „Bitte warten“

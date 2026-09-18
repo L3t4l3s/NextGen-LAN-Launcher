@@ -16,7 +16,7 @@
 
   // "Fix now" fits a repair, not a button that opens something. A problem
   // may name its own label; `open_url` alone says nothing about where to.
-  const fixLabels: Record<string, string> = { open_url: "action.open", open_folder: "action.open_folder" };
+  const fixLabels: Record<string, string> = { open_url: "action.open", open_folder: "action.open_folder", restart_transport: "diag.restart_transport" };
   const fixLabel = $derived(
     has(`problem.${problem.code}.action`) ? `problem.${problem.code}.action` : (fixLabels[problem.fix?.kind ?? ""] ?? "action.fix_now"),
   );

@@ -688,6 +688,7 @@ pub async fn save_settings(
     state: State<'_, Arc<AppState>>,
     settings: Settings,
 ) -> Cmd<Settings> {
+    let _lifecycle = state.transport_lifecycle.lock().await;
     let mut current = state.settings.write().await;
     let mut new = settings;
     if state.demo {
@@ -730,16 +731,10 @@ pub async fn save_settings(
         let old = std::mem::replace(&mut *library, new.library.clone());
         crate::update_media_scope(&app, &old.roots, &new.library);
     }
-    if binary_changed && new.transport == TransportMode::Managed && !state.demo {
-        // A different engine binary only takes effect with a fresh transport;
-        // the error, if any, is shown by the next diagnostics run.
-        let _ = restart_transport_inner(&state).await;
-    }
+    let restarting = binary_changed && new.transport == TransportMode::Managed && !state.demo;
+    // Disconnect the previous catalog before a restart registers its
+    // successor; never remove a just-registered share on the new engine.
     if catalog_changed && !state.demo {
-        // The wizard saves a root without restarting the transport, so the
-        // catalog share is (re-)registered right here. The old registration
-        // is dropped first: a moved root must not sync the catalog twice, and
-        // Resilio ignores re-adding a known folder with a different key.
         if let Some(old) = &old_root {
             if let Some(t) = state.transport.read().await.clone() {
                 let old_dir = old.join(lanlauncher_core::paths::LAUNCHER_SHARE_ID);
@@ -748,6 +743,17 @@ pub async fn save_settings(
                 }
             }
         }
+    }
+    if restarting {
+        // A different engine binary only takes effect with a fresh transport;
+        // the error, if any, is shown by the next diagnostics run.
+        let _ = restart_transport_locked(&state).await;
+    }
+    if catalog_changed && !restarting && !state.demo {
+        // The wizard saves a root without restarting the transport, so the
+        // catalog share is (re-)registered right here. The old registration
+        // is dropped first: a moved root must not sync the catalog twice, and
+        // Resilio ignores re-adding a known folder with a different key.
         crate::register_catalog_share(&state).await;
     }
     // Newly added secondary roots may already contain a catalog. Load in
@@ -1112,6 +1118,12 @@ pub async fn get_library_space(state: State<'_, Arc<AppState>>) -> Cmd<Vec<Libra
 }
 
 pub async fn restart_transport_inner(state: &Arc<AppState>) -> Cmd<()> {
+    let _lifecycle = state.transport_lifecycle.lock().await;
+    restart_transport_locked(state).await
+}
+
+/// Caller holds `transport_lifecycle` for the entire replacement.
+async fn restart_transport_locked(state: &Arc<AppState>) -> Cmd<()> {
     // Jobs of the old manager must not race the successor's on the same
     // staging directories.
     if let Some(m) = state.manager.read().await.clone() {

@@ -135,7 +135,7 @@
                 {/if}
               </div>
               {#if isDefault}<span class="badge ready">{t("settings.library.default")}</span>{:else}<button class="ghost" onclick={() => makeDefault(root.path)}>{t("settings.library.make_default")}</button>{/if}
-              <button class="ghost danger" onclick={() => removeRoot(root.path)} disabled={app.bootstrap?.demo}>{t("settings.library.remove")}</button>
+              {#if draft.library.roots.length > 1}<button class="ghost danger" onclick={() => removeRoot(root.path)} disabled={app.bootstrap?.demo}>{t("settings.library.remove")}</button>{/if}
             </li>
           {/each}
         </ul>

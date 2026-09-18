@@ -1512,6 +1512,7 @@ pub fn run() {
                 demo,
                 settings: RwLock::new(settings),
                 transport: RwLock::new(None),
+                transport_lifecycle: tokio::sync::Mutex::new(()),
                 manager: RwLock::new(None),
                 event: RwLock::new(Default::default()),
                 manifests,
@@ -1612,6 +1613,7 @@ async fn refresh_event(state: &AppState, app: &tauri::AppHandle) {
 }
 
 async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
+    let lifecycle = state.transport_lifecycle.lock().await;
     let library = state.library.clone();
     // The catalog is loaded while the sync engine starts (which may take up
     // to its API timeout), so the library appears as early as possible.
@@ -1657,7 +1659,14 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
     {
         log::info!("lanpage not answered within 5 s; starting the sync engine without it");
     }
-    let (transport, error) = build_transport(&state).await;
+    // A very early settings save may have initialized the transport before
+    // this task obtained the lifecycle lock. Reuse it instead of spawning a
+    // second engine against the same profile.
+    let existing = state.transport.read().await.clone();
+    let (transport, error) = match existing {
+        Some(t) => (t, state.transport_error.read().await.clone()),
+        None => build_transport(&state).await,
+    };
     *state.transport_error.write().await = error;
     *state.transport.write().await = Some(transport.clone());
     register_catalog_share(&state).await;
@@ -1673,6 +1682,7 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
     );
     manager.adopt_existing().await;
     *state.manager.write().await = Some(manager.clone());
+    drop(lifecycle);
     // Statuses exist only now; the UI re-reads the games once more.
     let _ = app.emit(CATALOG_EVENT, 0usize);
 
@@ -1742,8 +1752,21 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
     let app4 = app.clone();
     tauri::async_runtime::spawn(async move {
         loop {
-            if let Some(t) = st.transport.read().await.clone() {
+            let transport = st.transport.read().await.clone();
+            if let Some(t) = transport {
                 let health = t.health().await;
+                // Registration can fail transiently while Resilio boots.
+                // Retry only a missing share, never reset one just because
+                // peers have not appeared, and never race a manual restart.
+                if health.kind == lanlauncher_core::transport::TransportKind::Resilio
+                    && health.running
+                    && health.api_reachable
+                    && health.server_found.is_none()
+                {
+                    if let Ok(_lifecycle) = st.transport_lifecycle.try_lock() {
+                        register_catalog_share(&st).await;
+                    }
+                }
                 let _ = app4.emit(HEALTH_EVENT, &health);
             }
             tokio::time::sleep(Duration::from_secs(15)).await;

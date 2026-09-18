@@ -19,6 +19,9 @@ pub struct AppState {
     pub demo: bool,
     pub settings: RwLock<Settings>,
     pub transport: RwLock<Option<Arc<dyn Transport>>>,
+    /// Startup, settings changes and manual restarts must never spawn engines
+    /// concurrently against the same Resilio storage directory.
+    pub transport_lifecycle: tokio::sync::Mutex<()>,
     pub manager: RwLock<Option<Arc<InstallManager>>>,
     pub event: RwLock<EventBundle>,
     pub manifests: ManifestStore,

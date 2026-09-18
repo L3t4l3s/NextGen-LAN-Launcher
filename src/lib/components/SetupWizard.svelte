@@ -85,21 +85,17 @@
       <p class="hint">{t("wizard.intro")}</p>
       <h3>{t("wizard.step1.title")}</h3>
       <p class="hint">{t("wizard.step1.text")}</p>
-      <div class="stack root-list">
+      <div class="stack root-list" class:single={roots.length === 1}>
         {#each roots as root, index (index)}
           <div class="root-row">
-            <div class="row">
               <input class="grow" bind:value={root.path} aria-label={t("settings.library")} />
               <button onclick={() => choose(index)}>{t("wizard.step1.choose")}</button>
-            </div>
-            <div class="row">
               {#if index === defaultRootIndex(roots)}
                 <span class="badge ready">{t("settings.library.default")}</span>
               {:else}
                 <button class="ghost" onclick={() => makeDefault(index)}>{t("settings.library.make_default")}</button>
               {/if}
-              <button class="ghost" onclick={() => removeRoot(index)} disabled={roots.length === 1}>{t("settings.library.remove")}</button>
-            </div>
+              {#if roots.length > 1}<button class="ghost" onclick={() => removeRoot(index)}>{t("settings.library.remove")}</button>{/if}
           </div>
         {/each}
       </div>
@@ -134,7 +130,7 @@
         {/if}
       {/if}
       <div class="row end">
-        <button onclick={() => check()} disabled={checking}>{t("action.retry")}</button>
+        <button onclick={() => check()} disabled={checking}>{t("action.recheck")}</button>
         <button class="primary" onclick={finish}>{t("action.finish")}</button>
       </div>
     {/if}
@@ -142,9 +138,16 @@
 </div>
 
 <style>
-  .root-list { max-height: 40vh; overflow: auto; }
-  .root-row { display: grid; gap: 0.3rem; }
+  .root-list { max-height: 40vh; overflow: auto; padding: 4px; }
+  .root-row { display: grid; grid-template-columns: minmax(0, 1fr) 9rem 10rem 7rem; gap: 0.6rem; align-items: center; }
+  .root-list.single .root-row { grid-template-columns: minmax(0, 1fr) 9rem 10rem; }
+  .root-row input { min-width: 0; width: 100%; }
+  .root-row button, .root-row .badge { white-space: nowrap; }
+  .root-row .badge { justify-self: center; }
   .wizard {
+    width: min(920px, 94vw);
+    max-height: 94vh;
+    overflow: auto;
     display: flex;
     flex-direction: column;
     gap: 0.6rem;
@@ -187,5 +190,9 @@
   .problems {
     max-height: 45vh;
     overflow: auto;
+  }
+  @media (max-width: 700px) {
+    .root-row, .root-list.single .root-row { grid-template-columns: 9rem 10rem 7rem; }
+    .root-row input { grid-column: 1 / -1; }
   }
 </style>
