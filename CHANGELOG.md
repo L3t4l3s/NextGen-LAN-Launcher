@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Controller-Steuerung für die Oberfläche ergänzt: D-Pad oder linker Stick
+  bewegen den sichtbaren Fokus räumlich, A bestätigt und B schließt Dialoge
+  beziehungsweise kehrt zur Bibliothek zurück. Dropdowns lassen sich nach A
+  mit Stick/D-Pad ändern. Maus und Tastatur bleiben unverändert nutzbar.
+
+- Theme-Schriften werden über den Launcher geladen und eingebettet. Dadurch
+  gelten `fontFamily` und die zugehörigen Font-Dateien auch für Tabs, Spiele
+  und Fließtext, wenn die LANPage keine CORS-Header ausliefert.
+
 - Resilio-Start, anfängliche Teilnehmersuche und Datei-Scan erscheinen neutral
   statt als Sync-Warnung. Diagnoseprüfungen aktualisieren auch die Statusleiste;
   echte Fehler und dauerhaft fehlende Teilnehmer bleiben erkennbar.

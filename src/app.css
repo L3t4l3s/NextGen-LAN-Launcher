@@ -117,6 +117,13 @@ button:hover:not(:disabled) {
 button:active:not(:disabled) {
   transform: translateY(1px);
 }
+/* Keyboard and controller focus must remain obvious on cards as well as on
+   ordinary form controls. Mouse clicks do not receive this ring. */
+:focus-visible,
+.gamepad-focus:focus {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 3px;
+}
 button:disabled {
   opacity: 0.55;
   cursor: default;
@@ -165,6 +172,10 @@ select:focus,
 textarea:focus {
   outline: 2px solid var(--color-primary);
   outline-offset: 1px;
+}
+select.gamepad-editing:focus {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 3px;
 }
 label {
   display: block;

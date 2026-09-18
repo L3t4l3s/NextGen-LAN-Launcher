@@ -23,7 +23,7 @@
 
   <nav>
     {#each tabs as tab (tab.id)}
-      <button class:active={app.view === tab.id} class="tab" onclick={() => (app.view = tab.id)}>
+      <button class:active={app.view === tab.id} class="tab" data-gamepad-back={tab.id === "library" ? "true" : undefined} onclick={() => (app.view = tab.id)}>
         {t(tab.label)}
         {#if tab.count && tab.count() > 0}<span class="count">{tab.count()}</span>{/if}
       </button>

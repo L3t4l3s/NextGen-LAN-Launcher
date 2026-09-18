@@ -143,7 +143,7 @@
       <!-- svelte-ignore a11y_media_has_caption -->
       <video src={coverSrc(game.video)} autoplay muted loop playsinline poster={coverSrc(game.cover) ?? undefined} onerror={() => (videoFailed = true)}></video>
     {:else if game.cover}<img src={coverSrc(game.cover)} alt="" />{:else}<span class="initials">{game.title.slice(0, 2)}</span>{/if}
-    <button class="close ghost" onclick={onclose} title={t("action.close")}>✕</button>
+    <button class="close ghost" data-gamepad-back onclick={onclose} title={t("action.close")}>✕</button>
   </div>
 
   <div class="body">
@@ -291,7 +291,7 @@
           {/each}
         </ul>
       {/if}
-      <div class="row end"><button onclick={() => (showExeChooser = false)}>{t("action.cancel")}</button></div>
+      <div class="row end"><button data-gamepad-back onclick={() => (showExeChooser = false)}>{t("action.cancel")}</button></div>
     </div>
   </div>
 {/if}

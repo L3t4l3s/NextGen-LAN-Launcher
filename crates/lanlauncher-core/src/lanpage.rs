@@ -12,8 +12,32 @@
 use crate::error::{Error, Result};
 use crate::launcher_ini::LanConfig;
 use crate::theme::Theme;
+use base64::Engine;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+const MAX_THEME_FONTS: usize = 8;
+const MAX_CONCURRENT_FONT_FETCHES: usize = 3;
+const MAX_FONT_BYTES: usize = 1_400_000;
+const MAX_THEME_FONT_BYTES: usize = 4_200_000;
+const FONT_INLINE_BUDGET: Duration = Duration::from_millis(500);
+const MAX_FONT_CACHE_ENTRIES: usize = 16;
+const MAX_FONT_CACHE_BYTES: usize = 12_000_000;
+const FONT_CACHE_TTL: Duration = Duration::from_secs(60 * 60);
+
+struct CachedFont {
+    data: String,
+    source_bytes: usize,
+    stored_at: Instant,
+}
+
+fn font_cache() -> &'static Mutex<HashMap<String, CachedFont>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, CachedFont>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventBundle {
@@ -159,7 +183,8 @@ pub async fn fetch_event(host: &str) -> EventBundle {
                 // parse, or the error is kept.
                 if explicit_theme_url.is_some() || looks_like_theme(&text) {
                     match Theme::parse_at(&text, Some(&theme_url)) {
-                        Ok(t) => {
+                        Ok(mut t) => {
+                            inline_theme_fonts(&client, &mut t, &mut bundle.errors).await;
                             bundle.fetched.push("theme.json".into());
                             bundle.theme = Some(t);
                         }
@@ -185,12 +210,138 @@ pub async fn fetch_event(host: &str) -> EventBundle {
         {
             // `theme_logo = logo.png` means the file next to launcher.ini.
             theme.normalise_for(&format!("{base}/launcher.ini"));
+            inline_theme_fonts(&client, &mut theme, &mut bundle.errors).await;
             log::info!("theme from launcher.ini: {}", theme.name);
             bundle.theme = Some(theme);
         }
     }
 
     bundle
+}
+
+/// Fonts referenced by a theme are cross-origin from Tauri's webview. Most
+/// small LAN web servers do not send `Access-Control-Allow-Origin`, so the
+/// browser rejects the file and quietly uses the fallback face. Fetch valid
+/// font files here and pass them to the UI as data URLs; an unavailable or
+/// unusual file keeps its original URL, which still works on a CORS-aware
+/// server.
+async fn inline_theme_fonts(client: &reqwest::Client, theme: &mut Theme, errors: &mut Vec<String>) {
+    let eligible = theme
+        .font_faces
+        .iter()
+        .enumerate()
+        .map(|(index, face)| (index, face.family.clone(), face.src.trim().to_string()))
+        .filter(|(_, _, src)| src.starts_with("http://") || src.starts_with("https://"))
+        .collect::<Vec<_>>();
+    if eligible.len() > MAX_THEME_FONTS {
+        log::warn!(
+            "theme declares {} remote fonts; only the first {MAX_THEME_FONTS} are inlined",
+            eligible.len()
+        );
+    }
+
+    let requests = futures::stream::iter(eligible.into_iter().take(MAX_THEME_FONTS).map(
+        |(index, family, src)| async move { (index, family, fetch_theme_font(client, &src).await) },
+    ))
+    .buffer_unordered(MAX_CONCURRENT_FONT_FETCHES);
+    tokio::pin!(requests);
+
+    let mut total_bytes = 0;
+    let result = tokio::time::timeout(FONT_INLINE_BUDGET, async {
+        while let Some((index, family, result)) = requests.next().await {
+            match result {
+                Ok((data, bytes)) if total_bytes + bytes <= MAX_THEME_FONT_BYTES => {
+                    total_bytes += bytes;
+                    theme.font_faces[index].src = data;
+                }
+                Ok((_, _)) => {
+                    let message =
+                        format!("theme font {family}: total exceeds {MAX_THEME_FONT_BYTES} bytes");
+                    log::warn!("{message}");
+                    errors.push(message);
+                }
+                Err(e) => {
+                    log::warn!("theme font {family}: {e}");
+                    errors.push(format!("theme font {family}: {e}"));
+                }
+            }
+        }
+    })
+    .await;
+    if result.is_err() {
+        // Theme fonts are decoration. Never let them consume the startup
+        // refresh's five-second budget and delay the Resilio configuration.
+        log::warn!("theme font loading exceeded 500 ms; remaining URLs left unchanged");
+    }
+}
+
+async fn fetch_theme_font(
+    client: &reqwest::Client,
+    url: &str,
+) -> std::result::Result<(String, usize), String> {
+    if let Ok(cache) = font_cache().lock() {
+        if let Some(font) = cache
+            .get(url)
+            .filter(|font| font.stored_at.elapsed() < FONT_CACHE_TTL)
+        {
+            return Ok((font.data.clone(), font.source_bytes));
+        }
+    }
+
+    let mut resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    if resp
+        .content_length()
+        .is_some_and(|len| len > MAX_FONT_BYTES as u64)
+    {
+        return Err(format!("larger than {MAX_FONT_BYTES} bytes"));
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+        if bytes.len() + chunk.len() > MAX_FONT_BYTES {
+            return Err(format!("larger than {MAX_FONT_BYTES} bytes"));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let mime = font_mime(&bytes).ok_or_else(|| "not a supported font file".to_string())?;
+    let byte_count = bytes.len();
+    let data = format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    );
+    if let Ok(mut cache) = font_cache().lock() {
+        cache.retain(|_, font| font.stored_at.elapsed() < FONT_CACHE_TTL);
+        let cached_bytes = cache.values().map(|font| font.data.len()).sum::<usize>();
+        if cache.len() >= MAX_FONT_CACHE_ENTRIES || cached_bytes + data.len() > MAX_FONT_CACHE_BYTES
+        {
+            cache.clear();
+        }
+        cache.insert(
+            url.to_string(),
+            CachedFont {
+                data: data.clone(),
+                source_bytes: byte_count,
+                stored_at: Instant::now(),
+            },
+        );
+    }
+    Ok((data, byte_count))
+}
+
+fn font_mime(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"wOF2") {
+        Some("font/woff2")
+    } else if bytes.starts_with(b"wOFF") {
+        Some("font/woff")
+    } else if bytes.starts_with(b"\0\x01\0\0") {
+        Some("font/ttf")
+    } else if bytes.starts_with(b"OTTO") {
+        Some("font/otf")
+    } else {
+        None
+    }
 }
 
 /// The first bytes of the common image formats, plus SVG's opening tag.
@@ -486,6 +637,33 @@ mod tests {
             bundle.theme.as_ref().map(|t| t.colors.primary.as_str()),
             Some("#ff0000")
         );
+    }
+
+    #[tokio::test]
+    async fn served_fonts_are_inlined_so_the_webview_needs_no_cors_header() {
+        let base = lanpage(vec![
+            ("launcher.ini", "text/plain", INI_WITH_COLOURS),
+            (
+                "theme.json",
+                "application/json",
+                r#"{"fontFamily":"LAN","fontFaces":[{"family":"LAN","src":"fonts/lan.woff2"}]}"#,
+            ),
+            ("fonts/lan.woff2", "font/woff2", "wOF2font-data"),
+        ])
+        .await;
+        let bundle = fetch_event(&base).await;
+        let face = &bundle.theme.unwrap().font_faces[0];
+        assert_eq!(face.src, "data:font/woff2;base64,d09GMmZvbnQtZGF0YQ==");
+        assert!(bundle.errors.is_empty(), "{:?}", bundle.errors);
+    }
+
+    #[test]
+    fn only_real_font_signatures_are_inlined() {
+        assert_eq!(font_mime(b"wOF2rest"), Some("font/woff2"));
+        assert_eq!(font_mime(b"wOFFrest"), Some("font/woff"));
+        assert_eq!(font_mime(b"\0\x01\0\0rest"), Some("font/ttf"));
+        assert_eq!(font_mime(b"OTTOrest"), Some("font/otf"));
+        assert_eq!(font_mime(b"<!doctype html>"), None);
     }
 
     #[test]

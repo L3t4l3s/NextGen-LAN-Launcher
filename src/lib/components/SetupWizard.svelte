@@ -108,7 +108,7 @@
       <p class="hint">{t("wizard.step2.text")}</p>
       <input bind:value={name} maxlength="32" placeholder="Player" />
       <div class="row end">
-        <button onclick={() => (step = 1)}>{t("action.back")}</button>
+        <button data-gamepad-back onclick={() => (step = 1)}>{t("action.back")}</button>
         <button class="primary" onclick={toStep3} disabled={!name.trim()}>{t("action.next")}</button>
       </div>
     {:else}

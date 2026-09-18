@@ -46,6 +46,10 @@ LANPage needs to look like itself inside the launcher:
 | `headingFontFamily` | the font stack of the headings (`h1`–`h3`, the event name in the top bar) | `fontFamily` |
 | `fontFaces` | the font files themselves (`family`, `src`, optional `weight`/`style`) | none |
 
+The launcher fetches declared font files and embeds them for its webview. The
+LANPage therefore does not need to send CORS headers for fonts. Files must be
+WOFF2, WOFF, TTF or OTF and no larger than 1.4 MB each.
+
 ### `surfacePattern`
 
 A panel that is a flat colour on the LANPage and a flat colour in the launcher matches; one drawn
@@ -79,10 +83,10 @@ A LANPage names its font **files**, not a stylesheet: the launcher writes the `@
 itself from `family`, `src`, `weight` and `style`, and each of those is checked first (a family is
 letters, digits, spaces and dashes; `src` is `http(s)` or a `data:font/…` URI; the weight is a
 number or `normal`/`bold`; the style is `normal`/`italic`/`oblique`). A LANPage therefore cannot
-hand the launcher CSS — `button { display: none }` has nowhere to go. The font files themselves are
-loaded by the browser, which is why the content-security policy allows fonts and images from any
-`http(s)` address: a LANPage usually lives at an IP, not at `launcher.lan`. Remote stylesheets and
-scripts stay blocked.
+hand the launcher CSS — `button { display: none }` has nowhere to go. The launcher fetches valid
+font files within a short, bounded startup budget and embeds them for the browser; an unavailable
+file keeps its checked URL as a fallback. Images may likewise come from a LANPage IP rather than
+`launcher.lan`. Remote stylesheets and scripts stay blocked.
 
 URLs must be `http(s)`, a `data:image/…` URI, or a path relative to the file they are written in
 (`"logo": "logo.png"` means the image next to the theme, `theme_logo = logo.png` the one next to
