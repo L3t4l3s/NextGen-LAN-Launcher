@@ -277,6 +277,17 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   **Also entweder beides mitliefern oder beides weglassen, nie halb.** Nachstellen lässt sich der
   Zustand mit `GST_PLUGIN_SYSTEM_PATH_1_0=/nonexistent GST_PLUGIN_PATH_1_0=/nonexistent` — dann
   zeigt jeder Build ohne gebündelte Plugins die Deck-Meldung.
+- **Proton liegt nie im `PATH`:** Es wohnt in einer Steam-Bibliothek, und ein Steam Deck hat
+  mindestens zwei (intern und SD-Karte, letztere unter `/run/media/…`). Die Bibliotheken stehen in
+  `<steam root>/steamapps/libraryfolders.vdf`; wer die nicht liest, findet auf einem Deck die
+  Hälfte nicht. Dazu kommen mehrere Steam-Wurzeln (`~/.steam/steam` und `~/.steam/root` sind
+  Symlinks auf eine der anderen, dazu `~/.local/share/Steam`, die Debian-Variante und
+  Flatpak-Steam) — beim Entdoppeln deshalb **immer über `canonicalize` vergleichen**, sonst gilt
+  dieselbe Installation unter zwei Schreibweisen als zwei Funde (genau daran ist der erste Entwurf
+  gescheitert, der Test `a_symlinked_root_does_not_report_the_same_proton_twice` hält es fest).
+  `STEAM_COMPAT_CLIENT_INSTALL_PATH` muss die Wurzel sein, zu der *dieses* Proton gehört; fest
+  `~/.steam/steam` einzusetzen geht bei Flatpak-Steam schief. Alles in
+  `crates/lanlauncher-core/src/launch/proton.rs`, rein dateisystembasiert und damit testbar.
 - **Clippy:** In `resilio.rs` müssen alle Items vor `mod tests` stehen (`items_after_test_module`).
 - **Fehlertexte:** Tauri-Commands und Fix-Aktionen geben keine deutschen Sätze zurück, sondern Codes
   (`err.<name>` bzw. `msg.<name>`, optional mit `|detail`). Das Frontend übersetzt sie mit

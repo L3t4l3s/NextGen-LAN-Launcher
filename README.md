@@ -174,6 +174,13 @@ again.
   majority of white GTK webviews — but it is a guess now, not a law, and a machine it does not suit
   moves past it in about a second, because the launcher reads the abort out of the webview's own
   output.
+- **Proton itself, once found:** the search for it is covered by tests that build a Steam Deck's
+  layout in a temporary folder — two libraries, the SD card among them, a symlinked root, a
+  `compatibilitytools.d` entry and a Flatpak Steam. What cannot be checked here is a game actually
+  starting through Proton: there is no Proton and no Windows game in this environment, so the
+  invocation (`proton run <exe>` with `STEAM_COMPAT_DATA_PATH` and
+  `STEAM_COMPAT_CLIENT_INSTALL_PATH`) is unchanged from before and still only reasoned about.
+  Untested, to be checked on the LAN.
 - **Installer and a running launcher:** unsolved. The NSIS hook closes the launcher first and its
   sync engine second (the launcher restarts an engine it sees dying, and the installer's own
   "close the application?" prompt only comes after the hook), waits until nothing runs from the

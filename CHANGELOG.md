@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **Linux: Proton wird jetzt gefunden, statt nur konfiguriert.** Auf dem Steam Deck meldete der
+  Launcher beim Spielstart „no Wine, CrossOver or Proton found", obwohl Proton installiert war —
+  und zwar zu Recht: es gab überhaupt keine Suche. Wine wurde über `PATH` gesucht, CrossOver an
+  festen Orten, Proton **nur** über den Pfad aus den Einstellungen. Proton liegt aber nicht im
+  `PATH`, sondern in einer Steam-Bibliothek, und ein Deck hat mindestens zwei davon.
+  `launch::proton` sucht deshalb in allen Steam-Installationen (`~/.steam/steam`,
+  `~/.local/share/Steam`, die Debian-Variante, Flatpak-Steam) sowie in jeder Bibliothek aus
+  `steamapps/libraryfolders.vdf` — **damit auch auf der SD-Karte** — und in
+  `compatibilitytools.d`, wo GE-Proton & Co. landen. Reihenfolge: selbst installierte Tools
+  zuerst (das ist eine Entscheidung und die Builds haben die Patches, die alte LAN-Spiele
+  brauchen), dann die numerierten Releases von neu nach alt, `Experimental`/`Hotfix` als Rückfall.
+  Ein eigener Pfad in den Einstellungen sticht weiterhin alles.
+- Linux: `STEAM_COMPAT_CLIENT_INSTALL_PATH` zeigt jetzt auf die Steam-Installation, zu der das
+  gefundene Proton gehört, statt fest auf `~/.steam/steam`. Bei einem Flatpak-Steam oder einer
+  zweiten Installation war das der falsche Pfad, und Proton startet damit nicht.
+- Findet sich kein Runner, nennt die Fehlermeldung jetzt die durchsuchten Orte (und das Log
+  ebenso) — wie es `resilio::locate_binary_detailed` für die Sync-Engine schon tut.
+
 - **Linux: Die einfrierende Oberfläche und die stummen Videos waren derselbe Fehler — behoben.**
   Auf dem Steam Deck stand im `webview.log`: `GStreamer element autoaudiosink not found`,
   unmittelbar gefolgt von `GLib-GObject-CRITICAL: invalid (NULL) pointer instance` und

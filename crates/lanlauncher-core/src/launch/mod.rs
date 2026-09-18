@@ -8,6 +8,7 @@
 //!   the script) and a runner (CrossOver, Wine, Proton or native).
 
 pub mod elevate;
+pub mod proton;
 pub mod unix;
 pub mod windows;
 

@@ -225,7 +225,13 @@ fn bundled_dir(resource_dir: Option<&Path>, name: &str, dev_relative: &str) -> O
             // build showed no covers at all and said so once per game in the
             // log. A packaged build never hit it, because there the resource
             // directory above is found and needs no `..`.
-            let dev = dev.canonicalize().unwrap_or(dev);
+            // `canonicalize` answers with Windows' long form (`\\?\C:\…`),
+            // and this path goes on to the asset protocol and the cover
+            // directories — the same reason `resource_dir` is stripped above.
+            let dev = dev
+                .canonicalize()
+                .map(lanlauncher_core::paths::strip_verbatim)
+                .unwrap_or(dev);
             dev.is_dir().then_some(dev)
         })
 }

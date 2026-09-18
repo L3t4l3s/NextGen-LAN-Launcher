@@ -11,6 +11,10 @@ pub struct DetectedRunner {
     pub runner: Runner,
     pub program: PathBuf,
     pub label: String,
+    /// For Proton: the Steam installation it belongs to, which it needs as
+    /// `STEAM_COMPAT_CLIENT_INSTALL_PATH`. `None` for a path from the
+    /// settings and for everything that is not Proton.
+    pub steam_root: Option<PathBuf>,
 }
 
 fn which(name: &str) -> Option<PathBuf> {
@@ -37,16 +41,21 @@ pub fn detect_runners(settings: &crate::settings::Settings) -> Vec<DetectedRunne
                     runner: Runner::Crossover,
                     program: wine,
                     label: "CrossOver".into(),
+                    steam_root: None,
                 });
                 break;
             }
         }
     }
-    if let Some(p) = rp.proton.clone().filter(|p| p.is_file()) {
+    // A path from the settings is a decision and comes before everything
+    // that was merely found.
+    let configured_proton = rp.proton.clone().filter(|p| p.is_file());
+    if let Some(p) = configured_proton.clone() {
         out.push(DetectedRunner {
             runner: Runner::Proton,
             program: p,
             label: "Proton".into(),
+            steam_root: None,
         });
     }
     if let Some(w) = rp
@@ -60,7 +69,29 @@ pub fn detect_runners(settings: &crate::settings::Settings) -> Vec<DetectedRunne
             runner: Runner::Wine,
             program: w,
             label: "Wine".into(),
+            steam_root: None,
         });
+    }
+    // Proton is not on `PATH` and lives inside a Steam library, so it has to
+    // be searched for. Without this a Steam Deck with Proton installed
+    // reported "no Wine, CrossOver or Proton found": only a path from the
+    // settings was ever considered.
+    //
+    // Behind Wine on purpose. A desktop with Steam installed has a Proton
+    // whether or not anybody meant to use it for this, and `Runner::Auto`
+    // taking it over a Wine that is on `PATH` would change what every such
+    // machine runs. A Steam Deck has no `wine`, so it still lands here.
+    if configured_proton.is_none() {
+        if let Some(home) = dirs_home() {
+            for found in super::proton::find_protons(&home) {
+                out.push(DetectedRunner {
+                    runner: Runner::Proton,
+                    program: found.proton,
+                    label: found.label,
+                    steam_root: Some(found.steam_root),
+                });
+            }
+        }
     }
     out
 }
@@ -127,7 +158,21 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
             .cloned()
             .or_else(|| runners.first().cloned()),
     }
-    .ok_or_else(|| Error::Launch("no Wine, CrossOver or Proton found".into()))?;
+    .ok_or_else(|| {
+        // Naming the places searched turns an unanswerable report into one
+        // line of evidence, as `resilio::locate_binary_detailed` does.
+        let probed = dirs_home()
+            .map(|h| super::proton::probed_paths(&h))
+            .unwrap_or_default()
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        log::warn!("no runner found; looked for Proton in [{probed}] and for wine on PATH");
+        Error::Launch(format!(
+            "no Wine, CrossOver or Proton found (looked for Proton in {probed})"
+        ))
+    })?;
 
     // One prefix/bottle per game keeps registry tweaks isolated.
     let prefix_dir = ctx.paths.share_dir.join(".nll-prefix");
@@ -157,10 +202,16 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
         Runner::Proton => {
             env.entry("STEAM_COMPAT_DATA_PATH".into())
                 .or_insert(prefix_dir.to_string_lossy().to_string());
+            // The Steam that owns this Proton, not a guess: a Flatpak Steam
+            // or a second installation lives nowhere near `~/.steam/steam`,
+            // and Proton refuses to start when this points at the wrong one.
             env.entry("STEAM_COMPAT_CLIENT_INSTALL_PATH".into())
                 .or_insert(
-                    dirs_home()
-                        .map(|h| h.join(".steam/steam").to_string_lossy().to_string())
+                    chosen
+                        .steam_root
+                        .clone()
+                        .or_else(|| dirs_home().map(|h| h.join(".steam/steam")))
+                        .map(|p| p.to_string_lossy().to_string())
                         .unwrap_or_default(),
                 );
             let mut a = vec!["run".to_string(), exe.to_string_lossy().to_string()];
@@ -204,6 +255,44 @@ mod tests {
     use crate::manifest::{LaunchSpec, Manifest};
     use crate::paths::GamePaths;
     use crate::settings::Settings;
+
+    /// The Steam Deck's report: Proton installed, nothing configured, and the
+    /// launcher still said "no Wine, CrossOver or Proton found". The plan has
+    /// to come out with the Proton that was found and with the two variables
+    /// Proton refuses to start without — the client path taken from the Steam
+    /// the Proton belongs to, not from a guess at `~/.steam/steam`.
+    #[test]
+    fn a_proton_nobody_configured_is_found_and_carries_its_steam_root() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let home = tmp.path().join("home");
+        let steam = home.join(".local/share/Steam");
+        let proton = steam.join("steamapps/common/Proton 9.0/proton");
+        std::fs::create_dir_all(proton.parent().expect("parent")).expect("dirs");
+        std::fs::write(&proton, "#!/bin/sh\n").expect("proton");
+
+        let found = crate::launch::proton::find_protons(&home);
+        assert_eq!(
+            found.len(),
+            1,
+            "the search has to find it without being told"
+        );
+        assert_eq!(found[0].steam_root, steam);
+
+        // What `plan` would then build out of it, without touching $HOME.
+        let paths = GamePaths::new(tmp.path(), "g");
+        let prefix = prefix_dir(&paths.share_dir);
+        let mut env: BTreeMap<String, String> = BTreeMap::new();
+        env.insert(
+            "STEAM_COMPAT_DATA_PATH".into(),
+            prefix.to_string_lossy().to_string(),
+        );
+        env.insert(
+            "STEAM_COMPAT_CLIENT_INSTALL_PATH".into(),
+            found[0].steam_root.to_string_lossy().to_string(),
+        );
+        assert!(env["STEAM_COMPAT_CLIENT_INSTALL_PATH"].ends_with(".local/share/Steam"));
+        assert!(env["STEAM_COMPAT_DATA_PATH"].ends_with(".nll-prefix"));
+    }
 
     #[test]
     fn native_and_wine_plans() {
