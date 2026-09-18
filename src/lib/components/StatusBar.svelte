@@ -2,16 +2,9 @@
   import { app } from "$lib/stores/app.svelte";
   import { formatRate } from "$lib/format";
   import { t, userText } from "$lib/i18n";
+  import { transportLevel } from "$lib/transport-status";
 
-  const level = $derived.by(() => {
-    const h = app.health;
-    if (!h) return "warn";
-    if (h.kind === "demo") return "ok";
-    if (h.kind === "folder") return "warn";
-    if (!h.running || !h.api_reachable) return "error";
-    if (h.peers === 0 || h.server_found === false) return "warn";
-    return "ok";
-  });
+  const level = $derived(transportLevel(app.health));
   // Live: a saved override is always valid (the backend rejects bad keys).
   const keyConfigured = $derived(!!app.bootstrap?.builtinCatalogKey || !!app.settings?.catalogKey);
   // "found" / "missing" come from the catalog share's peers; folder mode and a
@@ -20,12 +13,13 @@
     const h = app.health;
     if (!h || h.kind === "demo") return null;
     if (h.server_found === true) return { key: "status.server.found" };
+    if (level === "preparing") return null;
     if (h.server_found === false) return { key: "status.server.missing" };
     if (h.kind === "resilio" && !keyConfigured) return { key: "status.server.no_key", link: "settings" };
     return { key: "status.server.unknown" };
   });
   const label = $derived(
-    app.health?.kind === "demo" ? t("status.sync.demo") : level === "ok" ? t("status.sync.ok") : level === "warn" ? t("status.sync.warn") : t("status.sync.error"),
+    level === "preparing" ? t(`status.sync.${app.health?.activity ?? "starting"}`) : app.health?.kind === "demo" ? t("status.sync.demo") : level === "ok" ? t("status.sync.ok") : level === "warn" ? t("status.sync.warn") : t("status.sync.error"),
   );
   const problems = $derived(Object.values(app.statuses).filter((s) => s.problem).length);
 </script>
@@ -66,6 +60,7 @@
 </footer>
 
 <style>
+  .dot.preparing { background: var(--color-primary); }
   footer {
     display: flex;
     align-items: center;

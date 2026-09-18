@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Resilio-Start, anfängliche Teilnehmersuche und Datei-Scan erscheinen neutral
+  statt als Sync-Warnung. Diagnoseprüfungen aktualisieren auch die Statusleiste;
+  echte Fehler und dauerhaft fehlende Teilnehmer bleiben erkennbar.
+
 - Ordnerzeilen im Einrichtungsassistenten verbreitert, abgeschnittene Fokusrahmen
   korrigiert und „Entfernen“ beim einzigen Spieleordner ausgeblendet.
 - Resilio-Start und Neustarts serialisiert; doppelte Katalog-Anmeldung beim

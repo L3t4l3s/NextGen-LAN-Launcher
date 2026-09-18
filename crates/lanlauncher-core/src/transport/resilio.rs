@@ -1215,6 +1215,7 @@ pub struct ResilioTransport {
     lan_only: Mutex<bool>,
     /// Last health detail written to the log (logged only on change).
     last_detail: Mutex<Option<String>>,
+    discovery: Mutex<CatalogDiscovery>,
     /// Last peer counters per `<share dir>\0<peer id>`, for the rates.
     peer_samples: Mutex<HashMap<String, (u64, u64, Instant)>>,
     /// One raw peer entry is logged per run so the field names of this engine
@@ -1251,6 +1252,7 @@ impl ResilioTransport {
             child: Mutex::new(None),
             keys: Mutex::new(HashMap::new()),
             last_detail: Mutex::new(None),
+            discovery: Mutex::new(CatalogDiscovery::default()),
             peer_samples: Mutex::new(HashMap::new()),
             peer_shape_logged: std::sync::atomic::AtomicBool::new(false),
             lan_only: Mutex::new(lan_only),
@@ -1626,14 +1628,34 @@ impl Transport for ResilioTransport {
                 *last = Some(detail.clone());
             }
         }
+        let server_found = summary.and_then(|s| s.catalog).map(|n| n > 0);
+        let catalog_states: Vec<_> = folders
+            .as_ref()
+            .ok()
+            .into_iter()
+            .flat_map(|f| f.values())
+            .filter(|s| super::is_catalog_share(&s.dir))
+            .map(|s| s.state)
+            .collect();
+        let activity = {
+            let mut discovery = self.discovery.lock().unwrap_or_else(|e| e.into_inner());
+            discovery.server_seen |= server_found == Some(true);
+            preparation_activity(
+                running && version.is_some() && folders.is_ok(),
+                discovery.server_seen,
+                discovery.elapsed(),
+                &catalog_states,
+            )
+        };
         TransportHealth {
+            activity,
             kind: TransportKind::Resilio,
             running,
             api_reachable: version.is_some(),
             version,
             peers: summary.map(|s| s.total).unwrap_or(0),
             catalog_peers: summary.and_then(|s| s.catalog).unwrap_or(0),
-            server_found: summary.and_then(|s| s.catalog).map(|n| n > 0),
+            server_found,
             peer_details: self.client.has_api_key(),
             lan_mode: *self.lan_only.lock().unwrap_or_else(|e| e.into_inner()),
             detail: Some(detail),
@@ -1678,7 +1700,16 @@ impl Transport for ResilioTransport {
         self.client.add_folder(key, dir, opts.lan_only).await?;
         self.client.forget_folders();
         if let Ok(mut k) = self.keys.lock() {
-            k.insert(dir.to_path_buf(), key.clone());
+            let previous = k.insert(dir.to_path_buf(), key.clone());
+            if super::is_catalog_share(dir) {
+                let changed = previous
+                    .as_ref()
+                    .is_none_or(|old| old.expose() != key.expose());
+                self.discovery
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .registered(changed, Instant::now());
+            }
         }
         Ok(())
     }
@@ -1689,6 +1720,9 @@ impl Transport for ResilioTransport {
         self.client.forget_folders();
         if let Ok(mut k) = self.keys.lock() {
             k.remove(dir);
+        }
+        if super::is_catalog_share(dir) {
+            *self.discovery.lock().unwrap_or_else(|e| e.into_inner()) = CatalogDiscovery::default();
         }
         Ok(())
     }
@@ -2154,8 +2188,109 @@ pub fn official_download_url() -> String {
         .unwrap_or_else(|| "https://www.resilio.com/platforms/desktop/".to_string())
 }
 
+#[derive(Default)]
+struct CatalogDiscovery {
+    started: Option<Instant>,
+    server_seen: bool,
+}
+
+impl CatalogDiscovery {
+    fn elapsed(&self) -> Duration {
+        // No successful registration means there is nothing to discover.
+        self.started
+            .map_or(Duration::from_secs(60), |at| at.elapsed())
+    }
+
+    fn registered(&mut self, changed: bool, now: Instant) {
+        // Idempotent registration retries must not extend the grace forever.
+        if changed {
+            self.started = Some(now);
+            self.server_seen = false;
+        }
+    }
+}
+
+/// Discovery gets a bounded grace period per catalog registration. Actual
+/// indexing is informational, but paused/error shares and API failures never
+/// use this grace period to hide a fault.
+fn preparation_activity(
+    healthy: bool,
+    server_seen: bool,
+    elapsed: Duration,
+    states: &[ShareState],
+) -> Option<TransportActivity> {
+    if !healthy
+        || states
+            .iter()
+            .any(|s| matches!(s, ShareState::Error | ShareState::Paused))
+    {
+        return None;
+    }
+    if states.contains(&ShareState::Indexing) {
+        return Some(TransportActivity::Indexing);
+    }
+    if !server_seen && elapsed < Duration::from_secs(60) {
+        return Some(TransportActivity::Discovering);
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn catalog_registration_restarts_discovery_but_retries_do_not() {
+        let start = Instant::now();
+        let mut discovery = CatalogDiscovery::default();
+        assert_eq!(
+            preparation_activity(true, discovery.server_seen, discovery.elapsed(), &[]),
+            None
+        );
+        discovery.server_seen = true;
+        let registered = start + Duration::from_secs(120);
+        discovery.registered(true, registered);
+        assert_eq!(discovery.started, Some(registered));
+        assert!(!discovery.server_seen);
+        assert_eq!(
+            preparation_activity(true, discovery.server_seen, Duration::ZERO, &[]),
+            Some(TransportActivity::Discovering)
+        );
+        discovery.server_seen = true;
+        discovery.registered(false, registered + Duration::from_secs(30));
+        assert_eq!(discovery.started, Some(registered));
+        assert!(discovery.server_seen);
+    }
+
+    #[test]
+    fn preparation_is_bounded_and_does_not_mask_failures_or_lost_connections() {
+        assert_eq!(
+            preparation_activity(true, false, Duration::ZERO, &[]),
+            Some(TransportActivity::Discovering)
+        );
+        assert_eq!(
+            preparation_activity(true, false, Duration::from_secs(60), &[]),
+            None
+        );
+        assert_eq!(preparation_activity(true, true, Duration::ZERO, &[]), None);
+        assert_eq!(
+            preparation_activity(
+                true,
+                false,
+                Duration::from_secs(120),
+                &[ShareState::Indexing]
+            ),
+            Some(TransportActivity::Indexing)
+        );
+        for state in [ShareState::Error, ShareState::Paused] {
+            assert_eq!(
+                preparation_activity(true, false, Duration::ZERO, &[state]),
+                None
+            );
+        }
+        assert_eq!(
+            preparation_activity(false, false, Duration::ZERO, &[ShareState::Indexing]),
+            None
+        );
+    }
     use super::*;
 
     /// Keys of the ETI launcher's config.json (known to start Resilio 2.8.1

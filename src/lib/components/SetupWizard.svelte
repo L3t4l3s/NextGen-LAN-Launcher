@@ -49,6 +49,7 @@
     if (!background) checking = true;
     try {
       report = await api.diagnostics();
+      app.health = await api.health();
     } catch (e) {
       if (!background) app.toast("error", userText(e));
     } finally {
@@ -59,8 +60,9 @@
 
   const blocking = $derived(report?.problems.filter((p) => p.severity !== "info") ?? []);
   const catalogLoading = $derived(report?.problems.find((p) => p.code === "catalog.loading"));
+  const transportPreparing = $derived(report?.problems.find((p) => p.code === "transport.preparing"));
   $effect(() => {
-    if (step !== 3 || !report?.problems.some((p) => p.code === "catalog.loading" || p.code === "catalog.missing")) return;
+    if (step !== 3 || !report?.problems.some((p) => p.code === "catalog.loading" || p.code === "catalog.missing" || p.code === "transport.preparing")) return;
     const timer = setInterval(() => void check(true), 10_000);
     return () => clearInterval(timer);
   });
@@ -117,8 +119,10 @@
       {:else if report}
         {#if catalogLoading}
           <ProblemCard problem={catalogLoading} />
+        {:else if transportPreparing}
+          <ProblemCard problem={transportPreparing} />
         {/if}
-        {#if blocking.length === 0 && !catalogLoading}
+        {#if blocking.length === 0 && !catalogLoading && !transportPreparing}
           <p class="ok">✔ {t("wizard.step3.all_good")}</p>
         {:else if blocking.length > 0}
           <p class="muted">{t("wizard.step3.problems")}</p>

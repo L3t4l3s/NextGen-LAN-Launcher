@@ -158,6 +158,7 @@ impl Transport for DemoTransport {
             })
             .unwrap_or(0);
         TransportHealth {
+            activity: None,
             kind: TransportKind::Demo,
             running: true,
             api_reachable: true,

@@ -90,6 +90,7 @@ impl Transport for FolderTransport {
     }
     async fn health(&self) -> TransportHealth {
         TransportHealth {
+            activity: None,
             kind: TransportKind::Folder,
             running: true,
             api_reachable: false,

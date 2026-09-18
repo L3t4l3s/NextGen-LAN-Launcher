@@ -795,8 +795,9 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
     let mut catalog_connected = false;
     if let Some(t) = &transport {
         let health = t.health().await;
-        catalog_connected =
-            health.running && health.api_reachable && health.server_found == Some(true);
+        catalog_connected = health.running
+            && health.api_reachable
+            && (health.server_found == Some(true) || health.activity.is_some());
         problems.extend(diagnostics::check_transport(&health));
         // The bundled (or downloaded) engine runs in place and no installer
         // added firewall rules for it; a system Resilio or ETI's btsync.exe

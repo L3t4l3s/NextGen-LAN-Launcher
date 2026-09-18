@@ -28,6 +28,7 @@
       if (k.endsWith("_bytes")) p[k] = formatBytes(Number(p[k]));
       if (k === "detail") p[k] = userText(p[k]);
       if (k === "state" && problem.code === "catalog.loading") p[k] = t(`catalog.state.${p[k]}`);
+      if (k === "state" && problem.code === "transport.preparing") p[k] = t(`status.sync.${p[k]}`);
     }
     return p;
   });

@@ -223,6 +223,11 @@ export const de: Messages = {
   "wizard.step3.problems": "Ein paar Dinge solltest du beheben – die meisten mit einem Klick.",
 
   "status.sync.ok": "Sync läuft",
+  "status.sync.starting": "Resilio startet …",
+  "status.sync.discovering": "Suche nach Teilnehmern …",
+  "status.sync.indexing": "Resilio scannt Dateien …",
+  "problem.transport.preparing.title": "{state}",
+  "problem.transport.preparing.cause": "Resilio bereitet die Synchronisierung vor. Bitte kurz warten – das ist kein Fehler.",
   "status.sync.warn": "Sync eingeschränkt",
   "status.sync.error": "Sync gestört",
   "status.sync.demo": "Demo",

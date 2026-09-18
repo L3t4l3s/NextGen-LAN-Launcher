@@ -399,6 +399,12 @@ pub fn check_transport(health: &TransportHealth) -> Vec<Problem> {
                         .step("transport.api_unreachable.step.antivirus")
                         .with_fix(FixAction::RestartTransport),
                 );
+            } else if let Some(activity) = health.activity {
+                let state = match activity {
+                    crate::transport::TransportActivity::Discovering => "discovering",
+                    crate::transport::TransportActivity::Indexing => "indexing",
+                };
+                out.push(Problem::new("transport.preparing", Severity::Info).param("state", state));
             } else if health.peers == 0 {
                 out.push(
                     Problem::new("transport.no_peers", Severity::Warning)
@@ -590,6 +596,7 @@ mod tests {
     #[test]
     fn check_transport_reports_missing_server() {
         let health = |peers: u32, server_found: Option<bool>| TransportHealth {
+            activity: None,
             kind: crate::transport::TransportKind::Resilio,
             running: true,
             api_reachable: true,
@@ -611,11 +618,22 @@ mod tests {
         assert_eq!(codes(&health(0, Some(false))), vec!["transport.no_peers"]);
         assert!(codes(&health(2, None)).is_empty());
         assert!(codes(&health(2, Some(true))).is_empty());
+        let mut preparing = health(0, Some(false));
+        preparing.activity = Some(crate::transport::TransportActivity::Discovering);
+        let problems = check_transport(&preparing);
+        assert_eq!(problems[0].code, "transport.preparing");
+        assert_eq!(problems[0].severity, Severity::Info);
+        preparing.api_reachable = false;
+        assert_eq!(
+            check_transport(&preparing)[0].code,
+            "transport.api_unreachable"
+        );
     }
 
     #[test]
     fn transport_problems_carry_the_engine_detail() {
         let health = crate::transport::TransportHealth {
+            activity: None,
             kind: crate::transport::TransportKind::Resilio,
             running: true,
             api_reachable: true,

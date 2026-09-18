@@ -86,8 +86,18 @@ impl ShareStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransportActivity {
+    Discovering,
+    Indexing,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransportHealth {
+    /// Normal preparation, not a fault. None after discovery or on failure.
+    #[serde(default)]
+    pub activity: Option<TransportActivity>,
     pub kind: TransportKind,
     pub running: bool,
     pub api_reachable: bool,

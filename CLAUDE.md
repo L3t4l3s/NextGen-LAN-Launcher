@@ -6,7 +6,8 @@ Stolperfallen bereits bekannt sind.
 
 ## Pflichtregel vor jedem Push
 
-**Vor jedem `git push` muss `/code-review` auf den anstehenden Änderungen ausgeführt werden.
+**Vor jedem `git push` muss ein Review der anstehenden Änderungen ausgeführt werden:
+Claude Code verwendet `/code-review`, Codex verwendet `/review`.
 Alle Findings werden behoben (oder mit Begründung im Commit dokumentiert, falls sie bewusst
 nicht umgesetzt werden), bevor gepusht wird.** Danach müssen die Prüfungen aus dem Abschnitt
 „Prüfungen vor einem Commit“ grün sein.

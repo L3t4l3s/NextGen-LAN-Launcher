@@ -15,6 +15,7 @@
     running = true;
     try {
       report = await api.diagnostics();
+      app.health = await api.health();
       lastLaunch = await api.lastLaunch();
     } catch (e) {
       if (!background) app.toast("error", userText(e));
@@ -49,7 +50,7 @@
   onMount(() => { void run(); });
   const catalogLoading = $derived(report?.problems.some((p) => p.code === "catalog.loading"));
   $effect(() => {
-    if (!report?.problems.some((p) => p.code === "catalog.loading" || p.code === "catalog.missing")) return;
+    if (!report?.problems.some((p) => p.code === "catalog.loading" || p.code === "catalog.missing" || p.code === "transport.preparing")) return;
     const timer = setInterval(() => void run(true), 10_000);
     return () => clearInterval(timer);
   });
