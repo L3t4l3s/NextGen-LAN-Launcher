@@ -50,6 +50,10 @@
 - Linux: `STEAM_COMPAT_CLIENT_INSTALL_PATH` zeigt jetzt auf die Steam-Installation, zu der das
   gefundene Proton gehört, statt fest auf `~/.steam/steam`. Bei einem Flatpak-Steam oder einer
   zweiten Installation war das der falsche Pfad, und Proton startet damit nicht.
+- Linux: Vor einem Proton-Start wird dessen Kompatibilitätsordner angelegt. Steam erledigt das
+  normalerweise selbst; beim direkten Aufruf durch den Launcher brach Proton stattdessen beim
+  Öffnen von `.nll-prefix/pfx.lock` sofort ab. Der Startpfad wurde auf SteamOS mit einer echten
+  Windows-Anwendung, einem eigenen Prefix und bereinigter AppImage-Umgebung geprüft.
 - Findet sich kein Runner, nennt die Fehlermeldung jetzt die durchsuchten Orte (und das Log
   ebenso) — wie es `resilio::locate_binary_detailed` für die Sync-Engine schon tut.
 
