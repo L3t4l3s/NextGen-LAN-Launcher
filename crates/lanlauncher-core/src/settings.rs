@@ -2,7 +2,9 @@
 
 use crate::error::{Error, Result};
 use crate::library::Library;
+use crate::manifest::Runner;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub const SETTINGS_VERSION: u32 = 1;
@@ -46,6 +48,10 @@ pub struct Settings {
     pub allow_elevation: bool,
     /// Extra folders/paths for Wine/CrossOver/Proton on macOS/Linux.
     pub runner_paths: RunnerPaths,
+    /// Exact compatibility tool selected for a game. Missing means automatic
+    /// detection. The program path, rather than only `proton`/`wine`, keeps
+    /// multiple installed Proton versions distinguishable.
+    pub game_runners: BTreeMap<String, GameRunner>,
     /// Resilio listening port (0 = let the engine pick).
     pub sync_port: u16,
     /// Overrides the built-in read-only key of the catalog share
@@ -72,6 +78,15 @@ pub struct RunnerPaths {
     pub proton: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameRunner {
+    pub program: PathBuf,
+    pub runner: Runner,
+    pub label: String,
+    pub steam_root: Option<PathBuf>,
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -87,6 +102,7 @@ impl Default for Settings {
             setup_complete: false,
             allow_elevation: true,
             runner_paths: RunnerPaths::default(),
+            game_runners: BTreeMap::new(),
             sync_port: 0,
             catalog_key: None,
             resilio_binary: None,
@@ -116,6 +132,21 @@ impl Settings {
 
     pub fn problem_ignored(&self, key: &str) -> bool {
         self.ignored_problems.iter().any(|k| k == key)
+    }
+
+    pub fn game_runner(&self, game_id: &str) -> Option<&GameRunner> {
+        self.game_runners.get(game_id)
+    }
+
+    pub fn set_game_runner(&mut self, game_id: &str, runner: Option<GameRunner>) {
+        match runner {
+            Some(runner) => {
+                self.game_runners.insert(game_id.to_string(), runner);
+            }
+            None => {
+                self.game_runners.remove(game_id);
+            }
+        }
     }
 
     pub fn load(path: &Path) -> Result<Self> {

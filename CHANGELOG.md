@@ -11,6 +11,13 @@
   gelten `fontFamily` und die zugehörigen Font-Dateien auch für Tabs, Spiele
   und Fließtext, wenn die LANPage keine CORS-Header ausliefert.
 
+- Linux/macOS: In den Spieldetails lässt sich für jedes Windows-Spiel eine konkrete
+  Wine-, Proton- oder CrossOver-Version wählen. Alle von Steam erkannten Proton-Versionen
+  werden angeboten; „Automatisch“ bleibt der Standard. Manuelle Versionen verwenden
+  getrennte, stabile Prefixe beziehungsweise CrossOver-Bottles, sodass ein Wechsel keine
+  Spielstände oder Einstellungen einer anderen Version überschreibt. Die Auswahl bleibt
+  über Neustarts erhalten und der Startplan nennt die tatsächlich verwendete Version.
+
 - Resilio-Start, anfängliche Teilnehmersuche und Datei-Scan erscheinen neutral
   statt als Sync-Warnung. Diagnoseprüfungen aktualisieren auch die Statusleiste;
   echte Fehler und dauerhaft fehlende Teilnehmer bleiben erkennbar.

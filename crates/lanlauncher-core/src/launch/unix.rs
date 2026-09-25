@@ -3,6 +3,7 @@
 use super::{expand_args, resolve_exe, LaunchContext, LaunchPlan};
 use crate::error::{Error, Result};
 use crate::manifest::Runner;
+use crate::settings::GameRunner;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -17,16 +18,40 @@ pub struct DetectedRunner {
     pub steam_root: Option<PathBuf>,
 }
 
-fn which(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
+fn programs_on_path(name: &str) -> Vec<PathBuf> {
+    let Some(path) = std::env::var_os("PATH") else {
+        return Vec::new();
+    };
     std::env::split_paths(&path)
         .map(|d| d.join(name))
-        .find(|p| p.is_file())
+        .filter(|p| p.is_file())
+        .collect()
+}
+
+/// Treat symlinked Steam roots and lexical aliases as the same installation.
+pub fn same_program(left: &Path, right: &Path) -> bool {
+    let left = std::fs::canonicalize(left).unwrap_or_else(|_| left.to_path_buf());
+    let right = std::fs::canonicalize(right).unwrap_or_else(|_| right.to_path_buf());
+    left == right
+}
+
+/// Restore a saved runner even if a later global-path change means automatic
+/// detection no longer reaches it.
+pub fn persisted_runner(saved: &GameRunner) -> Option<DetectedRunner> {
+    if !saved.program.is_file() {
+        return None;
+    }
+    Some(DetectedRunner {
+        runner: saved.runner,
+        program: saved.program.clone(),
+        label: saved.label.clone(),
+        steam_root: saved.steam_root.clone(),
+    })
 }
 
 /// Find available runners, best first.
 pub fn detect_runners(settings: &crate::settings::Settings) -> Vec<DetectedRunner> {
-    let mut out = Vec::new();
+    let mut out: Vec<DetectedRunner> = Vec::new();
     let rp = &settings.runner_paths;
     if cfg!(target_os = "macos") {
         let candidates = [
@@ -36,21 +61,29 @@ pub fn detect_runners(settings: &crate::settings::Settings) -> Vec<DetectedRunne
         ];
         for app in candidates.into_iter().flatten() {
             let wine = app.join("Contents/SharedSupport/CrossOver/bin/wine");
-            if wine.is_file() {
+            if wine.is_file()
+                && !out.iter().any(|runner| {
+                    runner.runner == Runner::Crossover && same_program(&runner.program, &wine)
+                })
+            {
                 out.push(DetectedRunner {
                     runner: Runner::Crossover,
                     program: wine,
-                    label: "CrossOver".into(),
+                    label: format!(
+                        "{} ({})",
+                        app.file_stem()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or("CrossOver"),
+                        app.display()
+                    ),
                     steam_root: None,
                 });
-                break;
             }
         }
     }
     // A path from the settings is a decision and comes before everything
     // that was merely found.
-    let configured_proton = rp.proton.clone().filter(|p| p.is_file());
-    if let Some(p) = configured_proton.clone() {
+    if let Some(p) = rp.proton.clone().filter(|p| p.is_file()) {
         out.push(DetectedRunner {
             runner: Runner::Proton,
             program: p,
@@ -58,19 +91,27 @@ pub fn detect_runners(settings: &crate::settings::Settings) -> Vec<DetectedRunne
             steam_root: None,
         });
     }
-    if let Some(w) = rp
+    // Keep every distinct Wine available. A newly configured global Wine
+    // must not make a PATH Wine selected by an existing game disappear.
+    for wine in rp
         .wine
-        .clone()
-        .filter(|p| p.is_file())
-        .or_else(|| which("wine"))
-        .or_else(|| which("wine64"))
+        .iter()
+        .cloned()
+        .chain(programs_on_path("wine"))
+        .chain(programs_on_path("wine64"))
     {
-        out.push(DetectedRunner {
-            runner: Runner::Wine,
-            program: w,
-            label: "Wine".into(),
-            steam_root: None,
-        });
+        if wine.is_file()
+            && !out
+                .iter()
+                .any(|runner| runner.runner == Runner::Wine && same_program(&runner.program, &wine))
+        {
+            out.push(DetectedRunner {
+                runner: Runner::Wine,
+                label: format!("Wine ({})", wine.display()),
+                program: wine,
+                steam_root: None,
+            });
+        }
     }
     // Proton is not on `PATH` and lives inside a Steam library, so it has to
     // be searched for. Without this a Steam Deck with Proton installed
@@ -81,9 +122,16 @@ pub fn detect_runners(settings: &crate::settings::Settings) -> Vec<DetectedRunne
     // whether or not anybody meant to use it for this, and `Runner::Auto`
     // taking it over a Wine that is on `PATH` would change what every such
     // machine runs. A Steam Deck has no `wine`, so it still lands here.
-    if configured_proton.is_none() {
-        if let Some(home) = dirs_home() {
-            for found in super::proton::find_protons(&home) {
+    if let Some(home) = dirs_home() {
+        for found in super::proton::find_protons(&home) {
+            if let Some(existing) = out.iter_mut().find(|runner| {
+                runner.runner == Runner::Proton && same_program(&runner.program, &found.proton)
+            }) {
+                // A configured path still wins the ordering, but discovery
+                // supplies the owning Steam root and its useful version name.
+                existing.label = found.label;
+                existing.steam_root = Some(found.steam_root);
+            } else {
                 out.push(DetectedRunner {
                     runner: Runner::Proton,
                     program: found.proton,
@@ -150,15 +198,31 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
     }
 
     let runners = detect_runners(ctx.settings);
-    let chosen = match wanted {
-        Runner::Auto => runners.first().cloned(),
-        r => runners
+    let selected = ctx.settings.game_runner(ctx.game_id);
+    let selected_program = selected.map(|runner| runner.program.as_path());
+    let chosen = if let Some(selected) = selected {
+        runners
             .iter()
-            .find(|d| d.runner == r)
+            .find(|d| d.runner == selected.runner && same_program(&d.program, &selected.program))
             .cloned()
-            .or_else(|| runners.first().cloned()),
+            .or_else(|| persisted_runner(selected))
+    } else {
+        match wanted {
+            Runner::Auto => runners.first().cloned(),
+            r => runners
+                .iter()
+                .find(|d| d.runner == r)
+                .cloned()
+                .or_else(|| runners.first().cloned()),
+        }
     }
     .ok_or_else(|| {
+        if let Some(program) = selected_program {
+            return Error::Launch(format!(
+                "selected compatibility tool is no longer available: {}",
+                program.display()
+            ));
+        }
         // Naming the places searched turns an unanswerable report into one
         // line of evidence, as `resilio::locate_binary_detailed` does.
         let probed = dirs_home()
@@ -174,11 +238,16 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
         ))
     })?;
 
-    // One prefix/bottle per game keeps registry tweaks isolated.
-    let prefix_dir = ctx.paths.share_dir.join(".nll-prefix");
+    // Automatic mode keeps the original prefix for backwards compatibility.
+    // An explicitly selected tool gets a stable, separate prefix: switching
+    // Proton versions must neither migrate nor overwrite another version's
+    // registry and save data.
+    let prefix_dir = prefix_dir_for(&ctx.paths.share_dir, selected_program);
     match chosen.runner {
         Runner::Crossover => {
-            let bottle = format!("nll-{}", ctx.game_id);
+            let bottle = selected_program
+                .map(|program| format!("nll-{}-{}", ctx.game_id, runner_key(program)))
+                .unwrap_or_else(|| format!("nll-{}", ctx.game_id));
             let mut a = vec![
                 "--bottle".to_string(),
                 bottle,
@@ -194,14 +263,18 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
                 args: a,
                 cwd,
                 env,
-                runner: "CrossOver".into(),
+                runner: chosen.label,
                 needs_elevation: false,
                 raw_command_line: None,
             })
         }
         Runner::Proton => {
-            env.entry("STEAM_COMPAT_DATA_PATH".into())
-                .or_insert(prefix_dir.to_string_lossy().to_string());
+            let prefix = prefix_dir.to_string_lossy().to_string();
+            if selected_program.is_some() {
+                env.insert("STEAM_COMPAT_DATA_PATH".into(), prefix);
+            } else {
+                env.entry("STEAM_COMPAT_DATA_PATH".into()).or_insert(prefix);
+            }
             // The Steam that owns this Proton, not a guess: a Flatpak Steam
             // or a second installation lives nowhere near `~/.steam/steam`,
             // and Proton refuses to start when this points at the wrong one.
@@ -221,14 +294,18 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
                 args: a,
                 cwd,
                 env,
-                runner: "Proton".into(),
+                runner: chosen.label,
                 needs_elevation: false,
                 raw_command_line: None,
             })
         }
         _ => {
-            env.entry("WINEPREFIX".into())
-                .or_insert(prefix_dir.to_string_lossy().to_string());
+            let prefix = prefix_dir.to_string_lossy().to_string();
+            if selected_program.is_some() {
+                env.insert("WINEPREFIX".into(), prefix);
+            } else {
+                env.entry("WINEPREFIX".into()).or_insert(prefix);
+            }
             env.entry("WINEDEBUG".into()).or_insert("-all".into());
             let mut a = vec![exe.to_string_lossy().to_string()];
             a.extend(args);
@@ -237,7 +314,7 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
                 args: a,
                 cwd,
                 env,
-                runner: "Wine".into(),
+                runner: chosen.label,
                 needs_elevation: false,
                 raw_command_line: None,
             })
@@ -247,6 +324,23 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
 
 pub fn prefix_dir(share_dir: &Path) -> PathBuf {
     share_dir.join(".nll-prefix")
+}
+
+fn prefix_dir_for(share_dir: &Path, program: Option<&Path>) -> PathBuf {
+    program
+        .map(|path| share_dir.join(format!(".nll-prefix-{}", runner_key(path))))
+        .unwrap_or_else(|| prefix_dir(share_dir))
+}
+
+/// Stable FNV-1a key; unlike `DefaultHasher`, this does not change between
+/// Rust releases and therefore keeps pointing at the same prefix.
+fn runner_key(program: &Path) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in program.as_os_str().to_string_lossy().as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
 }
 
 #[cfg(test)]
@@ -319,19 +413,49 @@ mod tests {
             },
             ..Default::default()
         };
-        let ctx = LaunchContext {
+        let automatic_prefix = {
+            let ctx = LaunchContext {
+                paths: &paths,
+                game_id: "g",
+                settings: &settings,
+                manifest: Some(&m),
+                receipt: None,
+                alternative: None,
+            };
+            let p = plan(&ctx).unwrap();
+            assert_eq!(p.program, wine);
+            assert_eq!(p.args[1..], ["-name", "Neo"]);
+            assert_eq!(p.cwd, paths.local_dir.join("bin"));
+            assert!(p.env["WINEPREFIX"].ends_with(".nll-prefix"));
+            p.env["WINEPREFIX"].clone()
+        };
+
+        settings.set_game_runner(
+            "g",
+            Some(crate::settings::GameRunner {
+                program: wine.clone(),
+                runner: Runner::Wine,
+                label: format!("Wine ({})", wine.display()),
+                steam_root: None,
+            }),
+        );
+        let mut selected_manifest = m.clone();
+        selected_manifest
+            .launch
+            .env
+            .insert("WINEPREFIX".into(), "/manifest/prefix".into());
+        let selected_ctx = LaunchContext {
             paths: &paths,
             game_id: "g",
             settings: &settings,
-            manifest: Some(&m),
+            manifest: Some(&selected_manifest),
             receipt: None,
             alternative: None,
         };
-        let p = plan(&ctx).unwrap();
-        assert_eq!(p.program, wine);
-        assert_eq!(p.args[1..], ["-name", "Neo"]);
-        assert_eq!(p.cwd, paths.local_dir.join("bin"));
-        assert!(p.env["WINEPREFIX"].ends_with(".nll-prefix"));
+        let selected = plan(&selected_ctx).unwrap();
+        assert_eq!(selected.program, wine);
+        assert!(selected.env["WINEPREFIX"].contains(".nll-prefix-"));
+        assert_ne!(selected.env["WINEPREFIX"], automatic_prefix);
 
         let native = Manifest {
             id: "g".into(),
@@ -344,7 +468,7 @@ mod tests {
         };
         let ctx = LaunchContext {
             manifest: Some(&native),
-            ..ctx
+            ..selected_ctx
         };
         let p = plan(&ctx).unwrap();
         assert_eq!(p.program, paths.local_dir.join("run.sh"));
@@ -365,5 +489,73 @@ mod tests {
             alternative: None,
         };
         assert!(plan(&ctx).is_err());
+    }
+
+    #[test]
+    fn manually_selected_runners_have_stable_separate_prefixes() {
+        let share = Path::new("/games/example");
+        let first = Path::new("/tools/Proton 9/proton");
+        let second = Path::new("/tools/Proton 10/proton");
+
+        assert_eq!(prefix_dir_for(share, None), share.join(".nll-prefix"));
+        assert_eq!(
+            prefix_dir_for(share, Some(first)),
+            prefix_dir_for(share, Some(first))
+        );
+        assert_ne!(
+            prefix_dir_for(share, Some(first)),
+            prefix_dir_for(share, Some(second))
+        );
+    }
+
+    #[test]
+    fn lexical_aliases_are_one_runner_and_one_prefix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let program = tmp.path().join("wine");
+        std::fs::write(&program, "").unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        let alias = tmp.path().join("sub").join("..").join("wine");
+
+        assert!(same_program(&program, &alias));
+    }
+
+    #[test]
+    fn persisted_runner_survives_a_global_path_change() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = GamePaths::new(tmp.path(), "g");
+        std::fs::create_dir_all(&paths.local_dir).unwrap();
+        std::fs::write(paths.local_dir.join("game.exe"), "").unwrap();
+        let wine = tmp.path().join("external-wine");
+        std::fs::write(&wine, "").unwrap();
+        let mut settings = Settings::default();
+        settings.set_game_runner(
+            "g",
+            Some(crate::settings::GameRunner {
+                program: wine.clone(),
+                runner: Runner::Wine,
+                label: format!("Wine ({})", wine.display()),
+                steam_root: None,
+            }),
+        );
+        let manifest = Manifest {
+            id: "g".into(),
+            launch: LaunchSpec {
+                exe: "game.exe".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let ctx = LaunchContext {
+            paths: &paths,
+            game_id: "g",
+            settings: &settings,
+            manifest: Some(&manifest),
+            receipt: None,
+            alternative: None,
+        };
+
+        let planned = plan(&ctx).unwrap();
+        assert_eq!(planned.program, wine);
+        assert!(planned.runner.starts_with("Wine ("));
     }
 }

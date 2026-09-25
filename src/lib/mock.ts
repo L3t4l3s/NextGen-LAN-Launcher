@@ -93,6 +93,7 @@ export function createMock() {
     setupComplete: true,
     allowElevation: true,
     runnerPaths: { wine: null, crossoverApp: null, proton: null },
+    gameRunners: {},
     syncPort: 0,
     catalogKey: null,
     resilioBinary: null,
@@ -301,6 +302,15 @@ export function createMock() {
         throw new Error("Im Demo-Modus werden keine Spiele gestartet.");
       case "get_launch_plan":
         return { program: "C:\\Windows\\System32\\cmd.exe", args: ["/C", `"D:\\LAN\\${id}\\game_start.cmd"`, `"D:\\LAN\\${id}"`, id, "de", '"DemoPlayer"'], cwd: `D:\\LAN\\${id}`, env: {}, runner: "game_start.cmd", needsElevation: true };
+      case "get_runner_options":
+        return { selected: settings.gameRunners[id]?.program ?? null, selectedKind: settings.gameRunners[id]?.runner ?? null, options: [] };
+      case "set_game_runner": {
+        const program = args.program as string | null;
+        const runner = (args.kind as "wine" | "crossover" | "proton" | null) ?? "wine";
+        if (program) settings.gameRunners[id] = { program, runner, label: "Wine", steamRoot: null };
+        else delete settings.gameRunners[id];
+        return;
+      }
       case "list_executables":
         return ["Game.exe", "bin/Launcher.exe", "tools/Config.exe"];
       case "set_exe_override":

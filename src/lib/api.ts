@@ -11,6 +11,7 @@ import type {
   LaunchPlan,
   LibrarySpace,
   Report,
+  RunnerChoices,
   Settings,
   SharePeer,
   TransportHealth,
@@ -57,6 +58,9 @@ export const api = {
   prereqInstaller: () => invoke<string | null>("get_prereq_installer"),
   runPrereqInstaller: () => invoke<number>("run_prereq_installer"),
   launchPlan: (gameId: string, alternative?: number) => invoke<LaunchPlan>("get_launch_plan", { gameId, alternative: alternative ?? null }),
+  runnerOptions: (gameId: string) => invoke<RunnerChoices>("get_runner_options", { gameId }),
+  setGameRunner: (gameId: string, program: string | null, kind: RunnerChoices["selectedKind"] = null) =>
+    invoke<void>("set_game_runner", { gameId, program, kind }),
   listExecutables: (gameId: string) => invoke<string[]>("list_executables", { gameId }),
   setExeOverride: (gameId: string, exe: string) => invoke<void>("set_exe_override", { gameId, exe }),
   settings: () => invoke<Settings>("get_settings"),

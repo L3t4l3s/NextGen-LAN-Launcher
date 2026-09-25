@@ -338,6 +338,7 @@ pub async fn spawn_elevated(
 
 pub async fn spawn(plan: &LaunchPlan, log: Option<&Path>) -> Result<(u32, ExitWatch)> {
     ensure_proton_prefix(plan)?;
+    ensure_crossover_bottle(plan).await?;
     let mut cmd = tokio::process::Command::new(&plan.program);
     cmd.current_dir(&plan.cwd);
     // Before the plan's own environment: a manifest may set one of these
@@ -393,6 +394,73 @@ fn ensure_proton_prefix(plan: &LaunchPlan) -> Result<()> {
         plan.cwd.join(path)
     };
     std::fs::create_dir_all(&path).map_err(|e| Error::io(path, e))
+}
+
+/// CrossOver's `wine --bottle` only opens an existing bottle. The GUI creates
+/// one before its Run Command action; a standalone launcher must do that
+/// preparation itself when a per-runner bottle is used for the first time.
+async fn ensure_crossover_bottle(plan: &LaunchPlan) -> Result<()> {
+    let Some(manager) = plan.program.parent().map(|dir| dir.join("cxbottle")) else {
+        return Ok(());
+    };
+    if !manager.is_file() {
+        return Ok(());
+    }
+    let Some(bottle) = plan
+        .args
+        .windows(2)
+        .find(|args| args[0] == "--bottle")
+        .map(|args| args[1].as_str())
+    else {
+        return Ok(());
+    };
+    if crossover_bottle_dirs(plan)
+        .iter()
+        .any(|root| root.join(bottle).join("cxbottle.conf").is_file())
+    {
+        return Ok(());
+    }
+
+    let mut command = tokio::process::Command::new(&manager);
+    command.envs(&plan.env).args([
+        "--create",
+        "--scope",
+        "private",
+        "--bottle",
+        bottle,
+        "--install",
+        "--template",
+        "win10_64",
+    ]);
+    let output = command
+        .output()
+        .await
+        .map_err(|e| Error::Launch(format!("cannot start {}: {e}", manager.display())))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(Error::Launch(format!(
+            "cannot create CrossOver bottle {bottle}: {detail}"
+        )));
+    }
+    Ok(())
+}
+
+fn crossover_bottle_dirs(plan: &LaunchPlan) -> Vec<PathBuf> {
+    if let Some(paths) = plan
+        .env
+        .get("CX_BOTTLE_PATH")
+        .map(std::ffi::OsString::from)
+        .or_else(|| std::env::var_os("CX_BOTTLE_PATH"))
+    {
+        return std::env::split_paths(&paths).collect();
+    }
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return Vec::new();
+    };
+    vec![
+        home.join("Library/Application Support/CrossOver/Bottles"),
+        home.join(".cxoffice"),
+    ]
 }
 
 /// The environment variable in which the launcher records what it forced on
