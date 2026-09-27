@@ -15,8 +15,18 @@
   Wine-, Proton- oder CrossOver-Version wählen. Alle von Steam erkannten Proton-Versionen
   werden angeboten; „Automatisch“ bleibt der Standard. Manuelle Versionen verwenden
   getrennte, stabile Prefixe beziehungsweise CrossOver-Bottles, sodass ein Wechsel keine
-  Spielstände oder Einstellungen einer anderen Version überschreibt. Die Auswahl bleibt
-  über Neustarts erhalten und der Startplan nennt die tatsächlich verwendete Version.
+  Spielstände oder Einstellungen einer anderen Version überschreibt. Wer eine Version
+  festlegt, die schon im Prefix des Spiels lief, behält Prefix bzw. Bottle des Spiels
+  (sonst wären Spielstände scheinbar verschwunden) — auch wenn „Automatisch“ inzwischen eine
+  neuere Proton-Version wählt. Bei Prefixen aus der Zeit vor dieser Aufzeichnung gilt das für
+  jede Version derselben Art. Hat die Version schon einen eigenen Prefix für das Spiel, bleibt
+  es bei diesem. Die Auswahl bleibt über Neustarts erhalten und der
+  Startplan nennt die tatsächlich verwendete Version.
+- Linux/macOS: Scheitert das Anlegen einer CrossOver-Bottle (etwa weil sie schon existiert,
+  aber nicht gefunden wurde), startet das Spiel trotzdem; die Meldung von `cxbottle` steht im
+  Log und bei einem Start mit Mitschnitt (Diagnose) oben im Startprotokoll. Die Suche nach
+  Wine-/Proton-Versionen blockiert andere Befehle nicht mehr, und schnell hintereinander
+  gewählte Versionen werden nacheinander statt durcheinander gespeichert.
 
 - Resilio-Start, anfängliche Teilnehmersuche und Datei-Scan erscheinen neutral
   statt als Sync-Warnung. Diagnoseprüfungen aktualisieren auch die Statusleiste;

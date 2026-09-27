@@ -187,6 +187,17 @@ again.
   11.0 and Proton Experimental both opened a visible, usable game. Automatic selection therefore
   prefers current official Steam releases, with `Experimental`/`Hotfix` next and unrelated custom
   tools last; an explicitly configured Proton path still overrides discovery.
+- **Pinned versions and their prefixes:** a Wine/Proton/CrossOver version chosen in the game
+  details gets its own prefix (`.nll-prefix-<key>`, bottle `nll-<id>-<key>`), unless its saves
+  are in the game's own one. Every start there adds the tool to `.nll-default-prefix.json` beside
+  the receipt, and a pin of a recorded tool keeps the prefix. A prefix older than that record was
+  shared by every version Automatic picked, so there any tool of its kind (`pfx/` for Proton,
+  `drive_c` for Wine, the bottle for CrossOver) keeps it. A tool that already has a prefix of its
+  own for the game always keeps that one. The rules are covered by tests; pinning on a real Deck
+  or Mac and finding the savegames where they were has not been tried. Also untested against a
+  real CrossOver: a failing `cxbottle --create` no longer stops the start (a missed probe made
+  games with an existing bottle unstartable). What it said is in the log and at the top of a start
+  transcript captured from Diagnostics.
 - **Installer and a running launcher:** unsolved. The NSIS hook closes the launcher first and its
   sync engine second (the launcher restarts an engine it sees dying, and the installer's own
   "close the application?" prompt only comes after the hook), waits until nothing runs from the

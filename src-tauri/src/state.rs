@@ -42,6 +42,9 @@ pub struct AppState {
     /// Serialises catalog reloads: two at once would extract `assets.eti`
     /// into the same cover cache concurrently.
     pub catalog_reload: tokio::sync::Mutex<()>,
+    /// Serialises `set_game_runner`: it scans for runners without holding
+    /// the settings lock, and two picks must still land in the order made.
+    pub runner_choice: tokio::sync::Mutex<()>,
     /// Catalog loaded at start before the install manager exists (the sync
     /// engine may take its whole API timeout to come up); `catalog()` falls
     /// back to it so the library shows up right away.

@@ -85,6 +85,14 @@ pub struct GameRunner {
     pub runner: Runner,
     pub label: String,
     pub steam_root: Option<PathBuf>,
+    /// The tool had already run in the game's original prefix (`.nll-prefix`,
+    /// bottle `nll-<id>`) when it was pinned, so it keeps that prefix instead
+    /// of getting one of its own (`launch::unix::pinning_keeps_default_prefix`
+    /// has the rules). Decided once, when the choice is made: asking again at
+    /// every start could move the game between prefixes. A choice saved
+    /// before this field existed reads as `false`, which is what it did then.
+    #[serde(default)]
+    pub shares_default_prefix: bool,
 }
 
 impl Default for Settings {

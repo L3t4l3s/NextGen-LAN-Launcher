@@ -3,6 +3,7 @@
 use super::{expand_args, resolve_exe, LaunchContext, LaunchPlan};
 use crate::error::{Error, Result};
 use crate::manifest::Runner;
+use crate::paths::GamePaths;
 use crate::settings::GameRunner;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -33,6 +34,26 @@ pub fn same_program(left: &Path, right: &Path) -> bool {
     let left = std::fs::canonicalize(left).unwrap_or_else(|_| left.to_path_buf());
     let right = std::fs::canonicalize(right).unwrap_or_else(|_| right.to_path_buf());
     left == right
+}
+
+/// The detected runner of `kind` at `program`, or the stored pin when that is
+/// the same tool and detection no longer reaches it. The one rule for "is
+/// this the selected tool", shared by the plan and the runner choice.
+pub fn find_runner(
+    runners: &[DetectedRunner],
+    kind: Runner,
+    program: &Path,
+    stored: Option<&GameRunner>,
+) -> Option<DetectedRunner> {
+    runners
+        .iter()
+        .find(|d| d.runner == kind && same_program(&d.program, program))
+        .cloned()
+        .or_else(|| {
+            stored
+                .filter(|stored| stored.runner == kind && same_program(&stored.program, program))
+                .and_then(persisted_runner)
+        })
 }
 
 /// Restore a saved runner even if a later global-path change means automatic
@@ -201,20 +222,9 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
     let selected = ctx.settings.game_runner(ctx.game_id);
     let selected_program = selected.map(|runner| runner.program.as_path());
     let chosen = if let Some(selected) = selected {
-        runners
-            .iter()
-            .find(|d| d.runner == selected.runner && same_program(&d.program, &selected.program))
-            .cloned()
-            .or_else(|| persisted_runner(selected))
+        find_runner(&runners, selected.runner, &selected.program, Some(selected))
     } else {
-        match wanted {
-            Runner::Auto => runners.first().cloned(),
-            r => runners
-                .iter()
-                .find(|d| d.runner == r)
-                .cloned()
-                .or_else(|| runners.first().cloned()),
-        }
+        automatic_runner(&runners, wanted)
     }
     .ok_or_else(|| {
         if let Some(program) = selected_program {
@@ -241,11 +251,16 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
     // Automatic mode keeps the original prefix for backwards compatibility.
     // An explicitly selected tool gets a stable, separate prefix: switching
     // Proton versions must neither migrate nor overwrite another version's
-    // registry and save data.
-    let prefix_dir = prefix_dir_for(&ctx.paths.share_dir, selected_program);
+    // registry and save data. The exception is a tool pinned while it was
+    // already the one Automatic ran — that prefix is its own, and moving it to
+    // an empty one would look to the player like lost savegames.
+    let separate_program = selected
+        .filter(|s| !s.shares_default_prefix)
+        .map(|s| s.program.as_path());
+    let prefix_dir = prefix_dir_for(&ctx.paths.share_dir, separate_program);
     match chosen.runner {
         Runner::Crossover => {
-            let bottle = selected_program
+            let bottle = separate_program
                 .map(|program| format!("nll-{}-{}", ctx.game_id, runner_key(program)))
                 .unwrap_or_else(|| format!("nll-{}", ctx.game_id));
             let mut a = vec![
@@ -269,12 +284,12 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
             })
         }
         Runner::Proton => {
-            let prefix = prefix_dir.to_string_lossy().to_string();
-            if selected_program.is_some() {
-                env.insert("STEAM_COMPAT_DATA_PATH".into(), prefix);
-            } else {
-                env.entry("STEAM_COMPAT_DATA_PATH".into()).or_insert(prefix);
-            }
+            set_prefix(
+                &mut env,
+                "STEAM_COMPAT_DATA_PATH",
+                &prefix_dir,
+                separate_program.is_some(),
+            );
             // The Steam that owns this Proton, not a guess: a Flatpak Steam
             // or a second installation lives nowhere near `~/.steam/steam`,
             // and Proton refuses to start when this points at the wrong one.
@@ -300,12 +315,12 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
             })
         }
         _ => {
-            let prefix = prefix_dir.to_string_lossy().to_string();
-            if selected_program.is_some() {
-                env.insert("WINEPREFIX".into(), prefix);
-            } else {
-                env.entry("WINEPREFIX".into()).or_insert(prefix);
-            }
+            set_prefix(
+                &mut env,
+                "WINEPREFIX",
+                &prefix_dir,
+                separate_program.is_some(),
+            );
             env.entry("WINEDEBUG".into()).or_insert("-all".into());
             let mut a = vec![exe.to_string_lossy().to_string()];
             a.extend(args);
@@ -320,6 +335,244 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
             })
         }
     }
+}
+
+/// What Automatic runs for a game: the first runner that fits what the
+/// game's manifest asks for, else the best one there is.
+fn automatic_runner(runners: &[DetectedRunner], wanted: Runner) -> Option<DetectedRunner> {
+    match wanted {
+        Runner::Auto => runners.first().cloned(),
+        r => runners
+            .iter()
+            .find(|d| d.runner == r)
+            .cloned()
+            .or_else(|| runners.first().cloned()),
+    }
+}
+
+/// A tool that ran in a game's own prefix, as the launcher recorded it when
+/// it started one there.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrefixUser {
+    pub runner: Runner,
+    pub program: PathBuf,
+}
+
+/// What ran in a game's own prefix (`.nll-prefix`, bottle `nll-<id>`), kept
+/// beside the install receipt.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PrefixRecord {
+    /// Every tool that ran there, not only the last: a newer Proton that
+    /// Automatic tried once and that crashed has touched the prefix, but the
+    /// saves are still the older one's, and pinning that one must find them.
+    pub users: Vec<PrefixUser>,
+    /// The prefix existed before its record did. Which versions made it is
+    /// unknown then — every one Automatic picked over the months — so any
+    /// tool of the prefix's kind counts as having run there.
+    pub older_than_record: bool,
+}
+
+const PREFIX_RECORD_FILE: &str = ".nll-default-prefix.json";
+
+/// Which kind of tool `plan` runs in the game's own prefix, or `None` for a
+/// plan that runs anywhere else: natively, in a separate version's prefix, or
+/// in one the manifest names. Read off the plan's environment rather than
+/// from how `plan` decided, because this is where the program really runs:
+/// a manifest value naming the same folder is the same prefix.
+fn own_prefix_kind(plan: &LaunchPlan, paths: &GamePaths, game_id: &str) -> Option<Runner> {
+    let bottle = format!("nll-{game_id}");
+    if plan
+        .args
+        .windows(2)
+        .any(|pair| pair[0] == "--bottle" && pair[1] == bottle)
+    {
+        return Some(Runner::Crossover);
+    }
+    let own = prefix_dir(&paths.share_dir);
+    let names_own = |name: &str| {
+        plan.env.get(name).is_some_and(|value| {
+            let path = Path::new(value);
+            let path = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                plan.cwd.join(path)
+            };
+            path.components().eq(own.components()) || same_program(&path, &own)
+        })
+    };
+    if names_own("STEAM_COMPAT_DATA_PATH") {
+        Some(Runner::Proton)
+    } else if names_own("WINEPREFIX") {
+        Some(Runner::Wine)
+    } else {
+        None
+    }
+}
+
+/// Whether `plan` runs in the game's own prefix and that already holds a
+/// prefix of any kind — also one another kind of tool made, whose saves are
+/// in it just the same. Asked before the start (which creates one), for
+/// [`remember_default_prefix_user`].
+pub fn own_prefix_exists_before_start(plan: &LaunchPlan, paths: &GamePaths, game_id: &str) -> bool {
+    own_prefix_kind(plan, paths, game_id).is_some()
+        && [Runner::Proton, Runner::Wine, Runner::Crossover]
+            .into_iter()
+            .any(|kind| own_prefix_has_layout(paths, game_id, kind, &plan.env))
+}
+
+/// Whether the game's own prefix is there, laid out the way `kind` makes
+/// one: Proton puts the Wine prefix into `pfx/`, Wine uses the folder
+/// itself, CrossOver keeps a bottle of its own.
+fn own_prefix_has_layout(
+    paths: &GamePaths,
+    game_id: &str,
+    kind: Runner,
+    env: &BTreeMap<String, String>,
+) -> bool {
+    match kind {
+        Runner::Crossover => super::crossover_bottle_exists(&format!("nll-{game_id}"), env),
+        kind => has_layout(&prefix_dir(&paths.share_dir), kind),
+    }
+}
+
+/// A Wine or Proton prefix really made in `dir`, not just the folder: the
+/// launcher creates Proton's outer folder before Proton runs, so a start
+/// that failed at once leaves one behind with nothing in it.
+fn has_layout(dir: &Path, kind: Runner) -> bool {
+    match kind {
+        Runner::Proton => dir.join("pfx").is_dir(),
+        Runner::Wine => dir.join("drive_c").is_dir(),
+        _ => false,
+    }
+}
+
+/// Add the tool a started plan ran in the game's own prefix to the record.
+/// Called once the start succeeded, never for a plan that was only shown: a
+/// plan built for the details page has run nowhere. `existed_before` is
+/// [`own_prefix_exists_before_start`], asked before that start.
+pub fn remember_default_prefix_user(
+    plan: &LaunchPlan,
+    paths: &GamePaths,
+    game_id: &str,
+    existed_before: bool,
+) {
+    let Some(runner) = own_prefix_kind(plan, paths, game_id) else {
+        return;
+    };
+    let user = PrefixUser {
+        runner,
+        program: std::fs::canonicalize(&plan.program).unwrap_or_else(|_| plan.program.clone()),
+    };
+    let path = paths.share_dir.join(PREFIX_RECORD_FILE);
+    let mut record = match default_prefix_record(paths) {
+        Some(record) => record,
+        None => PrefixRecord {
+            users: Vec::new(),
+            older_than_record: existed_before,
+        },
+    };
+    if record.users.contains(&user) {
+        return;
+    }
+    record.users.push(user);
+    // Through a temporary file: a record cut short by a crash would read as
+    // none at all, and the next start would write it anew without the tools
+    // that ran before.
+    let staging = paths.share_dir.join(format!(
+        "{PREFIX_RECORD_FILE}.{}.tmp",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|t| t.as_nanos())
+            .unwrap_or_default()
+    ));
+    let written = serde_json::to_vec_pretty(&record)
+        .map_err(|e| e.to_string())
+        .and_then(|json| std::fs::write(&staging, json).map_err(|e| e.to_string()))
+        .and_then(|()| std::fs::rename(&staging, &path).map_err(|e| e.to_string()));
+    if let Err(e) = written {
+        log::warn!("cannot record the prefix user in {}: {e}", path.display());
+    }
+}
+
+/// The record of what ran in the game's own prefix, if there is one.
+pub fn default_prefix_record(paths: &GamePaths) -> Option<PrefixRecord> {
+    let text = std::fs::read(paths.share_dir.join(PREFIX_RECORD_FILE)).ok()?;
+    serde_json::from_slice(&text)
+        .inspect_err(|e| {
+            log::warn!(
+                "unreadable prefix record in {}: {e}",
+                paths.share_dir.display()
+            )
+        })
+        .ok()
+}
+
+/// Whether pinning `chosen` keeps the game on its own prefix instead of
+/// giving it one of its own. Picking a version whose saves are in the game's
+/// prefix is not switching versions, and must not look to the player like
+/// lost savegames.
+///
+/// - A tool that already has a separate prefix or bottle for this game keeps
+///   it: its saves are there, whatever ran in the game's own prefix since.
+/// - A tool the record says ran in the game's prefix shares it. The record,
+///   not today's Automatic pick: Steam installs a newer Proton in the
+///   background, Automatic moves on, and the version the saves were made
+///   with is still the one to match.
+/// - A prefix older than its record — or with no record yet, made before the
+///   launcher kept one — was shared by every version Automatic picked, so
+///   any tool of its kind shares it: the usual reason to pin an older Proton
+///   is that the newer one broke the game, and its saves are there.
+/// - Anything else gets a prefix of its own.
+pub fn pinning_keeps_default_prefix(
+    paths: &GamePaths,
+    game_id: &str,
+    chosen: &DetectedRunner,
+) -> bool {
+    let env = BTreeMap::new();
+    // The spelling `set_game_runner` stores and `plan` derives the key from.
+    let program = std::fs::canonicalize(&chosen.program).unwrap_or_else(|_| chosen.program.clone());
+    let has_its_own = match chosen.runner {
+        Runner::Crossover => {
+            super::crossover_bottle_exists(&format!("nll-{game_id}-{}", runner_key(&program)), &env)
+        }
+        kind => has_layout(&prefix_dir_for(&paths.share_dir, Some(&program)), kind),
+    };
+    if has_its_own {
+        return false;
+    }
+    let record = default_prefix_record(paths);
+    let recorded = record.as_ref().is_some_and(|record| {
+        record
+            .users
+            .iter()
+            .any(|user| user.runner == chosen.runner && same_program(&user.program, &program))
+    });
+    recorded
+        || (record
+            .as_ref()
+            .is_none_or(|record| record.older_than_record)
+            && own_prefix_has_layout(paths, game_id, chosen.runner, &env))
+}
+
+/// Put the prefix into the environment.
+///
+/// The game's own prefix defers to a value the manifest set, like every other
+/// variable in `plan`: an organiser who ships a prepared prefix for a game
+/// means it. A *separate* version's prefix does not defer, and that is the
+/// point of it — letting the manifest's value through would put every pinned
+/// Proton back into one shared prefix, the corruption per-version prefixes
+/// exist to prevent. The start's log line names the prefix actually used.
+fn set_prefix(env: &mut BTreeMap<String, String>, name: &str, dir: &Path, separate: bool) {
+    let value = dir.to_string_lossy().to_string();
+    if !separate {
+        env.entry(name.into()).or_insert(value);
+        return;
+    }
+    // Not logged here: plans are built each time the details are shown.
+    // The prefix a start really used is in its `starting …` log line.
+    env.insert(name.into(), value);
 }
 
 pub fn prefix_dir(share_dir: &Path) -> PathBuf {
@@ -433,6 +686,7 @@ mod tests {
         settings.set_game_runner(
             "g",
             Some(crate::settings::GameRunner {
+                shares_default_prefix: false,
                 program: wine.clone(),
                 runner: Runner::Wine,
                 label: format!("Wine ({})", wine.display()),
@@ -473,6 +727,377 @@ mod tests {
         let p = plan(&ctx).unwrap();
         assert_eq!(p.program, paths.local_dir.join("run.sh"));
         assert_eq!(p.runner, "native");
+    }
+
+    /// The review's finding: pinning by name the very tool Automatic already
+    /// ran moved the game to `.nll-prefix-<key>`, an empty prefix, while the
+    /// registry and savegames stayed behind in `.nll-prefix`. A pin marked as
+    /// sharing the default prefix stays where the game has been, and defers
+    /// to a manifest's prefix exactly as Automatic does.
+    #[test]
+    fn a_tool_pinned_while_automatic_ran_it_keeps_the_games_prefix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = GamePaths::new(tmp.path(), "g");
+        std::fs::create_dir_all(paths.local_dir.join("bin")).unwrap();
+        std::fs::write(paths.local_dir.join("bin/game.exe"), "").unwrap();
+        let wine = tmp.path().join("wine");
+        std::fs::write(&wine, "").unwrap();
+        let mut settings = Settings::default();
+        settings.runner_paths.wine = Some(wine.clone());
+        let m = Manifest {
+            id: "g".into(),
+            launch: LaunchSpec {
+                exe: "bin/game.exe".into(),
+                // Named, not Auto: on a Mac with CrossOver installed that
+                // comes first, and Automatic would not be this Wine.
+                runner: Runner::Wine,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let plan_with = |settings: &Settings, manifest: &Manifest| {
+            plan(&LaunchContext {
+                paths: &paths,
+                game_id: "g",
+                settings,
+                manifest: Some(manifest),
+                receipt: None,
+                alternative: None,
+            })
+            .unwrap()
+        };
+        let automatic = plan_with(&settings, &m).env["WINEPREFIX"].clone();
+
+        settings.set_game_runner(
+            "g",
+            Some(crate::settings::GameRunner {
+                program: wine.clone(),
+                runner: Runner::Wine,
+                label: "Wine".into(),
+                steam_root: None,
+                shares_default_prefix: true,
+            }),
+        );
+        assert_eq!(
+            plan_with(&settings, &m).env["WINEPREFIX"],
+            automatic,
+            "the savegames live in the prefix the game has always used"
+        );
+
+        let mut with_prefix = m.clone();
+        with_prefix
+            .launch
+            .env
+            .insert("WINEPREFIX".into(), "/manifest/prefix".into());
+        assert_eq!(
+            plan_with(&settings, &with_prefix).env["WINEPREFIX"],
+            "/manifest/prefix",
+            "on the game's own prefix an organiser's value counts, as it does for Automatic"
+        );
+    }
+
+    /// The decision behind that flag, made when the tool is picked.
+    #[test]
+    fn pinning_keeps_the_prefix_for_what_ran_there_and_for_nothing_else() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = GamePaths::new(tmp.path(), "g");
+        std::fs::create_dir_all(&paths.share_dir).unwrap();
+        let tool = |name: &str| {
+            let program = tmp.path().join(name);
+            std::fs::write(&program, "").unwrap();
+            program
+        };
+        let (older, newer, never) = (tool("wine-9"), tool("wine-10"), tool("wine-7"));
+        let wine = |program: &Path| DetectedRunner {
+            runner: Runner::Wine,
+            program: program.to_path_buf(),
+            label: String::new(),
+            steam_root: None,
+        };
+        let keeps = |program: &Path| pinning_keeps_default_prefix(&paths, "g", &wine(program));
+        let ran = |program: &Path, existed_before: bool| {
+            let plan = LaunchPlan {
+                program: program.to_path_buf(),
+                args: Vec::new(),
+                cwd: tmp.path().to_path_buf(),
+                env: BTreeMap::from([(
+                    "WINEPREFIX".into(),
+                    prefix_dir(&paths.share_dir).to_string_lossy().to_string(),
+                )]),
+                runner: "Wine".into(),
+                needs_elevation: false,
+                raw_command_line: None,
+            };
+            remember_default_prefix_user(&plan, &paths, "g", existed_before);
+            std::fs::create_dir_all(prefix_dir(&paths.share_dir).join("drive_c")).unwrap();
+        };
+
+        assert!(!keeps(&older), "no prefix yet: nothing to keep");
+
+        // A prefix recorded from its first start: only what ran there.
+        ran(&older, false);
+        ran(&newer, false);
+        assert!(keeps(&older), "the newer one does not push out the older");
+        assert!(keeps(&newer));
+        assert!(
+            !keeps(&never),
+            "a version that never ran there gets its own"
+        );
+        assert!(
+            !pinning_keeps_default_prefix(
+                &paths,
+                "g",
+                &DetectedRunner {
+                    runner: Runner::Proton,
+                    ..wine(&older)
+                }
+            ),
+            "the same file as another kind of runner is not what ran there"
+        );
+
+        // A tool with a prefix of its own for this game keeps that one.
+        let program = std::fs::canonicalize(&older).unwrap();
+        let own = prefix_dir_for(&paths.share_dir, Some(&program));
+        std::fs::create_dir_all(&own).unwrap();
+        assert!(
+            keeps(&older),
+            "an empty folder a failed start left is no prefix"
+        );
+        std::fs::create_dir_all(own.join("drive_c")).unwrap();
+        assert!(!keeps(&older), "its saves are in its own prefix");
+    }
+
+    /// A prefix made before the launcher kept a record was shared by every
+    /// version Automatic picked; any tool of its kind may be what saved there.
+    #[test]
+    fn a_prefix_older_than_its_record_is_shared_by_its_kind() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = GamePaths::new(tmp.path(), "g");
+        std::fs::create_dir_all(prefix_dir(&paths.share_dir).join("pfx")).unwrap();
+        let proton = |name: &str| {
+            let program = tmp.path().join(name);
+            std::fs::write(&program, "").unwrap();
+            DetectedRunner {
+                runner: Runner::Proton,
+                program,
+                label: String::new(),
+                steam_root: None,
+            }
+        };
+        let (older, newer) = (proton("proton-9"), proton("proton-10"));
+
+        assert!(
+            pinning_keeps_default_prefix(&paths, "g", &older),
+            "no record yet, a Proton prefix is there"
+        );
+        assert!(
+            !pinning_keeps_default_prefix(
+                &paths,
+                "g",
+                &DetectedRunner {
+                    runner: Runner::Wine,
+                    ..older.clone()
+                }
+            ),
+            "Wine does not use a Proton prefix's layout"
+        );
+
+        // Steam brought Proton 10, Automatic ran it once — and it crashed.
+        // Pinning 9 again must still find the saves.
+        let plan = LaunchPlan {
+            program: newer.program.clone(),
+            args: Vec::new(),
+            cwd: tmp.path().to_path_buf(),
+            env: BTreeMap::from([(
+                "STEAM_COMPAT_DATA_PATH".into(),
+                format!("{}/", prefix_dir(&paths.share_dir).display()),
+            )]),
+            runner: "Proton".into(),
+            needs_elevation: false,
+            raw_command_line: None,
+        };
+        let existed = own_prefix_exists_before_start(&plan, &paths, "g");
+        assert!(existed, "a trailing slash names the same folder");
+        remember_default_prefix_user(&plan, &paths, "g", existed);
+        let record = default_prefix_record(&paths).unwrap();
+        assert!(record.older_than_record);
+        assert_eq!(record.users.len(), 1);
+        assert!(pinning_keeps_default_prefix(&paths, "g", &older));
+    }
+
+    /// Wine made the prefix; the first start the record sees is Proton's.
+    /// The prefix still predates the record, and the Wine keeps it.
+    #[test]
+    fn a_prefix_another_kind_made_still_counts_as_older() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = GamePaths::new(tmp.path(), "g");
+        std::fs::create_dir_all(prefix_dir(&paths.share_dir).join("drive_c")).unwrap();
+        let proton = tmp.path().join("proton");
+        let wine = tmp.path().join("wine");
+        std::fs::write(&proton, "").unwrap();
+        std::fs::write(&wine, "").unwrap();
+        let plan = LaunchPlan {
+            program: proton,
+            args: Vec::new(),
+            cwd: tmp.path().to_path_buf(),
+            env: BTreeMap::from([(
+                "STEAM_COMPAT_DATA_PATH".into(),
+                prefix_dir(&paths.share_dir).to_string_lossy().to_string(),
+            )]),
+            runner: "Proton".into(),
+            needs_elevation: false,
+            raw_command_line: None,
+        };
+        let existed = own_prefix_exists_before_start(&plan, &paths, "g");
+        assert!(existed);
+        remember_default_prefix_user(&plan, &paths, "g", existed);
+        assert!(pinning_keeps_default_prefix(
+            &paths,
+            "g",
+            &DetectedRunner {
+                runner: Runner::Wine,
+                program: wine,
+                label: String::new(),
+                steam_root: None,
+            }
+        ));
+    }
+
+    /// Only a plan that runs in the game's own prefix is recorded, and it
+    /// records the tool that ran there — checked on what `plan` builds, so a
+    /// change to how it names the prefix cannot quietly stop the record.
+    #[test]
+    fn the_tool_that_ran_in_the_games_own_prefix_is_recorded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = GamePaths::new(tmp.path(), "g");
+        std::fs::create_dir_all(paths.local_dir.join("bin")).unwrap();
+        std::fs::write(paths.local_dir.join("bin/game.exe"), "").unwrap();
+        let wine = tmp.path().join("wine");
+        std::fs::write(&wine, "").unwrap();
+        let crossover = tmp.path().join("CrossOver/bin/wine");
+        std::fs::create_dir_all(crossover.parent().unwrap()).unwrap();
+        std::fs::write(&crossover, "").unwrap();
+        let m = Manifest {
+            id: "g".into(),
+            launch: LaunchSpec {
+                exe: "bin/game.exe".into(),
+                runner: Runner::Wine,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let pin = |program: &Path, runner: Runner, shares: bool| {
+            let mut settings = Settings::default();
+            settings.runner_paths.wine = Some(wine.clone());
+            if runner != Runner::Auto {
+                settings.set_game_runner(
+                    "g",
+                    Some(crate::settings::GameRunner {
+                        program: program.to_path_buf(),
+                        runner,
+                        label: String::new(),
+                        steam_root: None,
+                        shares_default_prefix: shares,
+                    }),
+                );
+            }
+            settings
+        };
+        let run = |settings: &Settings| {
+            let plan = plan(&LaunchContext {
+                paths: &paths,
+                game_id: "g",
+                settings,
+                manifest: Some(&m),
+                receipt: None,
+                alternative: None,
+            })
+            .unwrap();
+            remember_default_prefix_user(&plan, &paths, "g", false);
+            default_prefix_record(&paths)
+                .map(|record| record.users)
+                .unwrap_or_default()
+        };
+
+        assert_eq!(
+            run(&pin(&wine, Runner::Wine, false)),
+            vec![],
+            "a separate prefix"
+        );
+        assert_eq!(
+            run(&pin(&crossover, Runner::Crossover, false)),
+            vec![],
+            "a separate bottle"
+        );
+        let users = run(&pin(&wine, Runner::Auto, false));
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].runner, Runner::Wine);
+        assert!(same_program(&users[0].program, &wine));
+        let users = run(&pin(&crossover, Runner::Crossover, true));
+        assert_eq!(users.len(), 2, "the game's own bottle");
+        assert_eq!(users[1].runner, Runner::Crossover);
+        assert_eq!(
+            run(&pin(&wine, Runner::Auto, false)).len(),
+            2,
+            "recorded once"
+        );
+    }
+
+    /// The same for CrossOver, where the prefix is a named bottle: the pinned
+    /// tool that Automatic already used keeps the game's `nll-<id>` bottle.
+    #[test]
+    fn a_crossover_pin_sharing_the_default_keeps_the_games_bottle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = GamePaths::new(tmp.path(), "g");
+        std::fs::create_dir_all(paths.local_dir.join("bin")).unwrap();
+        std::fs::write(paths.local_dir.join("bin/game.exe"), "").unwrap();
+        let wine = tmp.path().join("CrossOver/bin/wine");
+        std::fs::create_dir_all(wine.parent().unwrap()).unwrap();
+        std::fs::write(&wine, "").unwrap();
+        let m = Manifest {
+            id: "g".into(),
+            launch: LaunchSpec {
+                exe: "bin/game.exe".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let bottle_for = |shares: bool| {
+            let mut settings = Settings::default();
+            settings.set_game_runner(
+                "g",
+                Some(crate::settings::GameRunner {
+                    program: wine.clone(),
+                    runner: Runner::Crossover,
+                    label: "CrossOver".into(),
+                    steam_root: None,
+                    shares_default_prefix: shares,
+                }),
+            );
+            let p = plan(&LaunchContext {
+                paths: &paths,
+                game_id: "g",
+                settings: &settings,
+                manifest: Some(&m),
+                receipt: None,
+                alternative: None,
+            })
+            .unwrap();
+            let at = p.args.iter().position(|a| a == "--bottle").unwrap();
+            p.args[at + 1].clone()
+        };
+        assert_eq!(bottle_for(true), "nll-g");
+        assert!(bottle_for(false).starts_with("nll-g-"));
+    }
+
+    #[test]
+    fn a_choice_saved_before_the_flag_existed_keeps_its_separate_prefix() {
+        // Settings written by the branch that introduced pinning know nothing
+        // of the flag. Reading them must not move anybody's game.
+        let saved =
+            r#"{"program":"/usr/bin/wine","runner":"wine","label":"Wine","steamRoot":null}"#;
+        let runner: crate::settings::GameRunner = serde_json::from_str(saved).unwrap();
+        assert!(!runner.shares_default_prefix);
     }
 
     #[test]
@@ -531,6 +1156,7 @@ mod tests {
         settings.set_game_runner(
             "g",
             Some(crate::settings::GameRunner {
+                shares_default_prefix: false,
                 program: wine.clone(),
                 runner: Runner::Wine,
                 label: format!("Wine ({})", wine.display()),

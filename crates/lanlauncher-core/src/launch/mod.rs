@@ -338,7 +338,7 @@ pub async fn spawn_elevated(
 
 pub async fn spawn(plan: &LaunchPlan, log: Option<&Path>) -> Result<(u32, ExitWatch)> {
     ensure_proton_prefix(plan)?;
-    ensure_crossover_bottle(plan).await?;
+    let bottle_note = ensure_crossover_bottle(plan).await;
     let mut cmd = tokio::process::Command::new(&plan.program);
     cmd.current_dir(&plan.cwd);
     // Before the plan's own environment: a manifest may set one of these
@@ -356,9 +356,16 @@ pub async fn spawn(plan: &LaunchPlan, log: Option<&Path>) -> Result<(u32, ExitWa
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let file = std::fs::File::create(path)
+        let mut file = std::fs::File::create(path)
             .inspect_err(|e| log::warn!("cannot write {}: {e}", path.display()))
             .ok()?;
+        // First in the transcript, above whatever `wine --bottle` answers:
+        // when the start fails because the bottle is missing after all, the
+        // reason is right there, on the page that shows this file.
+        if let Some(note) = &bottle_note {
+            use std::io::Write;
+            let _ = writeln!(file, "{note}");
+        }
         let err = file
             .try_clone()
             .inspect_err(|e| log::warn!("cannot write {}: {e}", path.display()))
@@ -399,29 +406,27 @@ fn ensure_proton_prefix(plan: &LaunchPlan) -> Result<()> {
 /// CrossOver's `wine --bottle` only opens an existing bottle. The GUI creates
 /// one before its Run Command action; a standalone launcher must do that
 /// preparation itself when a per-runner bottle is used for the first time.
-async fn ensure_crossover_bottle(plan: &LaunchPlan) -> Result<()> {
-    let Some(manager) = plan.program.parent().map(|dir| dir.join("cxbottle")) else {
-        return Ok(());
-    };
+/// Returns what went wrong, if creating it failed, for the start's transcript.
+async fn ensure_crossover_bottle(plan: &LaunchPlan) -> Option<String> {
+    let manager = plan.program.parent().map(|dir| dir.join("cxbottle"))?;
     if !manager.is_file() {
-        return Ok(());
+        return None;
     }
-    let Some(bottle) = plan
+    let bottle = plan
         .args
         .windows(2)
         .find(|args| args[0] == "--bottle")
-        .map(|args| args[1].as_str())
-    else {
-        return Ok(());
-    };
-    if crossover_bottle_dirs(plan)
-        .iter()
-        .any(|root| root.join(bottle).join("cxbottle.conf").is_file())
-    {
-        return Ok(());
+        .map(|args| args[1].as_str())?;
+    if crossover_bottle_exists(bottle, &plan.env) {
+        return None;
     }
 
     let mut command = tokio::process::Command::new(&manager);
+    // The environment the game gets, not the launcher's own: `cxbottle` is a
+    // CrossOver program too, and the AppImage's libraries or a renderer
+    // setting forced for the launcher's window are no more its business.
+    restore_what_the_launcher_forced(&mut command);
+    leave_the_appimage_behind(&mut command);
     command.envs(&plan.env).args([
         "--create",
         "--scope",
@@ -432,22 +437,52 @@ async fn ensure_crossover_bottle(plan: &LaunchPlan) -> Result<()> {
         "--template",
         "win10_64",
     ]);
-    let output = command
-        .output()
-        .await
-        .map_err(|e| Error::Launch(format!("cannot start {}: {e}", manager.display())))?;
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(Error::Launch(format!(
-            "cannot create CrossOver bottle {bottle}: {detail}"
-        )));
-    }
-    Ok(())
+    // Preparation, not a gate. The probe above can miss a bottle that exists
+    // — relocated, in a scope other than `private`, `HOME` unset — and then
+    // `--create` fails because it is already there. Treating that as fatal
+    // made such a game unstartable on every later attempt, although the
+    // bottle it needed was right where CrossOver looks. So the launch goes
+    // ahead either way: if the bottle really is missing, `wine --bottle` says
+    // so itself, and what `cxbottle` answered stands above it in the start's
+    // transcript and in the log.
+    let note = match command.output().await {
+        Ok(output) if output.status.success() => return None,
+        Ok(output) => {
+            let said = [&output.stderr[..], &output.stdout[..]]
+                .iter()
+                .map(|bytes| String::from_utf8_lossy(bytes).trim().to_string())
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join(" | ");
+            format!(
+                "cxbottle --create {bottle} exited with {}{}",
+                output.status,
+                if said.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {said}")
+                }
+            )
+        }
+        Err(e) => format!(
+            "cannot run {} to create bottle {bottle}: {e}",
+            manager.display()
+        ),
+    };
+    log::warn!("{note}; starting anyway");
+    Some(note)
 }
 
-fn crossover_bottle_dirs(plan: &LaunchPlan) -> Vec<PathBuf> {
-    if let Some(paths) = plan
-        .env
+/// Whether CrossOver has a bottle `name`, looked for where a child with
+/// environment `env` would find it.
+pub(crate) fn crossover_bottle_exists(name: &str, env: &BTreeMap<String, String>) -> bool {
+    crossover_bottle_dirs(env)
+        .iter()
+        .any(|root| root.join(name).join("cxbottle.conf").is_file())
+}
+
+fn crossover_bottle_dirs(env: &BTreeMap<String, String>) -> Vec<PathBuf> {
+    if let Some(paths) = env
         .get("CX_BOTTLE_PATH")
         .map(std::ffi::OsString::from)
         .or_else(|| std::env::var_os("CX_BOTTLE_PATH"))
@@ -674,6 +709,45 @@ mod tests {
         ensure_proton_prefix(&plan).unwrap();
 
         assert!(prefix.is_dir());
+    }
+
+    /// A `cxbottle --create` that fails — here because the probe missed a
+    /// bottle that is there, the case that made a game unstartable for good —
+    /// must not stop the launch. It is preparation; `wine --bottle` has the
+    /// last word on whether the bottle exists, and what `cxbottle` said goes
+    /// into the start's transcript.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_failed_bottle_creation_does_not_stop_the_launch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("CrossOver/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        // A shell that rejects `--create` stands in for a `cxbottle` that
+        // fails. A link to an existing program, not a freshly written script:
+        // executing a file just written can fail with "text file busy" when a
+        // parallel test forks meanwhile.
+        std::os::unix::fs::symlink("/bin/sh", bin.join("cxbottle")).unwrap();
+        let plan = LaunchPlan {
+            program: bin.join("wine"),
+            args: vec!["--bottle".into(), "nll-g".into()],
+            cwd: tmp.path().to_path_buf(),
+            // Points the probe at an empty folder, so it misses the bottle.
+            env: BTreeMap::from([(
+                "CX_BOTTLE_PATH".into(),
+                tmp.path().join("nowhere").to_string_lossy().to_string(),
+            )]),
+            runner: "CrossOver".into(),
+            needs_elevation: false,
+            raw_command_line: None,
+        };
+
+        // The note is what the failure left for the transcript; its wording
+        // shows `cxbottle` ran and failed, rather than could not be started.
+        let note = ensure_crossover_bottle(&plan).await.expect("cxbottle ran");
+        assert!(
+            note.starts_with("cxbottle --create nll-g exited with"),
+            "{note}"
+        );
     }
 
     #[test]

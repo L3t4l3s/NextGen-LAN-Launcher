@@ -1523,6 +1523,7 @@ pub fn run() {
                 transport_error: RwLock::new(None),
                 catalog_sig: std::sync::Mutex::new(CatalogSig::default()),
                 catalog_reload: tokio::sync::Mutex::new(()),
+                runner_choice: tokio::sync::Mutex::new(()),
                 startup_catalog: RwLock::new(None),
             });
             app.manage(state.clone());

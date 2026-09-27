@@ -258,6 +258,8 @@ export const en: Messages = {
   "err.unknown_game": "Unknown game.",
   "err.no_library": "No game folder configured.",
   "err.runner_missing": "The selected compatibility version is no longer available.",
+  "err.runner_scan": "The search for Wine, Proton and CrossOver versions stopped: {detail}",
+  "err.plan_task": "The launch plan could not be built: {detail}",
   "err.demo_no_play": "Games are not started in demo mode.",
   "err.invalid_path": "Invalid path.",
   "err.not_installed": "The game is not installed.",

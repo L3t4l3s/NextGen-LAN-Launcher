@@ -109,7 +109,7 @@ export interface Settings {
   /** Exact Wine/Proton/CrossOver program selected per game; absent means automatic. */
   gameRunners: Record<
     string,
-    { program: string; runner: "wine" | "crossover" | "proton"; label: string; steamRoot: string | null }
+    { program: string; runner: "wine" | "crossover" | "proton"; label: string; steamRoot: string | null; sharesDefaultPrefix: boolean }
   >;
   syncPort: number;
   /** Overrides the built-in key of the catalog share (eti_launcher). */

@@ -307,7 +307,7 @@ export function createMock() {
       case "set_game_runner": {
         const program = args.program as string | null;
         const runner = (args.kind as "wine" | "crossover" | "proton" | null) ?? "wine";
-        if (program) settings.gameRunners[id] = { program, runner, label: "Wine", steamRoot: null };
+        if (program) settings.gameRunners[id] = { program, runner, label: "Wine", steamRoot: null, sharesDefaultPrefix: false };
         else delete settings.gameRunners[id];
         return;
       }

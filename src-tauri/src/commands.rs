@@ -129,15 +129,15 @@ fn manifest_info(m: &Manifest, revision: &str, lang: &str) -> ManifestInfo {
     }
 }
 
-fn resolve_manifest(state: &AppState, game: &Game) -> Option<Manifest> {
-    let paths = state_paths(state, game)?;
-    state.manifests.resolve_for(&game.id, &paths)
-}
-
-fn state_paths(state: &AppState, game: &Game) -> Option<lanlauncher_core::paths::GamePaths> {
-    // Settings lock is async; commands call this from async context via blocking read.
-    let settings = state.settings.try_read().ok()?;
-    settings.library.game_paths(&game.id)
+/// The game's manifest, for paths the caller took from its own settings
+/// copy. Not read here with `try_read`: that finds nothing while someone
+/// writes the settings, and the manifest would silently be missing.
+fn resolve_manifest(
+    state: &AppState,
+    game: &Game,
+    paths: Option<&lanlauncher_core::paths::GamePaths>,
+) -> Option<Manifest> {
+    state.manifests.resolve_for(&game.id, paths?)
 }
 
 #[tauri::command]
@@ -186,7 +186,7 @@ pub async fn get_games(state: State<'_, Arc<AppState>>) -> Cmd<Vec<GameView>> {
     let mut out = Vec::with_capacity(catalog.games.len());
     for g in &catalog.games {
         let paths = settings.library.game_paths(&g.id);
-        let manifest = resolve_manifest(&state, g);
+        let manifest = resolve_manifest(&state, g, paths.as_ref());
         out.push(GameView {
             id: g.id.clone(),
             order: g.order,
@@ -447,17 +447,25 @@ async fn build_plan(
         .library
         .game_paths(game_id)
         .ok_or("err.no_library")?;
-    let manifest = resolve_manifest(state, game);
-    let receipt = Receipt::load(&paths.receipt);
-    let ctx = LaunchContext {
-        paths: &paths,
-        game_id,
-        settings: &settings,
-        manifest: manifest.as_ref(),
-        receipt: receipt.as_ref(),
-        alternative,
-    };
-    launch::plan(&ctx).map_err(err)
+    let manifest = resolve_manifest(state, game, Some(&paths));
+    drop(catalog);
+    let game_id = game_id.to_string();
+    // On a blocking thread: on macOS and Linux the plan searches for its
+    // runner — each Steam library, `PATH` — every time the details are shown.
+    tauri::async_runtime::spawn_blocking(move || {
+        let receipt = Receipt::load(&paths.receipt);
+        let ctx = LaunchContext {
+            paths: &paths,
+            game_id: &game_id,
+            settings: &settings,
+            manifest: manifest.as_ref(),
+            receipt: receipt.as_ref(),
+            alternative,
+        };
+        launch::plan(&ctx).map_err(err)
+    })
+    .await
+    .map_err(|e| format!("err.plan_task|{e}"))?
 }
 
 #[tauri::command]
@@ -477,9 +485,13 @@ pub async fn get_runner_options(
     if state.catalog().await.game(&game_id).is_none() {
         return Err("err.unknown_game".into());
     }
-    let settings = state.settings.read().await;
-    let mut runners = launch::unix::detect_runners(&settings);
-    if let Some(stored) = settings.game_runner(&game_id) {
+    // A copy, so the lock is gone before the scan: walking every Steam
+    // library and `PATH` for each game opened must not hold up anyone who
+    // wants to write the settings meanwhile.
+    let settings = state.settings.read().await.clone();
+    let stored = settings.game_runner(&game_id).cloned();
+    let mut runners = scan_runners(settings).await?;
+    if let Some(stored) = &stored {
         let already_present = runners.iter().any(|runner| {
             runner.runner == stored.runner
                 && launch::unix::same_program(&runner.program, &stored.program)
@@ -491,7 +503,7 @@ pub async fn get_runner_options(
     // Return the spelling used by the matching option. The persisted path may
     // reach the same Proton through a Steam symlink; the browser cannot
     // canonicalise native paths and would otherwise show it as unavailable.
-    let selected = settings.game_runner(&game_id).map(|stored| {
+    let selected = stored.as_ref().map(|stored| {
         runners
             .iter()
             .find(|runner| {
@@ -511,7 +523,7 @@ pub async fn get_runner_options(
             kind: runner.runner,
         })
         .collect();
-    let selected_kind = settings.game_runner(&game_id).map(|runner| runner.runner);
+    let selected_kind = stored.map(|runner| runner.runner);
     Ok(RunnerChoices {
         selected,
         selected_kind,
@@ -526,46 +538,88 @@ pub async fn set_game_runner(
     program: Option<String>,
     kind: Option<lanlauncher_core::manifest::Runner>,
 ) -> Cmd<()> {
+    // One choice at a time, and taken before anything else here awaits, so
+    // picks queue up in the order their commands started. The scan below
+    // runs without the settings lock; without this, a quick second pick
+    // whose scan ends first would be overwritten by the first one, and the
+    // game would start with a tool the dropdown no longer shows.
+    let _one_at_a_time = state.runner_choice.lock().await;
     if state.catalog().await.game(&game_id).is_none() {
         return Err("err.unknown_game".into());
     }
-    let mut settings = state.settings.write().await;
-    let selected = if let Some(program) = program.map(PathBuf::from) {
-        let kind = kind.ok_or("err.runner_missing")?;
-        let runner = launch::unix::detect_runners(&settings)
-            .into_iter()
-            .find(|runner| {
-                runner.runner == kind && launch::unix::same_program(&runner.program, &program)
+    let selected = match program.map(PathBuf::from) {
+        None => None,
+        Some(program) => {
+            let kind = kind.ok_or("err.runner_missing")?;
+            let snapshot = state.settings.read().await.clone();
+            let game = game_id.clone();
+            // Everything that touches the disk — the scan, the record of
+            // what ran in the game's prefix, resolving the path — on a
+            // blocking thread, not on a worker other commands wait for.
+            let chosen = tauri::async_runtime::spawn_blocking(move || {
+                pick_runner(&snapshot, &game, &program, kind)
             })
-            .or_else(|| {
-                settings.game_runner(&game_id).and_then(|stored| {
-                    if stored.runner == kind
-                        && launch::unix::same_program(&stored.program, &program)
-                    {
-                        launch::unix::persisted_runner(stored)
-                    } else {
-                        None
-                    }
-                })
-            })
-            .ok_or("err.runner_missing")?;
-        Some(GameRunner {
-            // Persist the resolved path once. Prefix hashing then remains
-            // stable even when the originally selected symlink is retargeted,
-            // while aliases of one installation still share a prefix.
-            program: std::fs::canonicalize(&runner.program).unwrap_or(runner.program),
-            runner: runner.runner,
-            label: runner.label,
-            steam_root: runner.steam_root,
-        })
-    } else {
-        None
+            .await
+            .map_err(|e| format!("err.runner_scan|{e}"))??;
+            Some(chosen)
+        }
     };
+    // The change goes onto the settings as they are now, not onto the copy
+    // the scan ran against: something else may have saved in the meantime.
+    let mut settings = state.settings.write().await;
     let mut updated = settings.clone();
     updated.set_game_runner(&game_id, selected);
     updated.save(&state.settings_path()).map_err(err)?;
     *settings = updated;
     Ok(())
+}
+
+/// The pin `set_game_runner` stores for `program`, found among what this
+/// machine has — or kept from the stored pin when that tool is gone.
+fn pick_runner(
+    settings: &lanlauncher_core::settings::Settings,
+    game_id: &str,
+    program: &std::path::Path,
+    kind: lanlauncher_core::manifest::Runner,
+) -> Cmd<GameRunner> {
+    let stored = settings.game_runner(game_id);
+    let found = launch::unix::detect_runners(settings);
+    let runner =
+        launch::unix::find_runner(&found, kind, program, stored).ok_or("err.runner_missing")?;
+    // Whether this pin keeps the game's own prefix is decided once, now.
+    // Choosing again what is already chosen keeps what was decided then.
+    let shares_default_prefix = match stored {
+        Some(stored)
+            if stored.runner == runner.runner
+                && launch::unix::same_program(&stored.program, &runner.program) =>
+        {
+            stored.shares_default_prefix
+        }
+        _ => settings.library.game_paths(game_id).is_some_and(|paths| {
+            launch::unix::pinning_keeps_default_prefix(&paths, game_id, &runner)
+        }),
+    };
+    Ok(GameRunner {
+        // Persist the resolved path once. Prefix hashing then remains stable
+        // even when the originally selected symlink is retargeted, while
+        // aliases of one installation still share a prefix.
+        program: std::fs::canonicalize(&runner.program).unwrap_or(runner.program),
+        runner: runner.runner,
+        label: runner.label,
+        steam_root: runner.steam_root,
+        shares_default_prefix,
+    })
+}
+
+/// Every runner on this machine, found off the async runtime. The search
+/// reads the filesystem — each Steam library, `PATH` — and that belongs on a
+/// blocking thread, not on a worker other commands are waiting for.
+async fn scan_runners(
+    settings: lanlauncher_core::settings::Settings,
+) -> Cmd<Vec<launch::unix::DetectedRunner>> {
+    tauri::async_runtime::spawn_blocking(move || launch::unix::detect_runners(&settings))
+        .await
+        .map_err(|e| format!("err.runner_scan|{e}"))
 }
 
 #[tauri::command]
@@ -603,8 +657,14 @@ pub async fn play_game(
         .unwrap_or_else(|| game_id.clone());
     let mut attempt = crate::state::LaunchAttempt::new(&game_id, &title, "play", &plan);
     attempt.alternative = alternative;
+    // The prefix belongs in this line: a separately pinned version ignores
+    // a manifest's own, and this is where that shows once per start.
+    let prefix = ["WINEPREFIX", "STEAM_COMPAT_DATA_PATH"]
+        .iter()
+        .filter_map(|name| plan.env.get(*name).map(|dir| format!(" ({name}={dir})")))
+        .collect::<String>();
     log::info!(
-        "starting {game_id} via {}: {} {}",
+        "starting {game_id} via {}{prefix}: {} {}",
         plan.runner,
         plan.program.display(),
         attempt.command_line
@@ -619,6 +679,12 @@ pub async fn play_game(
         let _ = std::fs::remove_file(&path);
         path
     });
+    // Asked before the start creates it: a prefix that was already there may
+    // hold saves of versions the launcher never recorded.
+    let existed_before = cfg!(not(windows))
+        && paths.as_ref().is_some_and(|paths| {
+            launch::unix::own_prefix_exists_before_start(&plan, paths, &game_id)
+        });
     let outcome =
         launch::spawn_for_user_watched(&plan, &state.run_dir(), allow, log.as_deref()).await;
     let pid = state
@@ -626,6 +692,16 @@ pub async fn play_game(
         .record_launch(attempt, log, outcome)
         .await
         .map_err(err)?;
+    // Only a start that happened counts: this is what a later pin of the
+    // same tool is matched against to keep the game's savegames.
+    if let Some(paths) = paths.filter(|_| cfg!(not(windows))) {
+        let (plan, game_id) = (plan.clone(), game_id.clone());
+        // Awaited: a pin chosen right after this start must find its record.
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            launch::unix::remember_default_prefix_user(&plan, &paths, &game_id, existed_before)
+        })
+        .await;
+    }
     let mut running = state.running.write().await;
     running.retain(|(g, _)| g != &game_id);
     running.insert(0, (game_id, pid));
