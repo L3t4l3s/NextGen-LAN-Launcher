@@ -11,6 +11,13 @@
   gelten `fontFamily` und die zugehörigen Font-Dateien auch für Tabs, Spiele
   und Fließtext, wenn die LANPage keine CORS-Header ausliefert.
 
+- Linux/macOS: In den Spieldetails lässt sich für jedes Windows-Spiel eine konkrete
+  Wine-, Proton- oder CrossOver-Version wählen. Alle von Steam erkannten Proton-Versionen
+  werden angeboten; „Automatisch“ bleibt der Standard. Manuelle Versionen verwenden
+  getrennte, stabile Prefixe beziehungsweise CrossOver-Bottles, sodass ein Wechsel keine
+  Spielstände oder Einstellungen einer anderen Version überschreibt. Die Auswahl bleibt
+  über Neustarts erhalten und der Startplan nennt die tatsächlich verwendete Version.
+
 - Resilio-Start, anfängliche Teilnehmersuche und Datei-Scan erscheinen neutral
   statt als Sync-Warnung. Diagnoseprüfungen aktualisieren auch die Statusleiste;
   echte Fehler und dauerhaft fehlende Teilnehmer bleiben erkennbar.
@@ -52,13 +59,20 @@
   `launch::proton` sucht deshalb in allen Steam-Installationen (`~/.steam/steam`,
   `~/.local/share/Steam`, die Debian-Variante, Flatpak-Steam) sowie in jeder Bibliothek aus
   `steamapps/libraryfolders.vdf` — **damit auch auf der SD-Karte** — und in
-  `compatibilitytools.d`, wo GE-Proton & Co. landen. Reihenfolge: selbst installierte Tools
-  zuerst (das ist eine Entscheidung und die Builds haben die Patches, die alte LAN-Spiele
-  brauchen), dann die numerierten Releases von neu nach alt, `Experimental`/`Hotfix` als Rückfall.
-  Ein eigener Pfad in den Einstellungen sticht weiterhin alles.
+  `compatibilitytools.d`, wo GE-Proton & Co. landen. Reihenfolge: numerierte offizielle Releases
+  von neu nach alt, dann `Experimental`/`Hotfix`, zuletzt automatisch gefundene Fremdwerkzeuge.
+  Ein Eintrag in `compatibilitytools.d` kann auch zu Lutris oder einem anderen Launcher gehören
+  und ist keine globale Auswahl für alle LAN-Spiele. Das Deck wählte dadurch zuvor ein altes
+  `ULWGL-Proton-8.0-5-3`: Notepad startete, das echte 32-Bit-Unity-Spiel Among Us hing jedoch bei
+  `GfxDevice: creating device client`. Proton 11.0 und Experimental starteten dieselbe Installation
+  sichtbar und bedienbar. Ein eigener Proton-Pfad in den Einstellungen sticht weiterhin alles.
 - Linux: `STEAM_COMPAT_CLIENT_INSTALL_PATH` zeigt jetzt auf die Steam-Installation, zu der das
   gefundene Proton gehört, statt fest auf `~/.steam/steam`. Bei einem Flatpak-Steam oder einer
   zweiten Installation war das der falsche Pfad, und Proton startet damit nicht.
+- Linux: Vor einem Proton-Start wird dessen Kompatibilitätsordner angelegt. Steam erledigt das
+  normalerweise selbst; beim direkten Aufruf durch den Launcher brach Proton stattdessen beim
+  Öffnen von `.nll-prefix/pfx.lock` sofort ab. Der Startpfad wurde auf SteamOS mit einer echten
+  Windows-Anwendung, einem eigenen Prefix und bereinigter AppImage-Umgebung geprüft.
 - Findet sich kein Runner, nennt die Fehlermeldung jetzt die durchsuchten Orte (und das Log
   ebenso) — wie es `resilio::locate_binary_detailed` für die Sync-Engine schon tut.
 

@@ -106,12 +106,29 @@ export interface Settings {
   setupComplete: boolean;
   allowElevation: boolean;
   runnerPaths: { wine: string | null; crossoverApp: string | null; proton: string | null };
+  /** Exact Wine/Proton/CrossOver program selected per game; absent means automatic. */
+  gameRunners: Record<
+    string,
+    { program: string; runner: "wine" | "crossover" | "proton"; label: string; steamRoot: string | null }
+  >;
   syncPort: number;
   /** Overrides the built-in key of the catalog share (eti_launcher). */
   catalogKey: string | null;
   /** Explicit Resilio binary (e.g. the ETI launcher's btsync.exe). */
   resilioBinary: string | null;
   resilioApiKey: string | null;
+}
+
+export interface RunnerOption {
+  program: string;
+  label: string;
+  kind: "wine" | "crossover" | "proton";
+}
+
+export interface RunnerChoices {
+  selected: string | null;
+  selectedKind: RunnerOption["kind"] | null;
+  options: RunnerOption[];
 }
 
 export interface Link {

@@ -8,9 +8,10 @@ use lanlauncher_core::lanpage::EventBundle;
 use lanlauncher_core::launch::{self, LaunchContext, LaunchPlan};
 use lanlauncher_core::manifest::{Manifest, ManifestOrigin};
 use lanlauncher_core::problem::FixAction;
-use lanlauncher_core::settings::{Settings, TransportMode};
+use lanlauncher_core::settings::{GameRunner, Settings, TransportMode};
 use lanlauncher_core::transport::TransportHealth;
 use serde::Serialize;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
 
@@ -87,6 +88,22 @@ pub struct ManifestInfo {
     pub alternatives: Vec<String>,
     pub notes: Option<String>,
     pub verified_for_revision: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunnerOption {
+    pub program: String,
+    pub label: String,
+    pub kind: lanlauncher_core::manifest::Runner,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunnerChoices {
+    pub selected: Option<String>,
+    pub selected_kind: Option<lanlauncher_core::manifest::Runner>,
+    pub options: Vec<RunnerOption>,
 }
 
 fn manifest_info(m: &Manifest, revision: &str, lang: &str) -> ManifestInfo {
@@ -453,6 +470,105 @@ pub async fn get_launch_plan(
 }
 
 #[tauri::command]
+pub async fn get_runner_options(
+    state: State<'_, Arc<AppState>>,
+    game_id: String,
+) -> Cmd<RunnerChoices> {
+    if state.catalog().await.game(&game_id).is_none() {
+        return Err("err.unknown_game".into());
+    }
+    let settings = state.settings.read().await;
+    let mut runners = launch::unix::detect_runners(&settings);
+    if let Some(stored) = settings.game_runner(&game_id) {
+        let already_present = runners.iter().any(|runner| {
+            runner.runner == stored.runner
+                && launch::unix::same_program(&runner.program, &stored.program)
+        });
+        if let Some(runner) = launch::unix::persisted_runner(stored).filter(|_| !already_present) {
+            runners.push(runner);
+        }
+    }
+    // Return the spelling used by the matching option. The persisted path may
+    // reach the same Proton through a Steam symlink; the browser cannot
+    // canonicalise native paths and would otherwise show it as unavailable.
+    let selected = settings.game_runner(&game_id).map(|stored| {
+        runners
+            .iter()
+            .find(|runner| {
+                runner.runner == stored.runner
+                    && launch::unix::same_program(&runner.program, &stored.program)
+            })
+            .map(|runner| runner.program.as_path())
+            .unwrap_or(&stored.program)
+            .to_string_lossy()
+            .to_string()
+    });
+    let options = runners
+        .into_iter()
+        .map(|runner| RunnerOption {
+            program: runner.program.to_string_lossy().to_string(),
+            label: runner.label,
+            kind: runner.runner,
+        })
+        .collect();
+    let selected_kind = settings.game_runner(&game_id).map(|runner| runner.runner);
+    Ok(RunnerChoices {
+        selected,
+        selected_kind,
+        options,
+    })
+}
+
+#[tauri::command]
+pub async fn set_game_runner(
+    state: State<'_, Arc<AppState>>,
+    game_id: String,
+    program: Option<String>,
+    kind: Option<lanlauncher_core::manifest::Runner>,
+) -> Cmd<()> {
+    if state.catalog().await.game(&game_id).is_none() {
+        return Err("err.unknown_game".into());
+    }
+    let mut settings = state.settings.write().await;
+    let selected = if let Some(program) = program.map(PathBuf::from) {
+        let kind = kind.ok_or("err.runner_missing")?;
+        let runner = launch::unix::detect_runners(&settings)
+            .into_iter()
+            .find(|runner| {
+                runner.runner == kind && launch::unix::same_program(&runner.program, &program)
+            })
+            .or_else(|| {
+                settings.game_runner(&game_id).and_then(|stored| {
+                    if stored.runner == kind
+                        && launch::unix::same_program(&stored.program, &program)
+                    {
+                        launch::unix::persisted_runner(stored)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .ok_or("err.runner_missing")?;
+        Some(GameRunner {
+            // Persist the resolved path once. Prefix hashing then remains
+            // stable even when the originally selected symlink is retargeted,
+            // while aliases of one installation still share a prefix.
+            program: std::fs::canonicalize(&runner.program).unwrap_or(runner.program),
+            runner: runner.runner,
+            label: runner.label,
+            steam_root: runner.steam_root,
+        })
+    } else {
+        None
+    };
+    let mut updated = settings.clone();
+    updated.set_game_runner(&game_id, selected);
+    updated.save(&state.settings_path()).map_err(err)?;
+    *settings = updated;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn play_game(
     state: State<'_, Arc<AppState>>,
     game_id: String,
@@ -696,10 +812,11 @@ pub async fn save_settings(
         new.transport = TransportMode::Demo;
         new.setup_complete = true;
     }
-    // The list of hidden diagnostics warnings has no field in the settings
-    // dialog: the frontend posts the snapshot it fetched at start-up, so a
-    // dismissal made in the meantime would be dropped here.
+    // Neither of these has a field in the settings dialog. The frontend posts
+    // the snapshot it fetched at start-up, so changes made in game details or
+    // diagnostics in the meantime must not be dropped here.
     new.ignored_problems = current.ignored_problems.clone();
+    new.game_runners = current.game_runners.clone();
     new.normalise_catalog_key();
     new.normalise_resilio_binary();
     new.normalise_resilio_api_key();

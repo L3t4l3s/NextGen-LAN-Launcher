@@ -68,7 +68,9 @@ case and is used by `--demo` / `LANLAUNCHER_DEMO=1`.
   (`extract::matches_extracted`) instead of being re-extracted.
 * macOS/Linux: `launch::unix::plan` resolves exe/args from the manifest (user override →
   organiser overlay `nll-manifest.toml` in the share → bundled → derived from the script),
-  picks CrossOver / Proton / Wine and uses one prefix per game (`<share>/.nll-prefix`).
+  picks CrossOver / Proton / Wine. Automatic selection keeps the original per-game prefix
+  (`<share>/.nll-prefix`); an explicit per-game runner selection uses a stable, separate prefix
+  (or CrossOver bottle) for each compatibility-tool path.
 
 ## Media
 

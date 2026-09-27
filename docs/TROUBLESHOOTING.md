@@ -130,10 +130,10 @@ This was **not** what made the Steam Deck white — that was the renderer settin
 the device — and no machine is known to need this. It is worth knowing about anyway, because it is
 the one failure a renderer setting cannot cure.
 
-CI builds have the four taken back out again since this change
-(`tools/appimage-unbundle-wayland.mjs`); **release builds do not yet**, so an AppImage from a
-GitHub release still carries them. On any build that does, the same thing by hand — and this is
-the check worth running, because it is what confirms the cause:
+CI and release builds have the four taken back out again since this change
+(`tools/appimage-unbundle-wayland.mjs`). On an older or locally built image that still carries
+them, the same thing can be tried by hand — and this is the check worth running, because it is
+what confirms the cause:
 
 ```bash
 ./NextGen*.AppImage --appimage-extract

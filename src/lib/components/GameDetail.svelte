@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Extra, GameView, LaunchPlan } from "$lib/types";
+  import type { Extra, GameView, LaunchPlan, RunnerChoices } from "$lib/types";
   import { app } from "$lib/stores/app.svelte";
   import { api, confirmDialog, copyText, coverSrc } from "$lib/api";
   import { t, userText } from "$lib/i18n";
@@ -19,11 +19,25 @@
   // folder mode by itself when no engine starts, and that is when the key
   // has to be readable.
   const folderMode = $derived(app.health ? app.health.kind === "folder" : !!app.bootstrap?.transportError);
-
   let working = $state(false);
   let showExeChooser = $state(false);
   let executables = $state<string[]>([]);
   let plan = $state<LaunchPlan | null>(null);
+  let runnerChoices = $state<RunnerChoices | null>(null);
+  let runnerSelection = $state("");
+  let runnerRevision = $state(0);
+  const selectedRunnerMissing = $derived(
+    !!runnerChoices?.selected &&
+      !(runnerChoices?.options.some(
+        (runner) => runner.program === runnerChoices?.selected && runner.kind === runnerChoices?.selectedKind,
+      ) ?? false),
+  );
+  // The resolved plan is authoritative: an `auto` manifest can still point
+  // at a native script. A stale saved selection remains visible so the user
+  // can switch it back to automatic even when no plan can be built.
+  const usesCompatibility = $derived(
+    platform !== "windows" && (!!runnerChoices?.selected || (!!plan && !plan.runner.startsWith("native"))),
+  );
   let shareKey = $state<string | null>(null);
   let copied = $state(false);
   // A video file may exist but not decode (missing codecs, damaged file);
@@ -35,6 +49,28 @@
   });
   const showVideo = $derived(!!game.video && !videoFailed);
   let alternative = $state<number | null>(null);
+
+  const runnerValue = (kind: string | null, program: string | null) => (kind && program ? `${kind}\n${program}` : "");
+
+  let runnerRequest = 0;
+  $effect(() => {
+    const id = game.id;
+    const currentPlatform = platform;
+    const token = ++runnerRequest;
+    runnerChoices = null;
+    runnerSelection = "";
+    if (currentPlatform === "windows") return;
+    api
+      .runnerOptions(id)
+      .then((choices) => {
+        if (token !== runnerRequest) return;
+        runnerChoices = choices;
+        runnerSelection = runnerValue(choices.selectedKind, choices.selected);
+      })
+      .catch(() => {
+        if (token === runnerRequest) runnerChoices = null;
+      });
+  });
 
   $effect(() => {
     // reset per game
@@ -97,6 +133,31 @@
     await app.reloadGames();
   }
 
+  async function chooseRunner(event: Event) {
+    const id = game.id;
+    const selected = (event.currentTarget as HTMLSelectElement).value;
+    const previous = runnerValue(runnerChoices?.selectedKind ?? null, runnerChoices?.selected ?? null);
+    const option = runnerChoices?.options.find((runner) => runnerValue(runner.kind, runner.program) === selected);
+    runnerSelection = selected;
+    working = true;
+    try {
+      await api.setGameRunner(id, option?.program ?? null, option?.kind ?? null);
+      if (game.id !== id) return;
+      if (runnerChoices) {
+        runnerChoices.selected = option?.program ?? null;
+        runnerChoices.selectedKind = option?.kind ?? null;
+      }
+      runnerRevision += 1;
+      app.toast("success", t("toast.runner_saved"));
+    } catch (e) {
+      if (game.id !== id) return;
+      runnerSelection = previous;
+      app.toast("error", t("toast.error", { detail: userText(e) }));
+    } finally {
+      working = false;
+    }
+  }
+
   // The command line is shown as soon as the game is playable; no button
   // needed. A plan that cannot be built (missing script) just stays empty.
   const gameId = $derived(game.id);
@@ -104,6 +165,7 @@
   $effect(() => {
     const id = gameId;
     const alt = alternative;
+    runnerRevision;
     const token = ++planRequest;
     if (!playable) {
       plan = null;
@@ -230,6 +292,19 @@
     {/if}
 
     <section class="launch-info">
+      {#if usesCompatibility && runnerChoices && (runnerChoices.options.length || runnerChoices.selected)}
+        <label for="runner">{t("detail.runner")}</label>
+        <select id="runner" value={runnerSelection} onchange={chooseRunner} disabled={working}>
+          <option value="">{t("detail.runner_auto")}</option>
+          {#if selectedRunnerMissing}
+            <option value={runnerValue(runnerChoices.selectedKind, runnerChoices.selected)} disabled>{t("detail.runner_missing")}</option>
+          {/if}
+          {#each runnerChoices.options as runner (runnerValue(runner.kind, runner.program))}
+            <option value={runnerValue(runner.kind, runner.program)}>{runner.label}</option>
+          {/each}
+        </select>
+        <p class="hint runner-hint">{t("detail.runner_hint")}</p>
+      {/if}
       {#if platform !== "windows" && game.manifest}
         <p class="hint">
           {#if game.manifest.exe}
@@ -396,6 +471,9 @@
     white-space: pre-wrap;
     word-break: break-all;
     user-select: text;
+  }
+  .runner-hint {
+    margin-top: 0.35rem;
   }
   .key code {
     font-size: 0.85rem;

@@ -96,19 +96,19 @@ pub fn library_paths_in_vdf(text: &str) -> Vec<PathBuf> {
 
 /// How a Proton is ranked against the others. Lower sorts first.
 ///
-/// A Proton the user installed themselves (`compatibilitytools.d`, which is
-/// how GE-Proton and friends arrive) comes first: putting it there is a
-/// decision, and those builds carry the extra patches that old LAN games tend
-/// to need. Then the numbered releases, newest first. `Experimental` and
-/// `Hotfix` track Valve's current work and are the least predictable, so they
-/// are the fallback rather than the default.
+/// Numbered Steam releases come first, newest first, then Valve's
+/// `Experimental`/`Hotfix`, and finally tools discovered in
+/// `compatibilitytools.d`. Merely installing a compatibility tool for Steam,
+/// Lutris or another launcher is not a decision to use it for every LAN game;
+/// an explicit path in the launcher settings remains the way to make that
+/// decision.
 fn rank(label: &str, from_compat_tools: bool) -> (u8, std::cmp::Reverse<Vec<u32>>) {
     let tier = if from_compat_tools {
-        0
-    } else if label.contains("Experimental") || label.contains("Hotfix") {
         2
-    } else {
+    } else if label.contains("Experimental") || label.contains("Hotfix") {
         1
+    } else {
+        0
     };
     (tier, std::cmp::Reverse(version_of(label)))
 }
@@ -338,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn a_tool_the_user_installed_wins() {
+    fn a_discovered_custom_tool_does_not_override_official_proton() {
         let home = tempfile::tempdir().expect("home");
         let card = tempfile::tempdir().expect("card");
         steam_deck(home.path(), card.path());
@@ -350,8 +350,23 @@ mod tests {
         let found = find_protons(home.path());
         assert_eq!(
             found.first().map(|p| p.label.as_str()),
-            Some("GE-Proton9-20"),
-            "putting a tool in compatibilitytools.d is a decision and should be honoured"
+            Some("Proton 9.0 (Beta)"),
+            "a tool installed for another launcher is not a global preference"
+        );
+    }
+
+    #[test]
+    fn experimental_beats_a_legacy_custom_tool_when_no_release_is_installed() {
+        let home = tempfile::tempdir().expect("home");
+        let steam = home.path().join(".local/share/Steam");
+        touch(&steam.join("steamapps/common/Proton - Experimental/proton"));
+        touch(&steam.join("compatibilitytools.d/ULWGL-Proton-8.0-5-3/proton"));
+
+        let found = find_protons(home.path());
+        assert_eq!(
+            found.first().map(|p| p.label.as_str()),
+            Some("Proton - Experimental"),
+            "a current Valve build should beat an unrelated legacy compatibility tool"
         );
     }
 

@@ -1546,6 +1546,8 @@ pub fn run() {
             commands::get_prereq_installer,
             commands::run_prereq_installer,
             commands::get_launch_plan,
+            commands::get_runner_options,
+            commands::set_game_runner,
             commands::list_executables,
             commands::set_exe_override,
             commands::get_settings,
