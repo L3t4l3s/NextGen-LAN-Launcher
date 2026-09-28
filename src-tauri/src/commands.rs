@@ -964,6 +964,29 @@ pub async fn save_settings(
     Ok(new)
 }
 
+/// The zones of a running firewalld, or `None` where there is none (SteamOS)
+/// or it cannot be asked. Listing zones needs no root: firewalld answers
+/// read-only queries for every user.
+async fn firewalld_zones() -> Option<Vec<diagnostics::FirewalldZone>> {
+    // One call: without a running firewalld it fails too (exit 252), so a
+    // separate `--state` would only cost a second interpreter start.
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        launch::host_command("firewall-cmd")
+            .arg("--list-all-zones")
+            // A hung D-Bus must not leave one `firewall-cmd` behind per run.
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    output
+        .status
+        .success()
+        .then(|| diagnostics::parse_firewalld_zones(&String::from_utf8_lossy(&output.stdout)))
+}
+
 #[tauri::command]
 pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
     let mut problems = Vec::new();
@@ -982,9 +1005,19 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
         checks.push("network_profile".into());
         tauri::async_runtime::spawn(crate::fixes::network_profiles())
     });
+    // Only the managed engine is ours to worry about, as with the Windows
+    // firewall: folder mode or a demo has no sync port to open.
+    let transport = state.transport.read().await.clone();
+    let managed = transport
+        .as_ref()
+        .is_some_and(|t| t.kind() == lanlauncher_core::transport::TransportKind::Resilio);
+    // A Python start and a D-Bus round trip; alongside the engine query too.
+    let firewalld = (cfg!(target_os = "linux") && managed).then(|| {
+        checks.push("firewalld".into());
+        tauri::async_runtime::spawn(firewalld_zones())
+    });
 
     checks.push("transport".into());
-    let transport = state.transport.read().await.clone();
     let mut catalog_connected = false;
     if let Some(t) = &transport {
         let health = t.health().await;
@@ -1028,6 +1061,33 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
         let found = handle.await.unwrap_or_default();
         problems.extend(diagnostics::check_network_profiles(&found));
     }
+    if let Some(handle) = firewalld {
+        if let Some(zones) = handle.await.ok().flatten() {
+            // A port of 0 in the settings lets the engine pick; which one it
+            // took is in its listening sockets.
+            let random = settings.sync_port == 0;
+            let pid = transport.as_ref().and_then(|t| t.process_id());
+            let port = match (settings.sync_port, pid) {
+                (0, Some(pid)) => tauri::async_runtime::spawn_blocking(move || {
+                    diagnostics::lan_listening_ports(pid).first().copied()
+                })
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or(0),
+                (port, _) => port,
+            };
+            problems.extend(diagnostics::check_firewalld(&zones, port, random));
+        }
+    }
+    if cfg!(target_os = "linux") {
+        checks.push("appimage".into());
+        problems.extend(diagnostics::check_appimage_unpacked(
+            std::env::var("APPIMAGE").ok().as_deref(),
+            std::env::var("APPDIR").ok().as_deref(),
+            std::env::var("APPIMAGE_EXTRACT_AND_RUN").ok().as_deref(),
+        ));
+    }
 
     checks.push("covers".into());
     if let Some(root) = state.default_root_path().await {
@@ -1050,9 +1110,6 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
     // Only the managed Resilio registers the catalog share, so only there a
     // missing key matters (a fallback to folder mode is reported above).
     checks.push("catalog_key".into());
-    let managed = transport
-        .as_ref()
-        .is_some_and(|t| t.kind() == lanlauncher_core::transport::TransportKind::Resilio);
     if managed
         && lanlauncher_core::catalog::catalog_share_key(settings.catalog_key.as_deref()).is_none()
     {

@@ -617,7 +617,7 @@ mod tests {
         std::fs::create_dir_all(proton.parent().expect("parent")).expect("dirs");
         std::fs::write(&proton, "#!/bin/sh\n").expect("proton");
 
-        let found = crate::launch::proton::find_protons(&home);
+        let found = crate::launch::proton::find_protons_in(&home, &[]);
         assert_eq!(
             found.len(),
             1,

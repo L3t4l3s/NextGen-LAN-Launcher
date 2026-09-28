@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Linux: Proton-Versionen, die das System selbst mitbringt
+  (`/usr/share/steam/compatibilitytools.d`, `/usr/local/share/steam/compatibilitytools.d`,
+  etwa unter Bazzite), werden gefunden und in den Spieldetails angeboten.
+- Linux: Die Diagnose erkennt eine laufende Firewall (firewalld, z. B. Bazzite/Fedora), die den
+  Sync-Dienst sperrt, und nennt den passenden `firewall-cmd`-Befehl. Steht der Sync-Port auf
+  0, nimmt sie den Port, auf dem die Engine tatsächlich lauscht.
+- Linux: Läuft das AppImage mangels FUSE entpackt, weist die Diagnose darauf hin. libfuse2 wird
+  nicht gebraucht; das AppImage nutzt die statische Laufzeit und startet ohne FUSE trotzdem.
+
 - Controller-Steuerung für die Oberfläche ergänzt: D-Pad oder linker Stick
   bewegen den sichtbaren Fokus räumlich, A bestätigt und B schließt Dialoge
   beziehungsweise kehrt zur Bibliothek zurück. Dropdowns lassen sich nach A

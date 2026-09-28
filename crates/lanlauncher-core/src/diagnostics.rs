@@ -455,6 +455,322 @@ pub fn check_clock(server_time: Option<chrono::DateTime<chrono::Utc>>) -> Vec<Pr
     }
 }
 
+/// Resilio's LAN discovery port (multicast and broadcast, UDP).
+pub const RESILIO_DISCOVERY_PORT: u16 = 3838;
+
+/// One zone from `firewall-cmd --list-all-zones`, as far as the check needs it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FirewalldZone {
+    pub name: String,
+    pub active: bool,
+    pub default: bool,
+    /// `default`, `ACCEPT`, `DROP`, `%%REJECT%%`.
+    pub target: String,
+    /// Network interfaces bound to the zone (`enp3s0`, `docker0`).
+    pub interfaces: Vec<String>,
+    /// Entries like `1025-65535/udp` or `3838/udp`, from `ports:` and from
+    /// rich rules that accept a port.
+    pub ports: Vec<String>,
+}
+
+/// The zones in the output of `firewall-cmd --list-all-zones`: a header line
+/// per zone (`public (default, active)`), then indented `key: value` lines;
+/// rich rules follow `rich rules:`, one per line, indented further.
+///
+/// Services are not resolved into ports (that is one more `firewall-cmd` per
+/// service); a zone that opens the engine through a service of its own is
+/// reported anyway, and the warning can be dismissed.
+pub fn parse_firewalld_zones(listing: &str) -> Vec<FirewalldZone> {
+    let mut zones: Vec<FirewalldZone> = Vec::new();
+    for line in listing.lines() {
+        if let Some(port) = rich_rule_port(line) {
+            if let Some(zone) = zones.last_mut() {
+                zone.ports.push(port);
+            }
+            continue;
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        if !line.starts_with(char::is_whitespace) {
+            let (name, flags) = match line.split_once('(') {
+                Some((name, flags)) => (name.trim(), flags),
+                None => (line.trim(), ""),
+            };
+            zones.push(FirewalldZone {
+                name: name.to_string(),
+                active: flags.contains("active"),
+                default: flags.contains("default"),
+                ..Default::default()
+            });
+            continue;
+        }
+        let Some(zone) = zones.last_mut() else {
+            continue;
+        };
+        if let Some((key, value)) = line.trim().split_once(':') {
+            match key.trim() {
+                "target" => zone.target = value.trim().to_string(),
+                "interfaces" => {
+                    zone.interfaces = value.split_whitespace().map(String::from).collect()
+                }
+                "ports" => zone.ports = value.split_whitespace().map(String::from).collect(),
+                _ => {}
+            }
+        }
+    }
+    zones
+}
+
+/// `rule family="ipv4" port port="3838" protocol="udp" accept` → `3838/udp`.
+///
+/// Only a rule that opens the port to the LAN counts: one bound to a source
+/// address or a source port lets in one host (`source NOT address=…`, all but
+/// one, still counts), and an IPv6-only rule misses the IPv4 LAN Resilio
+/// talks on. `accept` is the action wherever it stands (`accept limit
+/// value="10/m"`); words inside quotes — a log prefix — are no keywords.
+fn rich_rule_port(line: &str) -> Option<String> {
+    let line = line.trim();
+    let bare: String = line
+        .split('"')
+        .enumerate()
+        .map(|(i, part)| if i % 2 == 0 { part } else { "" })
+        .collect();
+    let words: Vec<&str> = bare.split_whitespace().collect();
+    let restricted = words.iter().enumerate().any(|(i, w)| {
+        w.starts_with("source") && !(*w == "source" && words.get(i + 1) == Some(&"NOT"))
+    });
+    if words.first() != Some(&"rule")
+        || !words.contains(&"accept")
+        || restricted
+        || line.contains("family=\"ipv6\"")
+    {
+        return None;
+    }
+    let value = |key: &str| {
+        let start = line.find(&format!(" {key}=\""))? + key.len() + 3;
+        let end = line[start..].find('"')?;
+        Some(line[start..start + end].to_string())
+    };
+    Some(format!("{}/{}", value("port")?, value("protocol")?))
+}
+
+/// Whether `zone` lets in `protocol` traffic on every port of `from..=to`.
+fn zone_admits(zone: &FirewalldZone, protocol: &str, from: u16, to: u16) -> bool {
+    if zone.target.eq_ignore_ascii_case("ACCEPT") {
+        return true;
+    }
+    zone.ports.iter().any(|entry| {
+        let Some((range, proto)) = entry.split_once('/') else {
+            return false;
+        };
+        let (low, high) = range.split_once('-').unwrap_or((range, range));
+        match (low.parse::<u16>(), high.parse::<u16>()) {
+            (Ok(low), Ok(high)) => proto == protocol && low <= from && to <= high,
+            _ => false,
+        }
+    })
+}
+
+/// What an active firewalld zone keeps out of the sync engine.
+///
+/// SteamOS runs no firewall; Fedora-based systems such as Bazzite run
+/// firewalld, and a zone that closes the engine's port leaves only the
+/// connections this machine opens itself — fewer peers, slower downloads,
+/// nothing passed on to others — and the LAN search goes unanswered.
+///
+/// `listening_port` 0 means the engine picked one at random; then only a zone
+/// that admits every unprivileged port (as Fedora Workstation's does) is
+/// known to be open, and the advice is to fix the port in the settings.
+pub fn check_firewalld(zones: &[FirewalldZone], listening_port: u16, random: bool) -> Vec<Problem> {
+    // The zones a network card is bound to. Where none is — only a Docker,
+    // libvirt or VPN zone is active — the card falls into the default zone.
+    let virtual_interface = |name: &String| {
+        ["docker", "virbr", "br-", "veth", "tun", "tap", "wg", "lo"]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+    };
+    let mut relevant: Vec<&FirewalldZone> = zones
+        .iter()
+        .filter(|z| z.active && z.interfaces.iter().any(|i| !virtual_interface(i)))
+        .collect();
+    if relevant.is_empty() {
+        relevant = zones.iter().filter(|z| z.default).collect();
+    }
+    let mut needed = vec![("udp", RESILIO_DISCOVERY_PORT, RESILIO_DISCOVERY_PORT)];
+    match listening_port {
+        0 => needed.extend([("tcp", 1025, u16::MAX), ("udp", 1025, u16::MAX)]),
+        RESILIO_DISCOVERY_PORT => needed.push(("tcp", listening_port, listening_port)),
+        port => needed.extend([("tcp", port, port), ("udp", port, port)]),
+    }
+    let mut out = Vec::new();
+    for zone in relevant {
+        let missing: Vec<_> = needed
+            .iter()
+            .filter(|(proto, from, to)| !zone_admits(zone, proto, *from, *to))
+            .collect();
+        if missing.is_empty() {
+            continue;
+        }
+        let describe = |(proto, from, to): &&(&str, u16, u16)| {
+            if from == to {
+                format!("{from}/{proto}")
+            } else {
+                format!("{from}-{to}/{proto}")
+            }
+        };
+        // Only single ports go into the command: a random sync port has no
+        // number to open, and the whole unprivileged range is not advice.
+        let mut open: Vec<String> = Vec::new();
+        for (proto, from, to) in &missing {
+            let port = format!("{from}/{proto}");
+            if from == to && !open.contains(&port) {
+                open.push(port);
+            }
+        }
+        let mut problem = Problem::new("transport.firewalld_closed", Severity::Warning)
+            .param("zone", &zone.name)
+            .param(
+                "missing",
+                missing.iter().map(describe).collect::<Vec<_>>().join(", "),
+            );
+        // A port the engine drew at random is drawn again at its next start,
+        // and a rule for it then opens nothing.
+        if random {
+            problem = problem.step("transport.firewalld_closed.step.port");
+        }
+        if !open.is_empty() {
+            let command = format!(
+                "sudo firewall-cmd --permanent --zone={} {} && sudo firewall-cmd --reload",
+                zone.name,
+                open.iter()
+                    .map(|p| format!("--add-port={p}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+            problem = problem
+                .param("command", command)
+                .step("transport.firewalld_closed.step.command");
+        }
+        out.push(problem.dismissible(format!("transport.firewalld_closed:{}", zone.name)));
+    }
+    out
+}
+
+/// The TCP ports process `pid` listens on for the LAN, read from `/proc`.
+///
+/// The managed engine's sync port when the settings leave it at 0: Resilio
+/// then picks one at random, and this is the only place that says which.
+/// Loopback listeners are left out — the engine's own API sits on
+/// 127.0.0.1. Empty where there is no `/proc` or the process is gone.
+pub fn lan_listening_ports(pid: u32) -> Vec<u16> {
+    lan_listening_ports_in(Path::new("/proc"), pid)
+}
+
+/// [`lan_listening_ports`] against another `/proc`, for the tests.
+pub fn lan_listening_ports_in(proc: &Path, pid: u32) -> Vec<u16> {
+    let process = proc.join(pid.to_string());
+    let Ok(fds) = std::fs::read_dir(process.join("fd")) else {
+        return Vec::new();
+    };
+    let inodes: std::collections::HashSet<String> = fds
+        .flatten()
+        .filter_map(|fd| {
+            let target = std::fs::read_link(fd.path()).ok()?;
+            let target = target.to_string_lossy();
+            let inode = target.strip_prefix("socket:[")?.strip_suffix(']')?;
+            Some(inode.to_string())
+        })
+        .collect();
+    // The engine's own network namespace, which is the launcher's as a rule.
+    let sockets = |tables: [&str; 2], state: &str| -> Vec<u16> {
+        let mut ports = Vec::new();
+        for table in tables {
+            let Ok(text) = std::fs::read_to_string(process.join(table)) else {
+                continue;
+            };
+            for line in text.lines().skip(1) {
+                let fields: Vec<&str> = line.split_whitespace().collect();
+                // sl, local, remote, state, queues, timer, retransmits, uid,
+                // timeout, inode.
+                let (Some(local), Some(st), Some(inode)) =
+                    (fields.get(1), fields.get(3), fields.get(9))
+                else {
+                    continue;
+                };
+                if *st != state || !inodes.contains(*inode) {
+                    continue;
+                }
+                let Some((address, port)) = local.split_once(':') else {
+                    continue;
+                };
+                if let (Some(false), Ok(port)) =
+                    (is_loopback(address), u16::from_str_radix(port, 16))
+                {
+                    if !ports.contains(&port) {
+                        ports.push(port);
+                    }
+                }
+            }
+        }
+        ports
+    };
+    // `0A` is a listening TCP socket, `07` a bound UDP one. Resilio takes its
+    // sync port for both, so a port on both lists comes first: that is the
+    // one, even if the engine ever listens on something else too.
+    let tcp = sockets(["net/tcp", "net/tcp6"], "0A");
+    let udp = sockets(["net/udp", "net/udp6"], "07");
+    let (mut both, rest): (Vec<u16>, Vec<u16>) = tcp.into_iter().partition(|p| udp.contains(p));
+    both.extend(rest);
+    both
+}
+
+/// Whether an address from `/proc/net/*` is loopback: 127.0.0.0/8, `::1` or
+/// `::ffff:127.x`. The kernel prints each 32-bit word as it lies in memory,
+/// so the bytes come back through `to_ne_bytes` on any byte order.
+fn is_loopback(hex: &str) -> Option<bool> {
+    let words: Vec<u32> = (0..hex.len() / 8)
+        .map(|i| u32::from_str_radix(hex.get(i * 8..i * 8 + 8)?, 16).ok())
+        .collect::<Option<_>>()?;
+    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_ne_bytes()).collect();
+    match bytes.len() {
+        4 => Some(std::net::Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3]).is_loopback()),
+        16 => {
+            let v6 = std::net::Ipv6Addr::from(<[u8; 16]>::try_from(bytes).ok()?);
+            Some(v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback()))
+        }
+        _ => None,
+    }
+}
+
+/// An AppImage whose runtime found no FUSE on this machine unpacks itself
+/// into a temporary folder on every start instead of mounting (the type-2
+/// runtime does that on its own and says so on a terminal nobody sees).
+/// It works, but each start unpacks hundreds of megabytes first — on a
+/// system with `/tmp` in memory, into memory. A start with
+/// `APPIMAGE_EXTRACT_AND_RUN=1` chose this and is not told about it; the
+/// `--appimage-extract-and-run` flag leaves no trace the launcher could see,
+/// which is why the hint can be dismissed.
+pub fn check_appimage_unpacked(
+    appimage: Option<&str>,
+    appdir: Option<&str>,
+    chosen: Option<&str>,
+) -> Vec<Problem> {
+    let unpacked = appimage.is_some()
+        && appdir.is_some_and(|dir| {
+            Path::new(dir)
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("appimage_extracted_"))
+        });
+    // The runtime only asks whether the variable is set, not for a value.
+    if !unpacked || chosen.is_some() {
+        return Vec::new();
+    }
+    vec![Problem::new("appimage.no_fuse", Severity::Info)
+        .step("appimage.no_fuse.step.install")
+        .dismissible("appimage.no_fuse")]
+}
+
 /// Orphaned sync engine processes not started by this launcher instance.
 pub fn check_orphans(our_pid: Option<u32>) -> Vec<Problem> {
     let sys = crate::transport::resilio::scan_processes();
@@ -518,6 +834,245 @@ mod tests {
         );
     }
     use super::*;
+
+    /// The shape `firewall-cmd --list-all-zones` prints, trimmed to three
+    /// zones: Fedora Workstation's open one, a closed `public`, `trusted`.
+    const ZONES: &str = "FedoraWorkstation (default)
+  target: default
+  interfaces:
+  services: dhcpv6-client mdns samba-client ssh
+  ports: 1025-65535/udp 1025-65535/tcp
+  protocols:
+
+public (active)
+  target: default
+  interfaces: enp3s0
+  services: dhcpv6-client ssh
+  ports: 3838/udp 55000/tcp
+  protocols:
+
+trusted
+  target: ACCEPT
+  interfaces:
+  ports:
+";
+
+    #[test]
+    fn firewalld_zones_are_read_with_their_ports_and_flags() {
+        let zones = parse_firewalld_zones(ZONES);
+        assert_eq!(zones.len(), 3);
+        assert!(zones[0].default && !zones[0].active);
+        assert_eq!(zones[0].ports, ["1025-65535/udp", "1025-65535/tcp"]);
+        assert!(zones[1].active);
+        assert_eq!(zones[2].target, "ACCEPT");
+        assert!(zones[2].ports.is_empty());
+    }
+
+    #[test]
+    fn a_closed_active_zone_names_what_is_missing_and_how_to_open_it() {
+        let zones = parse_firewalld_zones(ZONES);
+        let problems = check_firewalld(&zones, 55000, false);
+        assert_eq!(problems.len(), 1, "only the active zone counts");
+        let p = &problems[0];
+        assert_eq!(p.code, "transport.firewalld_closed");
+        assert_eq!(p.params["zone"], "public");
+        assert_eq!(p.params["missing"], "55000/udp");
+        assert_eq!(
+            p.params["command"],
+            "sudo firewall-cmd --permanent --zone=public --add-port=55000/udp \
+             && sudo firewall-cmd --reload",
+            "only what is missing, and nothing twice"
+        );
+        assert!(!p.steps.iter().any(|s| s.ends_with("step.port")));
+    }
+
+    #[test]
+    fn an_open_zone_or_no_firewall_is_not_a_problem() {
+        let open: Vec<_> = parse_firewalld_zones(ZONES)
+            .into_iter()
+            .map(|mut z| {
+                z.active = z.default;
+                z
+            })
+            .collect();
+        assert!(
+            check_firewalld(&open, 0, true).is_empty(),
+            "Fedora Workstation's range"
+        );
+        assert!(check_firewalld(&open, 40000, false).is_empty());
+        let trusted = FirewalldZone {
+            name: "trusted".into(),
+            active: true,
+            target: "ACCEPT".into(),
+            ..Default::default()
+        };
+        assert!(check_firewalld(&[trusted], 0, true).is_empty());
+        assert!(
+            check_firewalld(&[], 0, true).is_empty(),
+            "firewalld not running"
+        );
+    }
+
+    #[test]
+    fn a_random_port_behind_a_closed_zone_asks_for_a_fixed_one() {
+        let zones = parse_firewalld_zones(ZONES);
+        let problems = check_firewalld(&zones, 0, true);
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0].steps, ["transport.firewalld_closed.step.port"]);
+        assert!(
+            !problems[0].params.contains_key("command"),
+            "discovery is open, and a random port has no number to open"
+        );
+
+        let closed = FirewalldZone {
+            name: "public".into(),
+            active: true,
+            interfaces: vec!["enp3s0".into()],
+            ..Default::default()
+        };
+        let problems = check_firewalld(&[closed], 3838, false);
+        assert_eq!(
+            problems[0].params["command"],
+            "sudo firewall-cmd --permanent --zone=public --add-port=3838/udp \
+             --add-port=3838/tcp && sudo firewall-cmd --reload"
+        );
+    }
+
+    #[test]
+    fn a_rich_rule_for_one_host_or_ipv6_does_not_open_the_lan() {
+        for rule in [
+            r#"rule family="ipv4" source address="10.0.0.9" port port="3838" protocol="udp" accept"#,
+            r#"rule family="ipv6" port port="3838" protocol="udp" accept"#,
+            r#"rule family="ipv4" port port="3838" protocol="udp" reject"#,
+        ] {
+            let listing = format!("public (active)\n  target: default\n  rich rules:\n\t{rule}\n");
+            assert!(
+                parse_firewalld_zones(&listing)[0].ports.is_empty(),
+                "{rule}"
+            );
+        }
+        let quoted = r#"rule family="ipv4" port port="3838" protocol="udp" log prefix="drop or accept" reject"#;
+        let listing = format!("public (active)\n  rich rules:\n\t{quoted}\n");
+        assert!(
+            parse_firewalld_zones(&listing)[0].ports.is_empty(),
+            "accept in quotes"
+        );
+        let all_but_one = r#"rule family="ipv4" source NOT address="10.0.0.9" port port="3838" protocol="udp" accept"#;
+        let listing = format!("public (active)\n  rich rules:\n\t{all_but_one}\n");
+        assert_eq!(parse_firewalld_zones(&listing)[0].ports, ["3838/udp"]);
+        let limited = "public (active)\n  rich rules:\n\trule family=\"ipv4\" port port=\"3838\" protocol=\"udp\" accept limit value=\"100/s\"\n";
+        assert_eq!(parse_firewalld_zones(limited)[0].ports, ["3838/udp"]);
+    }
+
+    #[test]
+    fn the_default_zone_counts_even_while_another_is_active() {
+        let listing = "docker (active)
+  target: ACCEPT
+  interfaces: docker0
+
+public (default)
+  target: default
+  ports:
+";
+        let problems = check_firewalld(&parse_firewalld_zones(listing), 3838, false);
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0].params["zone"], "public");
+        assert_eq!(
+            problems[0].params["missing"], "3838/udp, 3838/tcp",
+            "nothing twice"
+        );
+
+        // The card moved to `home`: the unused default zone is not the LAN's.
+        let moved = "home (active)
+  target: default
+  interfaces: enp3s0
+  ports: 1025-65535/udp 1025-65535/tcp
+
+public (default)
+  target: default
+  ports:
+";
+        assert!(check_firewalld(&parse_firewalld_zones(moved), 3838, false).is_empty());
+    }
+
+    #[test]
+    fn a_random_port_the_engine_took_is_named_but_a_fixed_one_advised() {
+        let zones = parse_firewalld_zones(ZONES);
+        let problems = check_firewalld(&zones, 55000, true);
+        assert!(problems[0].params["command"].contains("--add-port=55000/udp"));
+        assert_eq!(problems[0].steps[0], "transport.firewalld_closed.step.port");
+    }
+
+    #[test]
+    fn loopback_is_recognised_in_every_spelling_proc_uses() {
+        let v4 = |ip: [u8; 4]| format!("{:08X}", u32::from_ne_bytes(ip));
+        assert_eq!(is_loopback(&v4([127, 0, 0, 1])), Some(true));
+        assert_eq!(is_loopback(&v4([0, 0, 0, 0])), Some(false));
+        assert_eq!(is_loopback(&v4([192, 168, 1, 20])), Some(false));
+        let v6 = |ip: std::net::Ipv6Addr| {
+            ip.octets()
+                .chunks(4)
+                .map(|w| format!("{:08X}", u32::from_ne_bytes([w[0], w[1], w[2], w[3]])))
+                .collect::<String>()
+        };
+        assert_eq!(is_loopback(&v6(std::net::Ipv6Addr::LOCALHOST)), Some(true));
+        let mapped = std::net::Ipv4Addr::LOCALHOST.to_ipv6_mapped();
+        assert_eq!(is_loopback(&v6(mapped)), Some(true));
+        assert_eq!(
+            is_loopback(&v6(std::net::Ipv6Addr::UNSPECIFIED)),
+            Some(false)
+        );
+    }
+
+    /// Checked on this process: a LAN listener is found, a loopback one not.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_ports_a_process_listens_on_for_the_lan_are_read_from_proc() {
+        let lan = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
+        let api = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let ports = lan_listening_ports(std::process::id());
+        assert!(
+            ports.contains(&lan.local_addr().unwrap().port()),
+            "{ports:?}"
+        );
+        assert!(
+            !ports.contains(&api.local_addr().unwrap().port()),
+            "{ports:?}"
+        );
+        assert!(lan_listening_ports(u32::MAX).is_empty(), "no such process");
+    }
+
+    #[test]
+    fn a_port_a_rich_rule_accepts_counts_as_open() {
+        let listing = "public (active)
+  target: default
+  ports: 55000/tcp 55000/udp
+  rich rules:
+\trule family=\"ipv4\" port port=\"3838\" protocol=\"udp\" accept
+\trule family=\"ipv4\" source address=\"10.0.0.9\" port port=\"22\" protocol=\"tcp\" reject
+";
+        let zones = parse_firewalld_zones(listing);
+        assert_eq!(zones.len(), 1);
+        assert_eq!(zones[0].ports, ["55000/tcp", "55000/udp", "3838/udp"]);
+        assert!(check_firewalld(&zones, 55000, false).is_empty());
+    }
+
+    #[test]
+    fn only_an_appimage_the_runtime_had_to_unpack_is_reported() {
+        let image = Some("/home/deck/NextGen.AppImage");
+        let unpacked = Some("/tmp/appimage_extracted_6c58ef22f21d7fce44c5a769fac9bf78");
+        assert_eq!(check_appimage_unpacked(image, unpacked, None).len(), 1);
+        assert!(check_appimage_unpacked(image, Some("/tmp/.mount_NextGeAbC123"), None).is_empty());
+        assert!(
+            check_appimage_unpacked(image, unpacked, Some("1")).is_empty(),
+            "chosen"
+        );
+        assert!(check_appimage_unpacked(image, unpacked, Some("yes")).is_empty());
+        assert!(
+            check_appimage_unpacked(None, None, None).is_empty(),
+            "not an AppImage"
+        );
+    }
 
     #[test]
     fn parses_powershell_profiles_numeric_and_string() {

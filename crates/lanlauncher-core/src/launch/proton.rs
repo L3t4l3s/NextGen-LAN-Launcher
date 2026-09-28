@@ -131,19 +131,54 @@ fn version_of(label: &str) -> Vec<u32> {
     out
 }
 
-/// Every Proton under this home directory, best first.
+/// Where Steam looks for compatibility tools the system installed, beside
+/// each root's own `compatibilitytools.d`. SteamOS leaves them empty; a
+/// distribution that packages Proton builds for its users (Bazzite and other
+/// gaming-focused Fedora images, a `proton-ge-custom` package) puts them here,
+/// and Steam offers them like its own.
+pub const SYSTEM_COMPAT_TOOL_DIRS: [&str; 2] = [
+    "/usr/share/steam/compatibilitytools.d",
+    "/usr/local/share/steam/compatibilitytools.d",
+];
+
+/// Every Proton under this home directory and in the system's
+/// compatibility-tool folders, best first.
 pub fn find_protons(home: &Path) -> Vec<ProtonInstall> {
+    let system: Vec<PathBuf> = SYSTEM_COMPAT_TOOL_DIRS.iter().map(PathBuf::from).collect();
+    find_protons_in(home, &system)
+}
+
+/// [`find_protons`] with the system folders given, so a test does not see
+/// what the machine running it has installed.
+pub fn find_protons_in(home: &Path, system_dirs: &[PathBuf]) -> Vec<ProtonInstall> {
     let mut out = Vec::new();
     let mut seen = Vec::new();
-    for root in steam_roots(home) {
+    let roots = steam_roots(home);
+    for root in &roots {
         // The symlinked roots resolve onto the real one; without this a
         // machine reports the same Proton three times.
-        let real = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
+        let real = std::fs::canonicalize(root).unwrap_or_else(|_| root.clone());
         if seen.contains(&real) {
             continue;
         }
         seen.push(real);
-        out.extend(protons_in(&root));
+        out.extend(protons_in(root));
+    }
+    // A system-wide tool belongs to no Steam root of its own, but Proton
+    // needs one as `STEAM_COMPAT_CLIENT_INSTALL_PATH`: the Steam this user
+    // runs — the first root that really is one (a leftover `~/.steam/steam`
+    // after a switch to Flatpak Steam has no `steamapps`). Without any Steam
+    // there is nobody to run it for, and it is left out. A build the user
+    // also installed themselves keeps only their copy: two entries with one
+    // name would be a choice nobody can make.
+    if let Some(root) = roots.iter().find(|r| r.join("steamapps").is_dir()) {
+        for dir in system_dirs {
+            for tool in compat_tools_in(dir, root) {
+                if !out.iter().any(|found| found.label == tool.label) {
+                    out.push(tool);
+                }
+            }
+        }
     }
     out.sort_by(|a, b| {
         rank(
@@ -173,20 +208,8 @@ pub fn find_protons(home: &Path) -> Vec<ProtonInstall> {
 
 /// Every Proton belonging to one Steam root.
 fn protons_in(root: &Path) -> Vec<ProtonInstall> {
-    let mut out = Vec::new();
     // Tools the user dropped in themselves.
-    if let Ok(entries) = std::fs::read_dir(root.join("compatibilitytools.d")) {
-        for entry in entries.flatten() {
-            let proton = entry.path().join("proton");
-            if proton.is_file() {
-                out.push(ProtonInstall {
-                    proton,
-                    steam_root: root.to_path_buf(),
-                    label: entry.file_name().to_string_lossy().to_string(),
-                });
-            }
-        }
-    }
+    let mut out = compat_tools_in(&root.join("compatibilitytools.d"), root);
     // Proton as a Steam download, in every library this root knows.
     for library in steam_libraries(root) {
         let Ok(entries) = std::fs::read_dir(library.join("steamapps/common")) else {
@@ -210,6 +233,24 @@ fn protons_in(root: &Path) -> Vec<ProtonInstall> {
     out
 }
 
+/// The Protons in one `compatibilitytools.d`, run for the Steam at `root`.
+fn compat_tools_in(dir: &Path, root: &Path) -> Vec<ProtonInstall> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let proton = entry.path().join("proton");
+            proton.is_file().then(|| ProtonInstall {
+                proton,
+                steam_root: root.to_path_buf(),
+                label: entry.file_name().to_string_lossy().to_string(),
+            })
+        })
+        .collect()
+}
+
 /// Every place a Proton was looked for, so a failed search can be explained
 /// in the log rather than guessed at — the same courtesy
 /// `resilio::locate_binary_detailed` does for the sync engine.
@@ -221,7 +262,9 @@ pub fn probed_paths(home: &Path) -> Vec<PathBuf> {
             out.push(library.join("steamapps/common"));
         }
     }
-    if out.is_empty() {
+    if !out.is_empty() {
+        out.extend(SYSTEM_COMPAT_TOOL_DIRS.iter().map(PathBuf::from));
+    } else {
         // Worth saying which homes were considered when none of them exist.
         out.extend(
             [
@@ -285,7 +328,7 @@ mod tests {
         let card = tempfile::tempdir().expect("card");
         steam_deck(home.path(), card.path());
 
-        let found = find_protons(home.path());
+        let found = find_protons_in(home.path(), &[]);
         let labels: Vec<_> = found.iter().map(|p| p.label.as_str()).collect();
         assert!(
             labels.contains(&"Proton 9.0 (Beta)"),
@@ -306,7 +349,7 @@ mod tests {
         steam_deck(home.path(), card.path());
         // Even the Proton that sits on the card belongs to the Steam that
         // listed it; that is what STEAM_COMPAT_CLIENT_INSTALL_PATH wants.
-        for install in find_protons(home.path()) {
+        for install in find_protons_in(home.path(), &[]) {
             assert!(
                 install.steam_root.join("steamapps").is_dir(),
                 "{:?} is not a Steam root",
@@ -330,7 +373,7 @@ mod tests {
             home.path().join(".steam/steam"),
         )
         .expect("symlink");
-        let nine = find_protons(home.path())
+        let nine = find_protons_in(home.path(), &[])
             .iter()
             .filter(|p| p.label == "Proton 9.0 (Beta)")
             .count();
@@ -347,12 +390,47 @@ mod tests {
                 .path()
                 .join(".local/share/Steam/compatibilitytools.d/GE-Proton9-20/proton"),
         );
-        let found = find_protons(home.path());
+        let found = find_protons_in(home.path(), &[]);
         assert_eq!(
             found.first().map(|p| p.label.as_str()),
             Some("Proton 9.0 (Beta)"),
             "a tool installed for another launcher is not a global preference"
         );
+    }
+
+    /// Bazzite and similar images install Proton builds system-wide, in the
+    /// folder Steam itself reads. They are found, run for the user's Steam,
+    /// and rank behind Valve's releases like every other added tool.
+    #[test]
+    fn a_proton_the_system_installed_is_found_for_the_users_steam() {
+        let home = tempfile::tempdir().expect("home");
+        let system = tempfile::tempdir().expect("system");
+        let tools = system.path().join("usr/share/steam/compatibilitytools.d");
+        touch(&tools.join("GE-Proton10-4/proton"));
+        let system_dirs = [tools];
+
+        assert!(
+            find_protons_in(home.path(), &system_dirs).is_empty(),
+            "without a Steam there is nothing to run it for"
+        );
+
+        // A leftover `~/.steam/steam` is no Steam to run it for.
+        std::fs::create_dir_all(home.path().join(".steam/steam")).expect("dirs");
+        let steam = home.path().join(".local/share/Steam");
+        touch(&steam.join("steamapps/common/Proton 10.0/proton"));
+        let found = find_protons_in(home.path(), &system_dirs);
+        let labels: Vec<_> = found.iter().map(|p| p.label.as_str()).collect();
+        assert_eq!(labels, ["Proton 10.0", "GE-Proton10-4"]);
+        assert_eq!(found[1].steam_root, steam);
+
+        touch(&steam.join("compatibilitytools.d/GE-Proton10-4/proton"));
+        let found = find_protons_in(home.path(), &system_dirs);
+        let own: Vec<_> = found
+            .iter()
+            .filter(|p| p.label == "GE-Proton10-4")
+            .collect();
+        assert_eq!(own.len(), 1, "the user's own copy, not a second entry");
+        assert!(own[0].proton.starts_with(&steam));
     }
 
     #[test]
@@ -362,7 +440,7 @@ mod tests {
         touch(&steam.join("steamapps/common/Proton - Experimental/proton"));
         touch(&steam.join("compatibilitytools.d/ULWGL-Proton-8.0-5-3/proton"));
 
-        let found = find_protons(home.path());
+        let found = find_protons_in(home.path(), &[]);
         assert_eq!(
             found.first().map(|p| p.label.as_str()),
             Some("Proton - Experimental"),
@@ -380,7 +458,7 @@ mod tests {
                 .path()
                 .join(".local/share/Steam/steamapps/common/Proton - Experimental/proton"),
         );
-        let labels: Vec<_> = find_protons(home.path())
+        let labels: Vec<_> = find_protons_in(home.path(), &[])
             .iter()
             .map(|p| p.label.clone())
             .collect();
@@ -400,7 +478,7 @@ mod tests {
                 ".var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/common/Proton 9.0/proton",
             ),
         );
-        let found = find_protons(home.path());
+        let found = find_protons_in(home.path(), &[]);
         assert_eq!(
             found.len(),
             1,
@@ -412,7 +490,7 @@ mod tests {
     #[test]
     fn nothing_installed_finds_nothing_and_says_where_it_looked() {
         let home = tempfile::tempdir().expect("home");
-        assert!(find_protons(home.path()).is_empty());
+        assert!(find_protons_in(home.path(), &[]).is_empty());
         assert!(
             !probed_paths(home.path()).is_empty(),
             "a failed search must still be able to name the places it tried"
