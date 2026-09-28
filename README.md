@@ -201,7 +201,8 @@ again.
 - **Bazzite and other Fedora-based systems:** not tried on a real machine. System-wide Proton
   builds (`/usr/share/steam/compatibilitytools.d`) are found, covered by a test. The firewalld check
   parses `firewall-cmd --list-all-zones` in the documented format and is tested against that text,
-  not against a running firewalld; that read-only queries need no root is firewalld's documented
+  not against a running firewalld. With the sync port left at 0 it takes the port the engine really
+  listens on from `/proc` (tested on live sockets here); that read-only queries need no root is firewalld's documented
   default, not observed here. The AppImage runtime was checked on a built image: static, no
   `libfuse.so.2` needed, and without `fusermount` it unpacks itself and starts anyway.
 - **Installer and a running launcher:** unsolved. The NSIS hook closes the launcher first and its

@@ -366,7 +366,7 @@ export const en: Messages = {
   "problem.transport.firewall_missing.step.domain": "On a domain-joined PC the firewall is often IT's to change. If “Fix now” fails, give IT the path from the note above and ask for one inbound and one outbound rule for it, or hide the message with “Ignore”.",
   "problem.transport.firewalld_closed.title": "Firewall (firewalld) blocks the sync engine",
   "problem.transport.firewalld_closed.cause": "The firewall zone “{zone}” does not let in {missing}. Downloads this machine starts itself usually still work, but other players cannot reach it and the LAN search goes unanswered.",
-  "problem.transport.firewalld_closed.step.port": "The sync port is set to 0 (random) and cannot be opened specifically: enter a fixed sync port in the settings, then run this check again.",
+  "problem.transport.firewalld_closed.step.port": "The sync port is set to 0 (random): the engine picks a new one at every start, so opening it only lasts until the next restart. Enter a fixed sync port in the settings, run this check again and use the command it names.",
   "problem.transport.firewalld_closed.step.command": "Open it in a terminal: {command}",
   "problem.appimage.no_fuse.title": "AppImage runs without FUSE",
   "problem.appimage.no_fuse.cause": "This machine has no FUSE (the fusermount program or /dev/fuse), so the AppImage unpacks itself into a temporary folder on every start. That works, but starting takes longer and uses space — in memory, if /tmp lives there.",

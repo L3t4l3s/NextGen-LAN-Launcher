@@ -166,11 +166,18 @@ pub fn find_protons_in(home: &Path, system_dirs: &[PathBuf]) -> Vec<ProtonInstal
     }
     // A system-wide tool belongs to no Steam root of its own, but Proton
     // needs one as `STEAM_COMPAT_CLIENT_INSTALL_PATH`: the Steam this user
-    // runs, the first root found. Without any Steam there is nobody to run
-    // it for, and it is left out.
-    if let Some(root) = roots.first() {
+    // runs — the first root that really is one (a leftover `~/.steam/steam`
+    // after a switch to Flatpak Steam has no `steamapps`). Without any Steam
+    // there is nobody to run it for, and it is left out. A build the user
+    // also installed themselves keeps only their copy: two entries with one
+    // name would be a choice nobody can make.
+    if let Some(root) = roots.iter().find(|r| r.join("steamapps").is_dir()) {
         for dir in system_dirs {
-            out.extend(compat_tools_in(dir, root));
+            for tool in compat_tools_in(dir, root) {
+                if !out.iter().any(|found| found.label == tool.label) {
+                    out.push(tool);
+                }
+            }
         }
     }
     out.sort_by(|a, b| {
@@ -407,12 +414,23 @@ mod tests {
             "without a Steam there is nothing to run it for"
         );
 
+        // A leftover `~/.steam/steam` is no Steam to run it for.
+        std::fs::create_dir_all(home.path().join(".steam/steam")).expect("dirs");
         let steam = home.path().join(".local/share/Steam");
         touch(&steam.join("steamapps/common/Proton 10.0/proton"));
         let found = find_protons_in(home.path(), &system_dirs);
         let labels: Vec<_> = found.iter().map(|p| p.label.as_str()).collect();
         assert_eq!(labels, ["Proton 10.0", "GE-Proton10-4"]);
         assert_eq!(found[1].steam_root, steam);
+
+        touch(&steam.join("compatibilitytools.d/GE-Proton10-4/proton"));
+        let found = find_protons_in(home.path(), &system_dirs);
+        let own: Vec<_> = found
+            .iter()
+            .filter(|p| p.label == "GE-Proton10-4")
+            .collect();
+        assert_eq!(own.len(), 1, "the user's own copy, not a second entry");
+        assert!(own[0].proton.starts_with(&steam));
     }
 
     #[test]

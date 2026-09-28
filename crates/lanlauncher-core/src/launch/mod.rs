@@ -343,8 +343,7 @@ pub async fn spawn(plan: &LaunchPlan, log: Option<&Path>) -> Result<(u32, ExitWa
     cmd.current_dir(&plan.cwd);
     // Before the plan's own environment: a manifest may set one of these
     // deliberately for a game, and that value is the one that counts.
-    restore_what_the_launcher_forced(&mut cmd);
-    leave_the_appimage_behind(&mut cmd);
+    give_the_host_environment_back(&mut cmd);
     cmd.envs(&plan.env);
     apply_args(&mut cmd, plan);
     // Without a log the child keeps the handles it would have had: a console
@@ -425,8 +424,7 @@ async fn ensure_crossover_bottle(plan: &LaunchPlan) -> Option<String> {
     // The environment the game gets, not the launcher's own: `cxbottle` is a
     // CrossOver program too, and the AppImage's libraries or a renderer
     // setting forced for the launcher's window are no more its business.
-    restore_what_the_launcher_forced(&mut command);
-    leave_the_appimage_behind(&mut command);
+    give_the_host_environment_back(&mut command);
     command.envs(&plan.env).args([
         "--create",
         "--scope",
@@ -509,9 +507,15 @@ pub const FORCED_ENV: &str = "NLL_FORCED_ENV";
 /// A host tool written in Python would otherwise load the image's libraries.
 pub fn host_command(program: impl AsRef<std::ffi::OsStr>) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(program);
-    restore_what_the_launcher_forced(&mut cmd);
-    leave_the_appimage_behind(&mut cmd);
+    give_the_host_environment_back(&mut cmd);
     cmd
+}
+
+/// The one recipe for a child of the machine rather than of the launcher,
+/// shared by games, `cxbottle` and host tools.
+fn give_the_host_environment_back(cmd: &mut tokio::process::Command) {
+    restore_what_the_launcher_forced(cmd);
+    leave_the_appimage_behind(cmd);
 }
 
 /// Apply [`without_appimage_paths`] to a child's environment.

@@ -305,7 +305,8 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   gescheitert, der Test `a_symlinked_root_does_not_report_the_same_proton_twice` hält es fest).
   `STEAM_COMPAT_CLIENT_INSTALL_PATH` muss die Wurzel sein, zu der *dieses* Proton gehört; fest
   `~/.steam/steam` einzusetzen geht bei Flatpak-Steam schief. Systemweit installierte Tools (`/usr/share/steam/compatibilitytools.d`, Bazzite) laufen mit der
-  ersten gefundenen Steam-Wurzel; Tests rufen `find_protons_in(home, &[])`, sonst sähen sie, was der
+  ersten Steam-Wurzel, die ein `steamapps` hat (ein verwaistes `~/.steam/steam` zählt nicht); hat der
+  Benutzer denselben Build selbst installiert, bleibt nur seine Kopie (gleicher Name); Tests rufen `find_protons_in(home, &[])`, sonst sähen sie, was der
   Testrechner installiert hat. Alles in
   `crates/lanlauncher-core/src/launch/proton.rs`, rein dateisystembasiert und damit testbar.
 - **Clippy:** In `resilio.rs` müssen alle Items vor `mod tests` stehen (`items_after_test_module`).

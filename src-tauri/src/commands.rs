@@ -1005,14 +1005,19 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
         checks.push("network_profile".into());
         tauri::async_runtime::spawn(crate::fixes::network_profiles())
     });
+    // Only the managed engine is ours to worry about, as with the Windows
+    // firewall: folder mode or a demo has no sync port to open.
+    let transport = state.transport.read().await.clone();
+    let managed = transport
+        .as_ref()
+        .is_some_and(|t| t.kind() == lanlauncher_core::transport::TransportKind::Resilio);
     // A Python start and a D-Bus round trip; alongside the engine query too.
-    let firewalld = cfg!(target_os = "linux").then(|| {
+    let firewalld = (cfg!(target_os = "linux") && managed).then(|| {
         checks.push("firewalld".into());
         tauri::async_runtime::spawn(firewalld_zones())
     });
 
     checks.push("transport".into());
-    let transport = state.transport.read().await.clone();
     let mut catalog_connected = false;
     if let Some(t) = &transport {
         let health = t.health().await;
@@ -1057,13 +1062,22 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
         problems.extend(diagnostics::check_network_profiles(&found));
     }
     if let Some(handle) = firewalld {
-        // Only the managed engine is ours to worry about, as on Windows:
-        // folder mode or a demo has no sync port to open.
-        let managed = transport
-            .as_ref()
-            .is_some_and(|t| t.kind() == lanlauncher_core::transport::TransportKind::Resilio);
-        if let Some(zones) = handle.await.ok().flatten().filter(|_| managed) {
-            problems.extend(diagnostics::check_firewalld(&zones, settings.sync_port));
+        if let Some(zones) = handle.await.ok().flatten() {
+            // A port of 0 in the settings lets the engine pick; which one it
+            // took is in its listening sockets.
+            let random = settings.sync_port == 0;
+            let pid = transport.as_ref().and_then(|t| t.process_id());
+            let port = match (settings.sync_port, pid) {
+                (0, Some(pid)) => tauri::async_runtime::spawn_blocking(move || {
+                    diagnostics::lan_listening_ports(pid).first().copied()
+                })
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or(0),
+                (port, _) => port,
+            };
+            problems.extend(diagnostics::check_firewalld(&zones, port, random));
         }
     }
     if cfg!(target_os = "linux") {
@@ -1096,9 +1110,6 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
     // Only the managed Resilio registers the catalog share, so only there a
     // missing key matters (a fallback to folder mode is reported above).
     checks.push("catalog_key".into());
-    let managed = transport
-        .as_ref()
-        .is_some_and(|t| t.kind() == lanlauncher_core::transport::TransportKind::Resilio);
     if managed
         && lanlauncher_core::catalog::catalog_share_key(settings.catalog_key.as_deref()).is_none()
     {

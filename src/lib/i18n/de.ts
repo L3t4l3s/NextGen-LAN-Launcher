@@ -368,7 +368,7 @@ export const de: Messages = {
   "problem.transport.firewall_missing.step.domain": "Auf einem Domänen-PC darf die Firewall oft nur die IT ändern. Schlägt „Jetzt beheben“ fehl, nenne der IT den Pfad aus dem Hinweis oben und bitte um eine eingehende und ausgehende Regel dafür; oder blende die Meldung mit „Ignorieren“ aus.",
   "problem.transport.firewalld_closed.title": "Firewall (firewalld) sperrt den Sync-Dienst",
   "problem.transport.firewalld_closed.cause": "Die Firewall-Zone „{zone}“ lässt {missing} nicht herein. Downloads, die dieser Rechner selbst anstößt, laufen meist trotzdem; andere Teilnehmer erreichen ihn aber nicht, und die LAN-Suche bleibt unbeantwortet.",
-  "problem.transport.firewalld_closed.step.port": "Der Sync-Port ist auf 0 (zufällig) gestellt und lässt sich so nicht gezielt freigeben: in den Einstellungen einen festen Sync-Port eintragen, dann diese Prüfung erneut ausführen.",
+  "problem.transport.firewalld_closed.step.port": "Der Sync-Port steht auf 0 (zufällig): Die Engine wählt ihn bei jedem Start neu, eine Freigabe dafür hält also nur bis zum nächsten Neustart. In den Einstellungen einen festen Sync-Port eintragen, dann diese Prüfung erneut ausführen und den genannten Befehl verwenden.",
   "problem.transport.firewalld_closed.step.command": "Im Terminal freigeben: {command}",
   "problem.appimage.no_fuse.title": "AppImage läuft ohne FUSE",
   "problem.appimage.no_fuse.cause": "Auf diesem Rechner fehlt FUSE (das Programm fusermount oder /dev/fuse). Das AppImage entpackt sich deshalb bei jedem Start in einen temporären Ordner. Das funktioniert, der Start dauert aber länger und belegt Platz – liegt /tmp im Arbeitsspeicher, dort.",
