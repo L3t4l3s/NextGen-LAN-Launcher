@@ -964,6 +964,29 @@ pub async fn save_settings(
     Ok(new)
 }
 
+/// The zones of a running firewalld, or `None` where there is none (SteamOS)
+/// or it cannot be asked. Listing zones needs no root: firewalld answers
+/// read-only queries for every user.
+async fn firewalld_zones() -> Option<Vec<diagnostics::FirewalldZone>> {
+    // One call: without a running firewalld it fails too (exit 252), so a
+    // separate `--state` would only cost a second interpreter start.
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        launch::host_command("firewall-cmd")
+            .arg("--list-all-zones")
+            // A hung D-Bus must not leave one `firewall-cmd` behind per run.
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    output
+        .status
+        .success()
+        .then(|| diagnostics::parse_firewalld_zones(&String::from_utf8_lossy(&output.stdout)))
+}
+
 #[tauri::command]
 pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
     let mut problems = Vec::new();
@@ -981,6 +1004,11 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
     let profiles = cfg!(target_os = "windows").then(|| {
         checks.push("network_profile".into());
         tauri::async_runtime::spawn(crate::fixes::network_profiles())
+    });
+    // A Python start and a D-Bus round trip; alongside the engine query too.
+    let firewalld = cfg!(target_os = "linux").then(|| {
+        checks.push("firewalld".into());
+        tauri::async_runtime::spawn(firewalld_zones())
     });
 
     checks.push("transport".into());
@@ -1027,6 +1055,24 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
     if let Some(handle) = profiles {
         let found = handle.await.unwrap_or_default();
         problems.extend(diagnostics::check_network_profiles(&found));
+    }
+    if let Some(handle) = firewalld {
+        // Only the managed engine is ours to worry about, as on Windows:
+        // folder mode or a demo has no sync port to open.
+        let managed = transport
+            .as_ref()
+            .is_some_and(|t| t.kind() == lanlauncher_core::transport::TransportKind::Resilio);
+        if let Some(zones) = handle.await.ok().flatten().filter(|_| managed) {
+            problems.extend(diagnostics::check_firewalld(&zones, settings.sync_port));
+        }
+    }
+    if cfg!(target_os = "linux") {
+        checks.push("appimage".into());
+        problems.extend(diagnostics::check_appimage_unpacked(
+            std::env::var("APPIMAGE").ok().as_deref(),
+            std::env::var("APPDIR").ok().as_deref(),
+            std::env::var("APPIMAGE_EXTRACT_AND_RUN").ok().as_deref(),
+        ));
     }
 
     checks.push("covers".into());

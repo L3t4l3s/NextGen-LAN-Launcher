@@ -289,6 +289,12 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   **Also entweder beides mitliefern oder beides weglassen, nie halb.** Nachstellen lässt sich der
   Zustand mit `GST_PLUGIN_SYSTEM_PATH_1_0=/nonexistent GST_PLUGIN_PATH_1_0=/nonexistent` — dann
   zeigt jeder Build ohne gebündelte Plugins die Deck-Meldung.
+- **AppImage und FUSE:** Das Abbild nutzt die statische type2-Laufzeit (`file` sagt
+  „static-pie linked“, `readelf -d` zeigt kein `NEEDED`). **libfuse2 wird nicht gebraucht**, nur
+  `fusermount`/`fusermount3` und `/dev/fuse`. Fehlt das, entpackt sich das Abbild selbst nach
+  `$TMPDIR/appimage_extracted_<hash>` und startet trotzdem (hier nachgestellt mit einem `PATH` ohne
+  `fusermount`). Eine Prüfung *vor* dem Start kann der Launcher nicht leisten, sein Code läuft erst
+  danach; `diagnostics::check_appimage_unpacked` erkennt den entpackten Lauf an `APPDIR`.
 - **Proton liegt nie im `PATH`:** Es wohnt in einer Steam-Bibliothek, und ein Steam Deck hat
   mindestens zwei (intern und SD-Karte, letztere unter `/run/media/…`). Die Bibliotheken stehen in
   `<steam root>/steamapps/libraryfolders.vdf`; wer die nicht liest, findet auf einem Deck die
@@ -298,7 +304,9 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   dieselbe Installation unter zwei Schreibweisen als zwei Funde (genau daran ist der erste Entwurf
   gescheitert, der Test `a_symlinked_root_does_not_report_the_same_proton_twice` hält es fest).
   `STEAM_COMPAT_CLIENT_INSTALL_PATH` muss die Wurzel sein, zu der *dieses* Proton gehört; fest
-  `~/.steam/steam` einzusetzen geht bei Flatpak-Steam schief. Alles in
+  `~/.steam/steam` einzusetzen geht bei Flatpak-Steam schief. Systemweit installierte Tools (`/usr/share/steam/compatibilitytools.d`, Bazzite) laufen mit der
+  ersten gefundenen Steam-Wurzel; Tests rufen `find_protons_in(home, &[])`, sonst sähen sie, was der
+  Testrechner installiert hat. Alles in
   `crates/lanlauncher-core/src/launch/proton.rs`, rein dateisystembasiert und damit testbar.
 - **Clippy:** In `resilio.rs` müssen alle Items vor `mod tests` stehen (`items_after_test_module`).
 - **Fehlertexte:** Tauri-Commands und Fix-Aktionen geben keine deutschen Sätze zurück, sondern Codes

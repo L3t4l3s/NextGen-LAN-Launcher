@@ -503,6 +503,17 @@ fn crossover_bottle_dirs(env: &BTreeMap<String, String>) -> Vec<PathBuf> {
 /// before (`null` where there was none).
 pub const FORCED_ENV: &str = "NLL_FORCED_ENV";
 
+/// A command for one of the machine's own programs (`firewall-cmd`, …),
+/// started with the environment it would have had without the launcher:
+/// what the launcher forced on itself restored, the AppImage's paths gone.
+/// A host tool written in Python would otherwise load the image's libraries.
+pub fn host_command(program: impl AsRef<std::ffi::OsStr>) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(program);
+    restore_what_the_launcher_forced(&mut cmd);
+    leave_the_appimage_behind(&mut cmd);
+    cmd
+}
+
 /// Apply [`without_appimage_paths`] to a child's environment.
 ///
 /// Only variables that are text: one that is not stays as it is, because

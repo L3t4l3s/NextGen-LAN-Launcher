@@ -455,6 +455,200 @@ pub fn check_clock(server_time: Option<chrono::DateTime<chrono::Utc>>) -> Vec<Pr
     }
 }
 
+/// Resilio's LAN discovery port (multicast and broadcast, UDP).
+pub const RESILIO_DISCOVERY_PORT: u16 = 3838;
+
+/// One zone from `firewall-cmd --list-all-zones`, as far as the check needs it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FirewalldZone {
+    pub name: String,
+    pub active: bool,
+    pub default: bool,
+    /// `default`, `ACCEPT`, `DROP`, `%%REJECT%%`.
+    pub target: String,
+    /// Entries like `1025-65535/udp` or `3838/udp`, from `ports:` and from
+    /// rich rules that accept a port.
+    pub ports: Vec<String>,
+}
+
+/// The zones in the output of `firewall-cmd --list-all-zones`: a header line
+/// per zone (`public (default, active)`), then indented `key: value` lines;
+/// rich rules follow `rich rules:`, one per line, indented further.
+///
+/// Services are not resolved into ports (that is one more `firewall-cmd` per
+/// service); a zone that opens the engine through a service of its own is
+/// reported anyway, and the warning can be dismissed.
+pub fn parse_firewalld_zones(listing: &str) -> Vec<FirewalldZone> {
+    let mut zones: Vec<FirewalldZone> = Vec::new();
+    for line in listing.lines() {
+        if let Some(port) = rich_rule_port(line) {
+            if let Some(zone) = zones.last_mut() {
+                zone.ports.push(port);
+            }
+            continue;
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        if !line.starts_with(char::is_whitespace) {
+            let (name, flags) = match line.split_once('(') {
+                Some((name, flags)) => (name.trim(), flags),
+                None => (line.trim(), ""),
+            };
+            zones.push(FirewalldZone {
+                name: name.to_string(),
+                active: flags.contains("active"),
+                default: flags.contains("default"),
+                ..Default::default()
+            });
+            continue;
+        }
+        let Some(zone) = zones.last_mut() else {
+            continue;
+        };
+        if let Some((key, value)) = line.trim().split_once(':') {
+            match key.trim() {
+                "target" => zone.target = value.trim().to_string(),
+                "ports" => zone.ports = value.split_whitespace().map(String::from).collect(),
+                _ => {}
+            }
+        }
+    }
+    zones
+}
+
+/// `rule family="ipv4" port port="3838" protocol="udp" accept` → `3838/udp`.
+fn rich_rule_port(line: &str) -> Option<String> {
+    let line = line.trim();
+    if !line.starts_with("rule ") || !line.ends_with("accept") {
+        return None;
+    }
+    let value = |key: &str| {
+        let start = line.find(&format!(" {key}=\""))? + key.len() + 3;
+        let end = line[start..].find('"')?;
+        Some(line[start..start + end].to_string())
+    };
+    Some(format!("{}/{}", value("port")?, value("protocol")?))
+}
+
+/// Whether `zone` lets in `protocol` traffic on every port of `from..=to`.
+fn zone_admits(zone: &FirewalldZone, protocol: &str, from: u16, to: u16) -> bool {
+    if zone.target.eq_ignore_ascii_case("ACCEPT") {
+        return true;
+    }
+    zone.ports.iter().any(|entry| {
+        let Some((range, proto)) = entry.split_once('/') else {
+            return false;
+        };
+        let (low, high) = range.split_once('-').unwrap_or((range, range));
+        match (low.parse::<u16>(), high.parse::<u16>()) {
+            (Ok(low), Ok(high)) => proto == protocol && low <= from && to <= high,
+            _ => false,
+        }
+    })
+}
+
+/// What an active firewalld zone keeps out of the sync engine.
+///
+/// SteamOS runs no firewall; Fedora-based systems such as Bazzite run
+/// firewalld, and a zone that closes the engine's port leaves only the
+/// connections this machine opens itself — fewer peers, slower downloads,
+/// nothing passed on to others — and the LAN search goes unanswered.
+///
+/// `listening_port` 0 means the engine picked one at random; then only a zone
+/// that admits every unprivileged port (as Fedora Workstation's does) is
+/// known to be open, and the advice is to fix the port in the settings.
+pub fn check_firewalld(zones: &[FirewalldZone], listening_port: u16) -> Vec<Problem> {
+    // Interfaces fall into the default zone when none is active.
+    let mut relevant: Vec<&FirewalldZone> = zones.iter().filter(|z| z.active).collect();
+    if relevant.is_empty() {
+        relevant = zones.iter().filter(|z| z.default).collect();
+    }
+    let mut needed = vec![("udp", RESILIO_DISCOVERY_PORT, RESILIO_DISCOVERY_PORT)];
+    match listening_port {
+        0 => needed.extend([("tcp", 1025, u16::MAX), ("udp", 1025, u16::MAX)]),
+        port => needed.extend([("tcp", port, port), ("udp", port, port)]),
+    }
+    let mut out = Vec::new();
+    for zone in relevant {
+        let missing: Vec<_> = needed
+            .iter()
+            .filter(|(proto, from, to)| !zone_admits(zone, proto, *from, *to))
+            .collect();
+        if missing.is_empty() {
+            continue;
+        }
+        let describe = |(proto, from, to): &&(&str, u16, u16)| {
+            if from == to {
+                format!("{from}/{proto}")
+            } else {
+                format!("{from}-{to}/{proto}")
+            }
+        };
+        // Only single ports go into the command: a random sync port has no
+        // number to open, and the whole unprivileged range is not advice.
+        let mut open: Vec<String> = Vec::new();
+        for (proto, from, to) in &missing {
+            let port = format!("{from}/{proto}");
+            if from == to && !open.contains(&port) {
+                open.push(port);
+            }
+        }
+        let mut problem = Problem::new("transport.firewalld_closed", Severity::Warning)
+            .param("zone", &zone.name)
+            .param(
+                "missing",
+                missing.iter().map(describe).collect::<Vec<_>>().join(", "),
+            );
+        if listening_port == 0 {
+            problem = problem.step("transport.firewalld_closed.step.port");
+        }
+        if !open.is_empty() {
+            let command = format!(
+                "sudo firewall-cmd --permanent --zone={} {} && sudo firewall-cmd --reload",
+                zone.name,
+                open.iter()
+                    .map(|p| format!("--add-port={p}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+            problem = problem
+                .param("command", command)
+                .step("transport.firewalld_closed.step.command");
+        }
+        out.push(problem.dismissible(format!("transport.firewalld_closed:{}", zone.name)));
+    }
+    out
+}
+
+/// An AppImage whose runtime found no FUSE on this machine unpacks itself
+/// into a temporary folder on every start instead of mounting (the type-2
+/// runtime does that on its own and says so on a terminal nobody sees).
+/// It works, but each start unpacks hundreds of megabytes first — on a
+/// system with `/tmp` in memory, into memory. A start with
+/// `APPIMAGE_EXTRACT_AND_RUN=1` chose this and is not told about it; the
+/// `--appimage-extract-and-run` flag leaves no trace the launcher could see,
+/// which is why the hint can be dismissed.
+pub fn check_appimage_unpacked(
+    appimage: Option<&str>,
+    appdir: Option<&str>,
+    chosen: Option<&str>,
+) -> Vec<Problem> {
+    let unpacked = appimage.is_some()
+        && appdir.is_some_and(|dir| {
+            Path::new(dir)
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("appimage_extracted_"))
+        });
+    // The runtime only asks whether the variable is set, not for a value.
+    if !unpacked || chosen.is_some() {
+        return Vec::new();
+    }
+    vec![Problem::new("appimage.no_fuse", Severity::Info)
+        .step("appimage.no_fuse.step.install")
+        .dismissible("appimage.no_fuse")]
+}
+
 /// Orphaned sync engine processes not started by this launcher instance.
 pub fn check_orphans(our_pid: Option<u32>) -> Vec<Problem> {
     let sys = crate::transport::resilio::scan_processes();
@@ -518,6 +712,137 @@ mod tests {
         );
     }
     use super::*;
+
+    /// The shape `firewall-cmd --list-all-zones` prints, trimmed to three
+    /// zones: Fedora Workstation's open one, a closed `public`, `trusted`.
+    const ZONES: &str = "FedoraWorkstation (default)
+  target: default
+  interfaces:
+  services: dhcpv6-client mdns samba-client ssh
+  ports: 1025-65535/udp 1025-65535/tcp
+  protocols:
+
+public (active)
+  target: default
+  interfaces: enp3s0
+  services: dhcpv6-client ssh
+  ports: 3838/udp 55000/tcp
+  protocols:
+
+trusted
+  target: ACCEPT
+  interfaces:
+  ports:
+";
+
+    #[test]
+    fn firewalld_zones_are_read_with_their_ports_and_flags() {
+        let zones = parse_firewalld_zones(ZONES);
+        assert_eq!(zones.len(), 3);
+        assert!(zones[0].default && !zones[0].active);
+        assert_eq!(zones[0].ports, ["1025-65535/udp", "1025-65535/tcp"]);
+        assert!(zones[1].active);
+        assert_eq!(zones[2].target, "ACCEPT");
+        assert!(zones[2].ports.is_empty());
+    }
+
+    #[test]
+    fn a_closed_active_zone_names_what_is_missing_and_how_to_open_it() {
+        let zones = parse_firewalld_zones(ZONES);
+        let problems = check_firewalld(&zones, 55000);
+        assert_eq!(problems.len(), 1, "only the active zone counts");
+        let p = &problems[0];
+        assert_eq!(p.code, "transport.firewalld_closed");
+        assert_eq!(p.params["zone"], "public");
+        assert_eq!(p.params["missing"], "55000/udp");
+        assert_eq!(
+            p.params["command"],
+            "sudo firewall-cmd --permanent --zone=public --add-port=55000/udp \
+             && sudo firewall-cmd --reload",
+            "only what is missing, and nothing twice"
+        );
+        assert!(!p.steps.iter().any(|s| s.ends_with("step.port")));
+    }
+
+    #[test]
+    fn an_open_zone_or_no_firewall_is_not_a_problem() {
+        let open: Vec<_> = parse_firewalld_zones(ZONES)
+            .into_iter()
+            .map(|mut z| {
+                z.active = z.default;
+                z
+            })
+            .collect();
+        assert!(
+            check_firewalld(&open, 0).is_empty(),
+            "Fedora Workstation's range"
+        );
+        assert!(check_firewalld(&open, 40000).is_empty());
+        let trusted = FirewalldZone {
+            name: "trusted".into(),
+            active: true,
+            target: "ACCEPT".into(),
+            ..Default::default()
+        };
+        assert!(check_firewalld(&[trusted], 0).is_empty());
+        assert!(check_firewalld(&[], 0).is_empty(), "firewalld not running");
+    }
+
+    #[test]
+    fn a_random_port_behind_a_closed_zone_asks_for_a_fixed_one() {
+        let zones = parse_firewalld_zones(ZONES);
+        let problems = check_firewalld(&zones, 0);
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0].steps, ["transport.firewalld_closed.step.port"]);
+        assert!(
+            !problems[0].params.contains_key("command"),
+            "discovery is open, and a random port has no number to open"
+        );
+
+        let closed = FirewalldZone {
+            name: "public".into(),
+            active: true,
+            ..Default::default()
+        };
+        let problems = check_firewalld(&[closed], 3838);
+        assert_eq!(
+            problems[0].params["command"],
+            "sudo firewall-cmd --permanent --zone=public --add-port=3838/udp \
+             --add-port=3838/tcp && sudo firewall-cmd --reload"
+        );
+    }
+
+    #[test]
+    fn a_port_a_rich_rule_accepts_counts_as_open() {
+        let listing = "public (active)
+  target: default
+  ports: 55000/tcp 55000/udp
+  rich rules:
+\trule family=\"ipv4\" port port=\"3838\" protocol=\"udp\" accept
+\trule family=\"ipv4\" source address=\"10.0.0.9\" port port=\"22\" protocol=\"tcp\" reject
+";
+        let zones = parse_firewalld_zones(listing);
+        assert_eq!(zones.len(), 1);
+        assert_eq!(zones[0].ports, ["55000/tcp", "55000/udp", "3838/udp"]);
+        assert!(check_firewalld(&zones, 55000).is_empty());
+    }
+
+    #[test]
+    fn only_an_appimage_the_runtime_had_to_unpack_is_reported() {
+        let image = Some("/home/deck/NextGen.AppImage");
+        let unpacked = Some("/tmp/appimage_extracted_6c58ef22f21d7fce44c5a769fac9bf78");
+        assert_eq!(check_appimage_unpacked(image, unpacked, None).len(), 1);
+        assert!(check_appimage_unpacked(image, Some("/tmp/.mount_NextGeAbC123"), None).is_empty());
+        assert!(
+            check_appimage_unpacked(image, unpacked, Some("1")).is_empty(),
+            "chosen"
+        );
+        assert!(check_appimage_unpacked(image, unpacked, Some("yes")).is_empty());
+        assert!(
+            check_appimage_unpacked(None, None, None).is_empty(),
+            "not an AppImage"
+        );
+    }
 
     #[test]
     fn parses_powershell_profiles_numeric_and_string() {
