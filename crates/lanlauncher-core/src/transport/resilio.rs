@@ -758,7 +758,7 @@ impl ResilioClient {
 /// Percent-encode a user info field so a generated password cannot break the
 /// URL apart. Everything outside the unreserved set is escaped, which is
 /// stricter than RFC 3986 needs and always safe.
-fn urlencoding(value: &str) -> String {
+pub(crate) fn urlencoding(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for b in value.bytes() {
         if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {

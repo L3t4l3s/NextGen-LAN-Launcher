@@ -472,6 +472,7 @@ pub fn runas_plan(batch: &Path, cwd: &Path) -> LaunchPlan {
         runner: "runas".into(),
         needs_elevation: false,
         raw_command_line: None,
+        wrapper: Vec::new(),
     }
 }
 
@@ -593,6 +594,7 @@ mod tests {
             raw_command_line: Some(
                 r#"/S /C ""D:\LAN\q3\game_setup.cmd" "D:\LAN\q3" q3 de "Player One"""#.into(),
             ),
+            wrapper: Vec::new(),
         };
         assert_eq!(
             batch_line(&plan),
@@ -602,6 +604,7 @@ mod tests {
             program: PathBuf::from(r"D:\LAN\q3\keygen.exe"),
             args: vec!["a b".into(), "c".into()],
             raw_command_line: None,
+            wrapper: Vec::new(),
             ..plan.clone()
         };
         assert_eq!(batch_line(&exe), r#""D:\LAN\q3\keygen.exe" "a b" c"#);

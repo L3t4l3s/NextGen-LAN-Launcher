@@ -61,10 +61,19 @@ pub struct LaunchSpec {
     pub workdir: Option<String>,
     pub runner: Runner,
     /// Files that must exist after extraction for the install to count as complete.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub required_files: Vec<String>,
     /// Extra environment variables.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    /// Programs the start runs through: `["gamemoderun"]`,
+    /// `["gamescope", "-w", "1280", "-h", "800", "--"]`. Honoured only from
+    /// the user's own and the bundled profiles — a profile from a game share
+    /// or one guessed from `game_start.cmd` must not start host programs.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub wrapper: Vec<String>,
     /// Alternative entry points (e.g. several games in one package).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub alternatives: Vec<Alternative>,
 }
 
@@ -88,10 +97,13 @@ pub struct CopyStep {
 #[serde(default, rename_all = "snake_case")]
 pub struct SetupSpec {
     /// Files copied inside `local/` after extraction.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub copy: Vec<CopyStep>,
     /// Files created empty (e.g. `bin/steam_settings/disable_overlay.txt`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub touch: Vec<String>,
     /// Human-readable notes by language.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub notes: BTreeMap<String, String>,
 }
 
@@ -100,8 +112,15 @@ pub struct SetupSpec {
 pub struct PlatformOverride {
     pub exe: Option<String>,
     pub args: Option<Vec<String>>,
+    /// `""` means the exe's own folder, also when `[launch]` names another.
+    pub workdir: Option<String>,
     pub runner: Option<Runner>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    pub wrapper: Option<Vec<String>>,
+    /// Variables of `[launch].env` this platform goes without.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unset_env: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,8 +140,17 @@ pub struct Manifest {
     /// whatever revisions the notes were written for.
     #[serde(skip)]
     pub exe_from_script: bool,
+    /// The current platform's settings come from the user's own launch
+    /// configuration (`<data>/game-configs/<id>.toml`), laid over the
+    /// profile at load time.
+    #[serde(skip)]
+    pub user_config: bool,
+    /// The package revision the user's configuration was saved with.
+    #[serde(skip)]
+    pub config_revision: Option<String>,
     pub launch: LaunchSpec,
     pub setup: SetupSpec,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub platform: BTreeMap<String, PlatformOverride>,
 }
 
@@ -136,6 +164,55 @@ pub enum ManifestOrigin {
     DerivedFromScript,
 }
 
+impl PlatformOverride {
+    /// Nothing set: a block that changes nothing.
+    pub fn is_empty(&self) -> bool {
+        *self == PlatformOverride::default()
+    }
+
+    /// This block over `below` (the profile's own block for the platform):
+    /// what is set here wins field by field, what is not stays the profile's.
+    /// So a configuration that changes the DLL overrides keeps the exe a
+    /// later release fixes.
+    pub fn layered_on(&self, below: Option<&PlatformOverride>) -> PlatformOverride {
+        let mut out = below.cloned().unwrap_or_default();
+        if self.exe.is_some() {
+            out.exe = self.exe.clone();
+        }
+        if self.args.is_some() {
+            out.args = self.args.clone();
+        }
+        if self.workdir.is_some() {
+            out.workdir = self.workdir.clone();
+        }
+        if self.runner.is_some() {
+            out.runner = self.runner;
+        }
+        if self.wrapper.is_some() {
+            out.wrapper = self.wrapper.clone();
+        }
+        for name in &self.unset_env {
+            out.env.remove(name);
+            if !out.unset_env.contains(name) {
+                out.unset_env.push(name.clone());
+            }
+        }
+        out.env.extend(self.env.clone());
+        out
+    }
+}
+
+/// Log a warning once per key for the whole session: profiles are loaded on
+/// every tick of the install manager, and a line per tick buries the log.
+fn warn_once(key: String, message: impl FnOnce() -> String) {
+    static SEEN: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if !seen.contains(&key) {
+        seen.push(key);
+        log::warn!("{}", message());
+    }
+}
+
 impl Default for Manifest {
     fn default() -> Self {
         Self {
@@ -146,6 +223,8 @@ impl Default for Manifest {
             source: None,
             origin: ManifestOrigin::Bundled,
             exe_from_script: false,
+            user_config: false,
+            config_revision: None,
             launch: LaunchSpec::default(),
             setup: SetupSpec::default(),
             platform: BTreeMap::new(),
@@ -188,6 +267,32 @@ impl Manifest {
         if !self.launch.exe.is_empty() && !is_safe_relative(&self.launch.exe) {
             return Err(err("launch.exe must be relative to local/"));
         }
+        // A working folder may be `local/` itself, but never outside it.
+        // A trailing separator (`bin/`) is the same folder.
+        let workdir_ok = |w: &Option<String>| {
+            w.as_deref().is_none_or(|w| {
+                let w = w.trim_end_matches(['/', '\\']);
+                w.is_empty() || w == "." || is_safe_relative(w)
+            })
+        };
+        if !workdir_ok(&self.launch.workdir) {
+            return Err(err("launch.workdir must be relative to local/"));
+        }
+        for (name, o) in &self.platform {
+            if o.exe
+                .as_deref()
+                .is_some_and(|e| !e.is_empty() && !is_safe_relative(e))
+            {
+                return Err(err(&format!(
+                    "platform.{name}.exe must be relative to local/"
+                )));
+            }
+            if !workdir_ok(&o.workdir) {
+                return Err(err(&format!(
+                    "platform.{name}.workdir must be relative to local/"
+                )));
+            }
+        }
         for a in &self.launch.alternatives {
             if !is_safe_relative(&a.exe) {
                 return Err(err("alternative exe must be relative to local/"));
@@ -225,8 +330,17 @@ impl Manifest {
             if let Some(args) = &o.args {
                 spec.args = args.clone();
             }
+            if let Some(workdir) = &o.workdir {
+                spec.workdir = (!workdir.is_empty()).then(|| workdir.clone());
+            }
+            if let Some(wrapper) = &o.wrapper {
+                spec.wrapper = wrapper.clone();
+            }
             if let Some(r) = o.runner {
                 spec.runner = r;
+            }
+            for name in &o.unset_env {
+                spec.env.remove(name);
             }
             spec.env.extend(o.env.clone());
         }
@@ -244,11 +358,176 @@ impl Manifest {
     }
 }
 
+/// Variables a game share's profile may not set: they make the host load
+/// or run code of the share's choosing directly — a library, a Python
+/// module for Proton's launcher, a Wine server, a Vulkan layer, a GStreamer
+/// plugin — instead of a Windows program inside Wine. Wine is no sandbox,
+/// so this does not make a share's content harmless; it keeps a profile
+/// from adding a way around Wine to whatever the share already ships.
+const HOST_HOOK_ENV: &[&str] = &[
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "LD_AUDIT",
+    "DYLD_INSERT_LIBRARIES",
+    "DYLD_LIBRARY_PATH",
+    "PATH",
+    "PYTHONPATH",
+    "PYTHONHOME",
+    "PYTHONSTARTUP",
+    "WINESERVER",
+    "WINELOADER",
+    "WINEDLLPATH",
+    "VK_ADD_LAYER_PATH",
+    "VK_LAYER_PATH",
+    "VK_ICD_FILENAMES",
+    "VK_DRIVER_FILES",
+    "GST_PLUGIN_PATH",
+    "GST_PLUGIN_PATH_1_0",
+    "GST_PLUGIN_SYSTEM_PATH_1_0",
+    "LIBGL_DRIVERS_PATH",
+    "__EGL_VENDOR_LIBRARY_FILENAMES",
+    "DYLD_FALLBACK_LIBRARY_PATH",
+    "DYLD_FRAMEWORK_PATH",
+    "BASH_ENV",
+    "ENV",
+    "GCONV_PATH",
+    "LIBVA_DRIVERS_PATH",
+    "GTK_PATH",
+    "GTK_MODULES",
+    "GIO_MODULE_DIR",
+    // `cxbottle` is a Perl program.
+    "PERL5LIB",
+    "PERL5OPT",
+    "PERLLIB",
+    "NODE_OPTIONS",
+    "RUBYLIB",
+];
+
+/// A tester's launch configuration for a game: `[platform.<os>]` blocks
+/// only, laid over the profile in force when it is loaded. Kept apart from
+/// the profiles so that a fix to the bundled or organiser profile — notes,
+/// setup steps, another platform — still reaches a machine that has one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "snake_case")]
+pub struct ConfigOverlay {
+    pub schema: u32,
+    pub id: String,
+    /// The package revision it was last saved with: a configuration speaks
+    /// for that package, not for the one an update brings.
+    pub revision: Option<String>,
+    pub platform: BTreeMap<String, PlatformOverride>,
+}
+
+impl Default for ConfigOverlay {
+    fn default() -> Self {
+        Self {
+            schema: 1,
+            id: String::new(),
+            revision: None,
+            platform: BTreeMap::new(),
+        }
+    }
+}
+
+impl ConfigOverlay {
+    pub fn parse(text: &str, path: &Path, game_id: &str) -> Result<Self> {
+        let overlay: ConfigOverlay = toml::from_str(text).map_err(|e| Error::Manifest {
+            path: path.to_path_buf(),
+            message: e.to_string(),
+        })?;
+        if overlay.id != game_id {
+            return Err(Error::Manifest {
+                path: path.to_path_buf(),
+                message: format!(
+                    "configuration id `{}` does not match game `{game_id}`",
+                    overlay.id
+                ),
+            });
+        }
+        // The same path rules as a profile: checked on the profile it makes.
+        let probe = Manifest {
+            id: game_id.to_string(),
+            launch: LaunchSpec {
+                exe: "probe.exe".into(),
+                ..Default::default()
+            },
+            platform: overlay.platform.clone(),
+            ..Default::default()
+        };
+        probe.validate(path)?;
+        Ok(overlay)
+    }
+
+    /// Lay this configuration's block for `platform` over `manifest`'s.
+    pub fn overlay_onto(&self, manifest: &mut Manifest, platform: &str) {
+        if let Some(block) = self.platform.get(platform) {
+            let merged = block.layered_on(manifest.platform.get(platform));
+            manifest.platform.insert(platform.to_string(), merged);
+            manifest.user_config = true;
+            manifest.config_revision = self.revision.clone();
+        }
+    }
+}
+
+impl Manifest {
+    /// Take out of a profile that may not have them, once, where it is
+    /// loaded, everything that reaches the host directly rather than through
+    /// Wine: wrappers, and the variables that load or find host programs and
+    /// libraries. A game share's profile is written by whoever fills the
+    /// share; a game it starts runs inside Wine, a wrapper or `LD_PRELOAD`
+    /// would not. Done here, so no later layer — a configuration without a
+    /// wrapper of its own falls back to `[launch]` — can let one through.
+    fn drop_host_hooks(&mut self) {
+        let hook = |name: &String| HOST_HOOK_ENV.contains(&name.as_str());
+        let mut dropped: Vec<String> = Vec::new();
+        if !self.launch.wrapper.is_empty()
+            || self
+                .platform
+                .values()
+                .any(|o| o.wrapper.as_ref().is_some_and(|w| !w.is_empty()))
+        {
+            dropped.push("wrapper".into());
+        }
+        self.launch.wrapper.clear();
+        dropped.extend(self.launch.env.keys().filter(|n| hook(n)).cloned());
+        self.launch.env.retain(|n, _| !hook(n));
+        for block in self.platform.values_mut() {
+            block.wrapper = None;
+            dropped.extend(block.env.keys().filter(|n| hook(n)).cloned());
+            block.env.retain(|n, _| !hook(n));
+        }
+        if !dropped.is_empty() {
+            let id = self.id.clone();
+            warn_once(format!("share-hooks:{id}"), || {
+                format!(
+                    "{id}: the game share's profile sets {}; not used",
+                    dropped.join(", ")
+                )
+            });
+        }
+    }
+
+    /// Whether this profile may put a host program in front of the start:
+    /// the user's own settings and the bundled profiles may, a profile from a
+    /// game share — written by whoever fills the share — or one guessed from
+    /// `game_start.cmd` may not.
+    pub fn wrapper_is_trusted(&self) -> bool {
+        self.user_config
+            || matches!(
+                self.origin,
+                ManifestOrigin::UserOverride | ManifestOrigin::Bundled
+            )
+    }
+}
+
 /// Loads manifests from a prioritised list of directories.
 #[derive(Debug, Clone, Default)]
 pub struct ManifestStore {
     /// Highest priority first.
     pub dirs: Vec<(PathBuf, ManifestOrigin)>,
+    /// Where the launch configurations from the game details live
+    /// (`<id>.toml`, one [`ConfigOverlay`] each).
+    pub config_dir: Option<PathBuf>,
 }
 
 impl ManifestStore {
@@ -260,7 +539,50 @@ impl ManifestStore {
         if let Some(d) = bundled_dir {
             dirs.push((d, ManifestOrigin::Bundled));
         }
-        Self { dirs }
+        Self {
+            dirs,
+            config_dir: None,
+        }
+    }
+
+    pub fn with_config_dir(mut self, dir: PathBuf) -> Self {
+        self.config_dir = Some(dir);
+        self
+    }
+
+    /// The file a game's launch configuration is stored in.
+    pub fn config_path(&self, game_id: &str) -> Option<PathBuf> {
+        if !crate::catalog::GAME_ID_RE.is_match(game_id) {
+            return None;
+        }
+        Some(self.config_dir.as_ref()?.join(format!("{game_id}.toml")))
+    }
+
+    /// A game's launch configuration for changing it: `Ok(None)` only when
+    /// there is none. A file that exists but does not read is an error —
+    /// writing over it would drop whatever else it held.
+    pub fn load_config_for_update(&self, game_id: &str) -> Result<Option<ConfigOverlay>> {
+        let Some(path) = self.config_path(game_id) else {
+            return Ok(None);
+        };
+        match std::fs::read_to_string(&path) {
+            Ok(text) => ConfigOverlay::parse(&text, &path, game_id).map(Some),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(Error::io(&path, e)),
+        }
+    }
+
+    /// A game's launch configuration, if one was saved and still reads.
+    pub fn load_config(&self, game_id: &str) -> Option<ConfigOverlay> {
+        let path = self.config_path(game_id)?;
+        let text = std::fs::read_to_string(&path).ok()?;
+        ConfigOverlay::parse(&text, &path, game_id)
+            .inspect_err(|e| {
+                warn_once(format!("config:{game_id}"), || {
+                    format!("launch configuration for {game_id} ignored: {e}")
+                })
+            })
+            .ok()
     }
 
     /// Resolve the manifest for a game. `share_dir` is checked for an
@@ -294,6 +616,9 @@ impl ManifestStore {
                     });
                 }
                 m.origin = origin;
+                if origin == ManifestOrigin::ShareOverlay {
+                    m.drop_host_hooks();
+                }
                 return Ok(Some(m));
             }
         }
@@ -307,6 +632,31 @@ impl ManifestStore {
     /// the UI and the install manager resolve through this, so "what starts"
     /// and "can it start" never disagree.
     pub fn resolve_for(&self, game_id: &str, paths: &crate::paths::GamePaths) -> Option<Manifest> {
+        let profile = self.resolve_profile_for(game_id, paths);
+        let platform = Manifest::current_platform();
+        // The tester's own settings for this platform, over whatever profile
+        // applies — or as the only one, for a game nobody profiled yet.
+        match self.load_config(game_id) {
+            Some(config) if config.platform.contains_key(platform) => {
+                let mut m = profile.unwrap_or_else(|| Manifest {
+                    id: game_id.to_string(),
+                    origin: ManifestOrigin::UserOverride,
+                    ..Default::default()
+                });
+                config.overlay_onto(&mut m, platform);
+                Some(m)
+            }
+            _ => profile,
+        }
+    }
+
+    /// [`Self::resolve_for`] without the user's launch configuration: the
+    /// profile that configuration is laid over and compared against.
+    pub fn resolve_profile_for(
+        &self,
+        game_id: &str,
+        paths: &crate::paths::GamePaths,
+    ) -> Option<Manifest> {
         let from_script = || {
             std::fs::read_to_string(&paths.start_script)
                 .ok()
@@ -371,6 +721,62 @@ impl ManifestStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A game share's profile loses its wrappers where it is loaded: a
+    /// configuration of the tester's without a wrapper of its own must not
+    /// fall back to the share's.
+    #[test]
+    fn a_share_profile_cannot_bring_a_wrapper_along() {
+        let share = tempfile::tempdir().unwrap();
+        std::fs::write(
+            share.path().join(SHARE_MANIFEST_FILE),
+            "schema = 1\nid = \"g\"\n[launch]\nexe = \"a.exe\"\nwrapper = [\"/tmp/x\"]\n\
+             [launch.env]\nLD_PRELOAD = \"x.so\"\nDXVK_HUD = \"1\"\n\
+             [platform.linux]\nwrapper = [\"/tmp/y\"]\n[platform.linux.env]\nPATH = \"/evil\"\n",
+        )
+        .unwrap();
+        let store = ManifestStore::new(None, None);
+        let mut m = store.resolve("g", Some(share.path())).unwrap().unwrap();
+        assert_eq!(m.origin, ManifestOrigin::ShareOverlay);
+        assert!(m.launch.wrapper.is_empty());
+        assert!(m.launch_for("linux").wrapper.is_empty());
+        let env = m.launch_for("linux").env;
+        assert_eq!(
+            env.keys().collect::<Vec<_>>(),
+            ["DXVK_HUD"],
+            "only what stays inside Wine"
+        );
+        // Even with the tester's own block on top, nothing comes back.
+        ConfigOverlay {
+            id: "g".into(),
+            platform: BTreeMap::from([("linux".into(), PlatformOverride::default())]),
+            ..Default::default()
+        }
+        .overlay_onto(&mut m, "linux");
+        assert!(m.wrapper_is_trusted());
+        assert!(m.launch_for("linux").wrapper.is_empty());
+    }
+
+    #[test]
+    fn platform_paths_outside_local_are_refused() {
+        let base = "schema = 1\nid = \"g\"\n[launch]\nexe = \"a.exe\"\n";
+        for bad in [
+            "[platform.linux]\nexe = \"../a.exe\"\n",
+            "[platform.linux]\nworkdir = \"/etc\"\n",
+            "[launch.env]\n[platform.macos]\nworkdir = \"../..\"\n",
+        ] {
+            let text = format!("{base}{bad}");
+            assert!(
+                Manifest::parse(&text, Path::new("g.toml")).is_err(),
+                "{bad}"
+            );
+        }
+        let fine =
+            format!("{base}[platform.linux]\nworkdir = \".\"\nwrapper = [\"gamemoderun\"]\n");
+        let m = Manifest::parse(&fine, Path::new("g.toml")).unwrap();
+        assert_eq!(m.launch_for("linux").wrapper, ["gamemoderun"]);
+        assert!(m.launch_for("macos").wrapper.is_empty());
+    }
 
     const GOLDSRC: &str = r#"
 schema = 1

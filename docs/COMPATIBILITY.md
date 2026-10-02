@@ -100,6 +100,7 @@ workdir = "hl-cs16"                    # optional
 runner = "auto"                        # auto | wine | crossover | proton | native
 required_files = ["hl-cs16/hl.exe"]    # install counts as complete only if these exist
 env = {}
+wrapper = []                           # programs in front of the start, e.g. ["gamemoderun"]
 
 [[launch.alternatives]]
 name = "Half-Life"
@@ -115,7 +116,46 @@ notes.en = "…"
 [platform.macos]
 runner = "crossover"
 args = ["-window"]
+
+[platform.linux]                       # exe, args, workdir, runner, env, wrapper, unset_env
+runner = "proton"
+workdir = ""                           # "" = the exe's own folder, whatever [launch] says
+wrapper = ["gamescope", "-w", "1280", "-h", "800", "--"]
+env = { WINEDLLOVERRIDES = "dinput8=n,b", PROTON_USE_WINED3D = "1" }
+unset_env = ["WINEDEBUG"]              # variables of [launch].env this platform goes without
 ```
+
+`[platform.<os>]` replaces `exe`, `args`, `workdir`, `runner` and `wrapper` of `[launch]`, removes
+the names in `unset_env` from its `env` and adds its own. Windows never reads these profiles; it
+runs `game_start.cmd`.
+
+`wrapper` is honoured only from the user's own configuration and profiles and the bundled ones.
+A profile from a game share (`nll-manifest.toml`) loses every wrapper where it is loaded, together
+with the variables that load or find host programs and libraries (`LD_PRELOAD`,
+`PATH`, `PYTHONPATH`, `WINESERVER`, Vulkan layer and GStreamer plugin paths, … — `HOST_HOOK_ENV`);
+one derived from `game_start.cmd` never has any. That keeps a profile from adding a way around
+Wine; it does not make a share's content harmless — Wine is no sandbox, and a game from the share
+can reach the host on its own. The wrapper is applied at spawn time (`LaunchPlan::wrapper`); `program` stays
+the Wine/Proton/CrossOver the plan runs.
+
+### Launch configurations from testers
+
+The game details on macOS and Linux offer a **launch configuration** editor (executable,
+arguments, working folder, compatibility layer, wrapper, DLL overrides, environment). It saves a
+`[platform.<os>]` block to `<data dir>/game-configs/<id>.toml` (`ConfigOverlay`, with the package
+revision it was saved for). The block holds only what differs from the profile, and
+`ManifestStore::resolve_for` lays it over the profile's own block field by field — so a fix to the
+bundled or organiser profile still arrives for everything the tester left alone — or uses it alone
+for a game without a profile (`game_config.rs`). A block that changes nothing is removed. The
+configuration counts as verified only for the installed package revision it was saved with, and
+"choose executable" writes into it when there is one (in the receipt, a choice would start bare).
+"Works – share it" sends the profile in force with that block, as it starts (an executable chosen
+in the receipt included), plus the test context (launcher version, OS, device, CPU, GPU, the tool
+the last start ran with): by mail to `game_config::REPORT_EMAIL`, as a GitHub issue, to the
+clipboard or to a file chosen in the system's save dialog. The mail and issue links carry only the
+`[platform.<os>]` block (a URL has a length limit); copy and file carry the whole profile. The
+profile's `revisions` stay as they were — the tested revision is in the report's text. A maintainer takes the `[platform.<os>]` block into
+`manifests/<id>.toml` for the next release.
 
 Resolution order: `<data dir>/manifests/<id>.toml` (user) → `<share>/nll-manifest.toml`
 (organiser) → bundled → derived from `game_start.cmd` (`script_probe.rs`).

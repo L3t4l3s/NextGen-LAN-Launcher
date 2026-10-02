@@ -88,6 +88,8 @@ pub struct ManifestInfo {
     pub alternatives: Vec<String>,
     pub notes: Option<String>,
     pub verified_for_revision: bool,
+    /// The tester's own launch configuration is laid over the profile.
+    pub own_config: bool,
 }
 
 #[derive(Serialize)]
@@ -124,8 +126,15 @@ fn manifest_info(m: &Manifest, revision: &str, lang: &str) -> ManifestInfo {
         // not confirmed for this package, whatever revisions its notes name.
         // A manifest that is *only* the script says so in its origin line
         // already, so it does not get the warning on top.
-        verified_for_revision: m.matches_revision(revision)
-            && !(m.exe_from_script && m.origin != ManifestOrigin::DerivedFromScript),
+        // The tester's own settings are verified by the tester — for the
+        // package they were saved with, not for the one an update brought.
+        verified_for_revision: if m.user_config {
+            m.config_revision.as_deref() == Some(revision)
+        } else {
+            m.matches_revision(revision)
+                && !(m.exe_from_script && m.origin != ManifestOrigin::DerivedFromScript)
+        },
+        own_config: m.user_config,
     }
 }
 
@@ -214,7 +223,15 @@ pub async fn get_games(state: State<'_, Arc<AppState>>) -> Cmd<Vec<GameView>> {
             status: statuses.get(&g.id).cloned(),
             manifest: manifest
                 .as_ref()
-                .map(|m| manifest_info(m, &g.revision, &lang)),
+                // A tester's configuration speaks for the package that is
+                // installed, which is not the catalog's while an update waits.
+                .map(|m| {
+                    let installed = statuses
+                        .get(&g.id)
+                        .and_then(|s| s.installed_revision.as_deref())
+                        .unwrap_or(&g.revision);
+                    manifest_info(m, installed, &lang)
+                }),
             disabled_by_event: event
                 .config
                 .as_ref()
@@ -666,7 +683,7 @@ pub async fn play_game(
     log::info!(
         "starting {game_id} via {}{prefix}: {} {}",
         plan.runner,
-        plan.program.display(),
+        plan.command_display(),
         attempt.command_line
     );
     // With capture the script's console stays empty and everything it prints
@@ -859,14 +876,59 @@ pub async fn set_exe_override(
     if !lanlauncher_core::manifest::is_safe_relative(&exe) {
         return Err("err.invalid_path".into());
     }
-    let settings = state.settings.read().await;
-    let paths = settings
+    let paths = state
+        .settings
+        .read()
+        .await
         .library
         .game_paths(&game_id)
         .ok_or("err.no_library")?;
-    let mut receipt = Receipt::load(&paths.receipt).ok_or("err.not_installed")?;
-    receipt.exe_override = Some(exe);
-    receipt.save(&paths.receipt).map_err(err)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || -> Cmd<()> {
+        let _one_at_a_time = state.config_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut receipt = Receipt::load(&paths.receipt).ok_or("err.not_installed")?;
+        // With a launch configuration of the tester's on this platform, the
+        // choice goes into it — and starts the way a choice in the receipt
+        // does, bare: the configuration's arguments and folder were for
+        // another executable. In the receipt it would win at start and
+        // ignore the configuration altogether.
+        let platform = Manifest::current_platform();
+        let config = match cfg!(windows) {
+            true => None,
+            // An unreadable configuration is not in force: the receipt, as
+            // before there were configurations.
+            false => state
+                .manifests
+                .load_config_for_update(&game_id)
+                .ok()
+                .flatten()
+                .filter(|c| c.platform.contains_key(platform)),
+        };
+        if let Some(mut config) = config {
+            let path = state
+                .manifests
+                .config_path(&game_id)
+                .ok_or("err.unknown_game")?;
+            let mut block = config.platform.remove(platform).unwrap_or_default();
+            block.exe = Some(exe);
+            block.args = Some(Vec::new());
+            block.workdir = Some(String::new());
+            let text = lanlauncher_core::game_config::updated_overlay(
+                Some(config),
+                &game_id,
+                platform,
+                Some(block),
+                &receipt.revision,
+            )
+            .map_err(|e| e.0)?;
+            write_config(&path, text)?;
+            return clear_exe_override(&paths);
+        }
+        receipt.exe_override = Some(exe);
+        receipt.save(&paths.receipt).map_err(err)
+    })
+    .await
+    .map_err(err)?
 }
 
 #[tauri::command]
@@ -1278,7 +1340,9 @@ pub async fn open_url(app: tauri::AppHandle, url: String) -> Cmd<()> {
         || url.starts_with("ts3server://")
         || url.starts_with("dchub://")
         || url.starts_with("adc://")
-        || url.starts_with("adcs://"))
+        || url.starts_with("adcs://")
+        // The "send by mail" button of the launch configuration.
+        || url.starts_with("mailto:"))
     {
         return Err("err.unsupported_link".into());
     }
@@ -1401,4 +1465,329 @@ async fn restart_transport_locked(state: &Arc<AppState>) -> Cmd<()> {
 #[tauri::command]
 pub async fn restart_transport(state: State<'_, Arc<AppState>>) -> Cmd<()> {
     restart_transport_inner(&state).await
+}
+
+/// What the launch-configuration editor in the game details starts from.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameConfigView {
+    pub config: lanlauncher_core::game_config::GameConfig,
+    /// The tester's own configuration is in force on this platform.
+    pub own: bool,
+    /// The saved configuration exists but does not read; only a reset
+    /// clears it.
+    pub config_error: Option<String>,
+    /// Executables inside `local/` to choose from.
+    pub executables: Vec<String>,
+    pub platform: &'static str,
+    /// The address the "send by mail" button writes to.
+    pub report_email: &'static str,
+}
+
+/// The game and its paths, from one settings copy.
+async fn game_and_paths(
+    state: &AppState,
+    game_id: &str,
+) -> Cmd<(Game, lanlauncher_core::paths::GamePaths)> {
+    let game = state
+        .catalog()
+        .await
+        .game(game_id)
+        .cloned()
+        .ok_or("err.unknown_game")?;
+    let paths = state
+        .settings
+        .read()
+        .await
+        .library
+        .game_paths(game_id)
+        .ok_or("err.no_library")?;
+    Ok((game, paths))
+}
+
+/// The package a tester actually ran: the installed one, which is not the
+/// catalog's while an update is pending.
+fn installed_revision(game: &Game, paths: &lanlauncher_core::paths::GamePaths) -> String {
+    Receipt::load(&paths.receipt)
+        .map(|r| r.revision)
+        .filter(|r| !r.is_empty())
+        .unwrap_or_else(|| game.revision.clone())
+}
+
+/// The game, its paths and the profile in force (with the tester's
+/// configuration laid over it), from one settings copy.
+async fn config_basis(
+    state: &AppState,
+    game_id: &str,
+) -> Cmd<(Game, lanlauncher_core::paths::GamePaths, Option<Manifest>)> {
+    let (game, paths) = game_and_paths(state, game_id).await?;
+    let manifest = resolve_manifest(state, &game, Some(&paths));
+    Ok((game, paths, manifest))
+}
+
+/// What starts now, as the editor's configuration: the receipt's executable
+/// choice included, since it wins at start.
+fn config_in_force(
+    manifest: Option<&Manifest>,
+    paths: &lanlauncher_core::paths::GamePaths,
+) -> lanlauncher_core::game_config::GameConfig {
+    let receipt = Receipt::load(&paths.receipt);
+    lanlauncher_core::game_config::GameConfig::from_manifest(
+        manifest,
+        Manifest::current_platform(),
+        receipt.as_ref().and_then(|r| r.exe_override.as_deref()),
+    )
+}
+
+#[tauri::command]
+pub async fn get_game_config(
+    state: State<'_, Arc<AppState>>,
+    game_id: String,
+) -> Cmd<GameConfigView> {
+    let (_, paths, manifest) = config_basis(&state, &game_id).await?;
+    let state_manifests = state.manifests.clone();
+    tauri::async_runtime::spawn_blocking(move || GameConfigView {
+        config: config_in_force(manifest.as_ref(), &paths),
+        own: manifest.as_ref().is_some_and(|m| m.user_config),
+        config_error: state_manifests
+            .load_config_for_update(&game_id)
+            .err()
+            .map(|e| e.to_string()),
+        executables: launch::list_executables(&paths, 200),
+        platform: Manifest::current_platform(),
+        report_email: lanlauncher_core::game_config::REPORT_EMAIL,
+    })
+    .await
+    .map_err(err)
+}
+
+/// Write a game's configuration file, or remove it when `text` is `None`.
+fn write_config(path: &std::path::Path, text: Option<String>) -> Cmd<()> {
+    let failed = |e: std::io::Error| format!("err.config_write|{e}");
+    match text {
+        Some(text) => {
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir).map_err(failed)?;
+            }
+            let staging = path.with_extension("toml.tmp");
+            std::fs::write(&staging, text).map_err(failed)?;
+            std::fs::rename(&staging, path).map_err(failed)
+        }
+        None => match std::fs::remove_file(path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(failed(e)),
+            _ => Ok(()),
+        },
+    }
+}
+
+/// Store the editor's settings as this platform's block of the game's
+/// configuration (`<data>/game-configs/<id>.toml`), laid over the profile.
+#[tauri::command]
+pub async fn save_game_config(
+    state: State<'_, Arc<AppState>>,
+    game_id: String,
+    config: lanlauncher_core::game_config::GameConfig,
+) -> Cmd<bool> {
+    let (game, paths) = game_and_paths(&state, &game_id).await?;
+    let state = state.inner().clone();
+    // Reading profiles, the receipt and the configuration: a blocking thread.
+    tauri::async_runtime::spawn_blocking(move || -> Cmd<bool> {
+        let _one_at_a_time = state.config_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let platform = Manifest::current_platform();
+        // Compared against the profile alone: the block keeps only what the
+        // tester changed, everything else stays the profile's.
+        let profile = state.manifests.resolve_profile_for(&game_id, &paths);
+        let block = config
+            .to_block(profile.as_ref(), &game_id, platform)
+            .map_err(|e| e.0)?;
+        let path = state
+            .manifests
+            .config_path(&game_id)
+            .ok_or("err.unknown_game")?;
+        let current = state
+            .manifests
+            .load_config_for_update(&game_id)
+            .map_err(|e| format!("err.config_unreadable|{e}"))?;
+        // A block that changes nothing leaves no configuration behind on
+        // this platform, whatever other platforms the file still holds.
+        let own = !block.is_empty();
+        let text = lanlauncher_core::game_config::updated_overlay(
+            current,
+            &game_id,
+            platform,
+            Some(block),
+            &installed_revision(&game, &paths),
+        )
+        .map_err(|e| e.0)?;
+        write_config(&path, text)?;
+        // The editor showed the receipt's executable choice as its exe and
+        // has now saved it into the configuration. Left in the receipt it
+        // would win over whatever the tester picks next. Saving again
+        // repeats both steps, so a failure here is fixed by the next save;
+        // it is reported as what it is, not as "not saved".
+        clear_exe_override(&paths)?;
+        log::info!(
+            "saved launch configuration for {game_id} to {}",
+            path.display()
+        );
+        Ok(own)
+    })
+    .await
+    .map_err(err)?
+}
+
+/// Remove an executable choice from the receipt, where it would win over
+/// the launch configuration at start.
+fn clear_exe_override(paths: &lanlauncher_core::paths::GamePaths) -> Cmd<()> {
+    if let Some(mut receipt) = Receipt::load(&paths.receipt) {
+        if receipt.exe_override.take().is_some() {
+            receipt
+                .save(&paths.receipt)
+                .map_err(|e| format!("err.config_receipt|{e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Drop this platform's configuration; the profile applies again.
+#[tauri::command]
+pub async fn reset_game_config(state: State<'_, Arc<AppState>>, game_id: String) -> Cmd<()> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || -> Cmd<()> {
+        let _one_at_a_time = state.config_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let path = state
+            .manifests
+            .config_path(&game_id)
+            .ok_or("err.unknown_game")?;
+        // A file that does not read is what "reset" is for: it goes.
+        let Ok(current) = state.manifests.load_config_for_update(&game_id) else {
+            log::warn!(
+                "removing unreadable launch configuration {}",
+                path.display()
+            );
+            return write_config(&path, None);
+        };
+        let text = lanlauncher_core::game_config::updated_overlay(
+            current,
+            &game_id,
+            Manifest::current_platform(),
+            None,
+            "",
+        )
+        .map_err(|e| e.0)?;
+        write_config(&path, text)
+    })
+    .await
+    .map_err(err)?
+}
+
+/// The report for sending what starts now: the profile with this
+/// platform's settings in it, the test context and a tester's note.
+#[tauri::command]
+pub async fn share_game_config(
+    state: State<'_, Arc<AppState>>,
+    game_id: String,
+    comment: String,
+) -> Cmd<lanlauncher_core::game_config::Report> {
+    use lanlauncher_core::game_config;
+    let (game, paths, manifest) = config_basis(&state, &game_id).await?;
+    let platform = Manifest::current_platform();
+    // Built from what starts — the receipt's executable choice included,
+    // and an exe the start script chose for a guidance-only profile: that is
+    // what ran, and the maintainer learns it worked. The block goes onto the
+    // profile as shipped, so `[launch]` stays free of those guesses.
+    let in_force = config_in_force(manifest.as_ref(), &paths);
+    // A shipped profile that does not load is the tester's to hear about:
+    // a profile built from nothing would go out as if it were the whole one.
+    let shipped = state
+        .manifests
+        .resolve(&game_id, Some(&paths.share_dir))
+        .map_err(|e| format!("err.config_profile|{e}"))?;
+    let shared = match in_force.to_block(shipped.as_ref(), &game_id, platform) {
+        Ok(block) => {
+            game_config::with_block(shipped.as_ref(), &game_id, &game.title, platform, &block)
+        }
+        // Nothing that starts (a guidance-only profile with no executable):
+        // the profile as shipped, never one with this machine's guesses.
+        Err(e) if e.0 == "err.config_exe_missing" => shipped.unwrap_or_else(|| Manifest {
+            id: game_id.clone(),
+            title: Some(game.title.clone()),
+            ..Default::default()
+        }),
+        // Anything else is a configuration that does not load: the tester
+        // has to hear about it, not get the shipped profile sent instead.
+        Err(e) => return Err(e.0),
+    };
+    let revision = installed_revision(&game, &paths);
+    // The links carry the platform's block as it belongs in the profile.
+    let block = shared
+        .platform
+        .get(platform)
+        .and_then(|b| game_config::block_toml(&game_id, platform, b).ok());
+    let toml = game_config::to_toml(&shared).map_err(|e| e.0)?;
+    // The tool the game ran with, from its last start; only without one is
+    // a plan built for it — that searches every Steam library.
+    let last = state
+        .last_launch
+        .read()
+        .await
+        .as_ref()
+        .filter(|attempt| attempt.game_id == game_id && attempt.what == "play")
+        .map(|attempt| attempt.runner.clone());
+    let runner = match last {
+        Some(runner) => runner,
+        None => build_plan(&state, &game_id, None)
+            .await
+            .map(|plan| plan.runner)
+            .unwrap_or_default(),
+    };
+    let version = crate::app_version();
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = game_config::this_machine(&version, &runner);
+        game_config::report(
+            &game_id,
+            &game.title,
+            &revision,
+            &toml,
+            block.as_deref(),
+            &context,
+            &comment,
+        )
+    })
+    .await
+    .map_err(err)
+}
+
+/// Save a report's profile where the tester picks in the system's save
+/// dialog. The path never comes from the web view: it may only name the
+/// file name to suggest, so no page can write a file of its choosing.
+#[tauri::command]
+pub async fn export_game_config(
+    app: tauri::AppHandle,
+    file_name: String,
+    contents: String,
+) -> Cmd<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    let suggested = std::path::Path::new(&file_name)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "game-config.toml".into());
+    tauri::async_runtime::spawn_blocking(move || -> Cmd<Option<String>> {
+        let Some(chosen) = app
+            .dialog()
+            .file()
+            .set_file_name(&suggested)
+            .add_filter("TOML", &["toml"])
+            .blocking_save_file()
+        else {
+            return Ok(None);
+        };
+        let path = chosen
+            .into_path()
+            .map_err(|e| format!("err.config_write|{e}"))?;
+        std::fs::write(&path, contents).map_err(|e| format!("err.config_write|{e}"))?;
+        Ok(Some(path.display().to_string()))
+    })
+    .await
+    .map_err(err)?
 }

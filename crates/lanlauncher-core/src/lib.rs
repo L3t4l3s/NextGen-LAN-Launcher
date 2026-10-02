@@ -22,6 +22,7 @@ pub mod catalog;
 pub mod diagnostics;
 pub mod error;
 pub mod extract;
+pub mod game_config;
 pub mod graphics;
 pub mod install;
 pub mod lanpage;

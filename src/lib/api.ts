@@ -3,8 +3,11 @@
 
 import type {
   BootstrapInfo,
+  ConfigReport,
   Extra,
   FixAction,
+  GameConfig,
+  GameConfigView,
   GameStatus,
   GameView,
   LaunchAttempt,
@@ -63,6 +66,13 @@ export const api = {
     invoke<void>("set_game_runner", { gameId, program, kind }),
   listExecutables: (gameId: string) => invoke<string[]>("list_executables", { gameId }),
   setExeOverride: (gameId: string, exe: string) => invoke<void>("set_exe_override", { gameId, exe }),
+  gameConfig: (gameId: string) => invoke<GameConfigView>("get_game_config", { gameId }),
+  /** Whether a configuration of the user's is in force afterwards. */
+  saveGameConfig: (gameId: string, config: GameConfig) => invoke<boolean>("save_game_config", { gameId, config }),
+  resetGameConfig: (gameId: string) => invoke<void>("reset_game_config", { gameId }),
+  shareGameConfig: (gameId: string, comment: string) => invoke<ConfigReport>("share_game_config", { gameId, comment }),
+  /** Opens the system's save dialog; the saved path, or null when cancelled. */
+  exportGameConfig: (fileName: string, contents: string) => invoke<string | null>("export_game_config", { fileName, contents }),
   settings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { settings }),
   diagnostics: () => invoke<Report>("run_diagnostics"),

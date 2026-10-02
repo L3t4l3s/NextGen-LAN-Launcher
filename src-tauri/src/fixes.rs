@@ -50,6 +50,7 @@ pub(crate) async fn run_admin_lines_at(
             runner: stem.into(),
             needs_elevation: false,
             raw_command_line: Some(format!("/S /C \"\"{}\"\"", batch.display())),
+            wrapper: Vec::new(),
         }
     } else {
         log::info!("{stem}: asking for administrator rights (UAC)");

@@ -170,6 +170,32 @@ fn dirs_home() -> Option<PathBuf> {
 }
 
 pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
+    let mut plan = plan_without_wrapper(ctx)?;
+    // A `.app` starts through `open`, which hands it to launchd and exits at
+    // once: a wrapper would wrap `open`, never the game.
+    if plan.program != Path::new("/usr/bin/open") {
+        plan.wrapper = trusted_wrapper(ctx.manifest);
+    }
+    Ok(plan)
+}
+
+/// The profile's wrapper, from a profile allowed to start host programs:
+/// the user's own and the bundled ones. One from a game share comes from
+/// whoever fills the share, one guessed from `game_start.cmd` from a script
+/// that was never written for this; neither may put a program of their
+/// choosing in front of the start.
+fn trusted_wrapper(manifest: Option<&crate::manifest::Manifest>) -> Vec<String> {
+    use crate::manifest::Manifest;
+    manifest
+        .filter(|m| m.wrapper_is_trusted())
+        .map(|m| m.launch_for(Manifest::current_platform()).wrapper)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|word| !word.is_empty())
+        .collect()
+}
+
+fn plan_without_wrapper(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
     let (exe, args, cwd, wanted) = resolve_exe(ctx)?;
     if !exe.exists() {
         return Err(Error::Launch(format!(
@@ -205,6 +231,7 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
                 runner: "native (.app)".into(),
                 needs_elevation: false,
                 raw_command_line: None,
+                wrapper: Vec::new(),
             });
         }
         return Ok(LaunchPlan {
@@ -215,6 +242,7 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
             runner: "native".into(),
             needs_elevation: false,
             raw_command_line: None,
+            wrapper: Vec::new(),
         });
     }
 
@@ -281,6 +309,7 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
                 runner: chosen.label,
                 needs_elevation: false,
                 raw_command_line: None,
+                wrapper: Vec::new(),
             })
         }
         Runner::Proton => {
@@ -312,6 +341,7 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
                 runner: chosen.label,
                 needs_elevation: false,
                 raw_command_line: None,
+                wrapper: Vec::new(),
             })
         }
         _ => {
@@ -332,6 +362,7 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
                 runner: chosen.label,
                 needs_elevation: false,
                 raw_command_line: None,
+                wrapper: Vec::new(),
             })
         }
     }
@@ -641,6 +672,67 @@ mod tests {
         assert!(env["STEAM_COMPAT_DATA_PATH"].ends_with(".nll-prefix"));
     }
 
+    /// A wrapper goes in front of the start from the user's own or a bundled
+    /// profile, never from a game share's; the tool the plan runs stays
+    /// `program`, so the prefix record and `cxbottle` still see Wine.
+    #[test]
+    fn a_wrapper_comes_only_from_a_trusted_profile_and_leaves_the_tool_alone() {
+        use crate::manifest::{ManifestOrigin, PlatformOverride};
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = GamePaths::new(tmp.path(), "g");
+        std::fs::create_dir_all(paths.local_dir.join("bin")).unwrap();
+        std::fs::write(paths.local_dir.join("bin/game.exe"), "").unwrap();
+        let wine = tmp.path().join("wine");
+        std::fs::write(&wine, "").unwrap();
+        let mut settings = Settings::default();
+        settings.runner_paths.wine = Some(wine.clone());
+        let mut m = Manifest {
+            id: "g".into(),
+            launch: LaunchSpec {
+                exe: "bin/game.exe".into(),
+                runner: Runner::Wine,
+                wrapper: vec!["gamemoderun".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        m.platform.insert(
+            Manifest::current_platform().into(),
+            PlatformOverride {
+                wrapper: Some(vec!["gamescope".into(), "-f".into(), "--".into()]),
+                workdir: Some("bin".into()),
+                ..Default::default()
+            },
+        );
+        let plan_from = |origin| {
+            let mut m = m.clone();
+            m.origin = origin;
+            plan(&LaunchContext {
+                paths: &paths,
+                game_id: "g",
+                settings: &settings,
+                manifest: Some(&m),
+                receipt: None,
+                alternative: None,
+            })
+            .unwrap()
+        };
+
+        let own = plan_from(ManifestOrigin::UserOverride);
+        assert_eq!(
+            own.wrapper,
+            ["gamescope", "-f", "--"],
+            "the platform's wins"
+        );
+        assert!(same_program(&own.program, &wine));
+        assert_eq!(own.cwd, paths.local_dir.join("bin"));
+        assert_eq!(plan_from(ManifestOrigin::Bundled).wrapper.len(), 3);
+        assert!(plan_from(ManifestOrigin::ShareOverlay).wrapper.is_empty());
+        assert!(plan_from(ManifestOrigin::DerivedFromScript)
+            .wrapper
+            .is_empty());
+    }
+
     #[test]
     fn native_and_wine_plans() {
         let tmp = tempfile::tempdir().unwrap();
@@ -827,6 +919,7 @@ mod tests {
                 runner: "Wine".into(),
                 needs_elevation: false,
                 raw_command_line: None,
+                wrapper: Vec::new(),
             };
             remember_default_prefix_user(&plan, &paths, "g", existed_before);
             std::fs::create_dir_all(prefix_dir(&paths.share_dir).join("drive_c")).unwrap();
@@ -915,6 +1008,7 @@ mod tests {
             runner: "Proton".into(),
             needs_elevation: false,
             raw_command_line: None,
+            wrapper: Vec::new(),
         };
         let existed = own_prefix_exists_before_start(&plan, &paths, "g");
         assert!(existed, "a trailing slash names the same folder");
@@ -947,6 +1041,7 @@ mod tests {
             runner: "Proton".into(),
             needs_elevation: false,
             raw_command_line: None,
+            wrapper: Vec::new(),
         };
         let existed = own_prefix_exists_before_start(&plan, &paths, "g");
         assert!(existed);

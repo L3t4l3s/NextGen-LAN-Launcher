@@ -1488,7 +1488,8 @@ pub fn run() {
             let bundled_manifests =
                 bundled_dir(resource_dir.as_deref(), "manifests", "../manifests");
             let manifests =
-                ManifestStore::new(Some(dirs.data.join("manifests")), bundled_manifests);
+                ManifestStore::new(Some(dirs.data.join("manifests")), bundled_manifests)
+                    .with_config_dir(dirs.data.join("game-configs"));
             let bundled_covers = bundled_dir(resource_dir.as_deref(), "covers", "../assets/covers");
             match &bundled_covers {
                 Some(p) => {
@@ -1523,6 +1524,7 @@ pub fn run() {
                 transport_error: RwLock::new(None),
                 catalog_sig: std::sync::Mutex::new(CatalogSig::default()),
                 catalog_reload: tokio::sync::Mutex::new(()),
+                config_lock: std::sync::Mutex::new(()),
                 runner_choice: tokio::sync::Mutex::new(()),
                 startup_catalog: RwLock::new(None),
             });
@@ -1552,6 +1554,11 @@ pub fn run() {
             commands::list_executables,
             commands::set_exe_override,
             commands::get_settings,
+            commands::get_game_config,
+            commands::save_game_config,
+            commands::reset_game_config,
+            commands::share_game_config,
+            commands::export_game_config,
             commands::save_settings,
             commands::frontend_ready,
             commands::get_last_launch,

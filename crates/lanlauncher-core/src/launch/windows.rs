@@ -41,6 +41,7 @@ pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
         runner: "game_start.cmd".into(),
         needs_elevation,
         raw_command_line: Some(format!("/S /C {raw}")),
+        wrapper: Vec::new(),
     })
 }
 
@@ -123,6 +124,7 @@ fn script_plan(
         runner,
         needs_elevation: true,
         raw_command_line: Some(format!("/S /C {raw}")),
+        wrapper: Vec::new(),
     })
 }
 
