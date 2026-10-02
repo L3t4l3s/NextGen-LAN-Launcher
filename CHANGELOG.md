@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- macOS/Linux: In den Spieldetails gibt es eine **Startkonfiguration**: Startdatei, Argumente,
+  Arbeitsordner, Kompatibilitätsschicht, vorangestellte Programme (z. B. `gamemoderun`,
+  `gamescope`), DLL-Overrides und Umgebungsvariablen. Sie wird pro Spiel und Plattform
+  gespeichert und über das Profil gelegt, Verbesserungen am Profil kommen also weiterhin an. Läuft ein Spiel damit, schickt „Funktioniert – teilen“ das Profil samt
+  Angaben zum Rechner per Mail an launcher@schimnick.de, als GitHub-Issue, in die Zwischenablage
+  oder in eine Datei, damit es ins nächste Release kommt.
+- Profile kennen `wrapper` sowie `workdir`, `wrapper` und `unset_env` je Plattform. Vorangestellte Programme
+  gelten nur aus eigenen und mitgelieferten Profilen, nicht aus Profilen eines Spiel-Shares.
+
 - Linux: Proton-Versionen, die das System selbst mitbringt
   (`/usr/share/steam/compatibilitytools.d`, `/usr/local/share/steam/compatibilitytools.d`,
   etwa unter Bazzite), werden gefunden und in den Spieldetails angeboten.

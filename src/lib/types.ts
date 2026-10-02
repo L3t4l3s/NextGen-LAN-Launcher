@@ -51,14 +51,18 @@ export interface GameStatus {
 
 export type ManifestOrigin = "bundled" | "user_override" | "share_overlay" | "derived_from_script";
 
+export type RunnerKind = "auto" | "wine" | "crossover" | "proton" | "native";
+
 export interface ManifestInfo {
   origin: ManifestOrigin;
   exe: string;
   args: string[];
-  runner: "auto" | "wine" | "crossover" | "proton" | "native";
+  runner: RunnerKind;
   alternatives: string[];
   notes: string | null;
   verifiedForRevision: boolean;
+  /** The tester's own launch configuration is laid over the profile. */
+  ownConfig: boolean;
 }
 
 export interface GameView {
@@ -312,6 +316,39 @@ export interface LaunchPlan {
   runner: string;
   needsElevation: boolean;
   rawCommandLine?: string;
+  /** Programs in front of `program` (`gamemoderun`, `gamescope … --`). */
+  wrapper?: string[];
+}
+
+/** A game's launch settings on this platform, as the editor shows them. */
+export interface GameConfig {
+  exe: string;
+  /** As typed; split like a shell when saved. */
+  args: string;
+  workdir: string;
+  runner: RunnerKind;
+  env: { name: string; value: string }[];
+  dllOverrides: string;
+  wrapper: string;
+}
+
+export interface GameConfigView {
+  config: GameConfig;
+  own: boolean;
+  /** The saved configuration does not read; a reset removes it. */
+  configError: string | null;
+  executables: string[];
+  platform: string;
+  reportEmail: string;
+}
+
+export interface ConfigReport {
+  subject: string;
+  body: string;
+  toml: string;
+  mailto: string;
+  issueUrl: string;
+  fileName: string;
 }
 
 export interface LibrarySpace {

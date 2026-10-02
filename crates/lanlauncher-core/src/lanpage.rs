@@ -436,6 +436,21 @@ pub fn encode_latin9(value: &str) -> String {
     out
 }
 
+/// The processor's name, the cheap way: the CPU list without any usage
+/// sampling. For the stats report and a tester's configuration report.
+pub fn cpu_brand() -> String {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
+    cpu_brand_of(&sys)
+}
+
+fn cpu_brand_of(sys: &sysinfo::System) -> String {
+    sys.cpus()
+        .first()
+        .map(|c| c.brand().trim().to_string())
+        .unwrap_or_default()
+}
+
 impl StatsReport {
     /// Collect system information (best effort, never fails).
     pub fn collect(player_name: &str, current_game: Option<&str>) -> Self {
@@ -452,11 +467,7 @@ impl StatsReport {
             .collect();
         macs.sort();
         macs.dedup();
-        let cpu = sys
-            .cpus()
-            .first()
-            .map(|c| c.brand().trim().to_string())
-            .unwrap_or_default();
+        let cpu = cpu_brand_of(&sys);
         let os = format!(
             "{} {}",
             sysinfo::System::name().unwrap_or_default(),

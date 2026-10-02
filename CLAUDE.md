@@ -295,6 +295,36 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   `$TMPDIR/appimage_extracted_<hash>` und startet trotzdem (hier nachgestellt mit einem `PATH` ohne
   `fusermount`). Eine Prüfung *vor* dem Start kann der Launcher nicht leisten, sein Code läuft erst
   danach; `diagnostics::check_appimage_unpacked` erkennt den entpackten Lauf an `APPDIR`.
+- **Startkonfiguration von Testern:** Der Editor in den Spieldetails (`GameConfigDialog.svelte`,
+  Kern in `game_config.rs`) speichert **nur einen `[platform.<os>]`-Block** nach
+  `<data>/game-configs/<id>.toml` (`ConfigOverlay`, mit der Paket-Revision); `resolve_for` legt ihn
+  Feld für Feld über den Block des Profils (`PlatformOverride::layered_on`,
+  `Manifest::user_config`). Der Block enthält **nur, was vom Profil abweicht** (`to_block` vergleicht
+  mit `resolve_profile_for`, dem Profil ohne Konfiguration). Bewusst keine Kopie des ganzen
+  Profils und keine vollständige Plattform: beides würde spätere Korrekturen am mitgelieferten
+  Profil dauerhaft verdecken. `[launch]` wird nie angefasst: entfernte Variablen stehen in
+  `unset_env`, ein leerer Arbeitsordner wird als `""` (Ordner der EXE) geschrieben, `.` ist `local/`
+  (und `[launch] workdir = ""` ebenfalls `local/`, im Editor als `.` gezeigt). Die eigene
+  Konfiguration gilt nur für die Revision als geprüft, mit der sie gespeichert wurde. Der Editor zeigt, was *wirklich*
+  startet — eine Startdatei-Wahl im Receipt startet nackt (ohne Argumente, im eigenen Ordner) —, und
+  beim Speichern wird diese Wahl aus dem Receipt gelöscht, sonst gewänne sie weiter. Geteilt wird
+  ebenfalls, was startet, auch ungespeichert, und zwar auf dem Profil *wie ausgeliefert*
+  (`ManifestStore::resolve`, ohne die Skript-Vermutungen, die `resolve_for` einträgt). `.` als
+  Arbeitsordner ist `local/`, `""` der Ordner der EXE — nicht ineinander umwandeln. Mail- und
+  Issue-Link tragen nur den Block (`block_toml`, Längengrenze `LINK_BODY_LIMIT`, eine lange Notiz
+  wird im Link gekürzt). **Wrapper und Host-Variablen (`LD_PRELOAD`, `PATH`, … `HOST_HOOK_ENV`) aus
+  einem Spiel-Share-Profil werden schon beim Laden entfernt** (`Manifest::drop_host_hooks` in
+  `resolve`) — ein Profil soll keinen Weg an Wine vorbei hinzufügen, und ein Block ohne eigenen
+  Wrapper fiele sonst auf `[launch].wrapper` des Shares zurück. Das macht Share-Inhalte nicht
+  harmlos (Wine ist keine Sandbox), also nirgends so behaupten. Eine Konfigurationsdatei, die sich
+  nicht lesen lässt, wird nie überschrieben (`load_config_for_update`). Als geprüft gilt die
+  eigene Konfiguration für die *installierte* Revision (Receipt), nicht die des Katalogs.
+  „Startdatei wählen" schreibt in eine vorhandene Konfiguration statt ins Receipt.
+  `Manifest::wrapper_is_trusted` bleibt als zweite Sperre. Das Speichern einer Datei geht über den nativen Dialog in
+  Rust (`export_game_config`), nie über einen Pfad aus der Web-Ansicht. Der Wrapper steckt in `LaunchPlan::wrapper` und wird erst in
+  `spawn` vorangestellt; `program` bleibt Wine/Proton, sonst sähen Prefix-Aufzeichnung und
+  `cxbottle` das Falsche. Berichte gehen an `game_config::REPORT_EMAIL` oder als Issue an
+  `REPORT_REPOSITORY`; `mailto:` ist dafür in `open_url` erlaubt.
 - **Proton liegt nie im `PATH`:** Es wohnt in einer Steam-Bibliothek, und ein Steam Deck hat
   mindestens zwei (intern und SD-Karte, letztere unter `/run/media/…`). Die Bibliotheken stehen in
   `<steam root>/steamapps/libraryfolders.vdf`; wer die nicht liest, findet auf einem Deck die

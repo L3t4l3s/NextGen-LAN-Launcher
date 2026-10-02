@@ -42,6 +42,9 @@ pub struct AppState {
     /// Serialises catalog reloads: two at once would extract `assets.eti`
     /// into the same cover cache concurrently.
     pub catalog_reload: tokio::sync::Mutex<()>,
+    /// Serialises changes to the launch configurations and the receipt's
+    /// executable choice: each reads, changes and writes the same files.
+    pub config_lock: std::sync::Mutex<()>,
     /// Serialises `set_game_runner`: it scans for runners without holding
     /// the settings lock, and two picks must still land in the order made.
     pub runner_choice: tokio::sync::Mutex<()>,
@@ -115,7 +118,9 @@ impl LaunchAttempt {
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0),
             runner: plan.runner.clone(),
-            program: plan.program.display().to_string(),
+            // A wrapper is part of what was started, and the first thing to
+            // suspect when it is missing.
+            program: plan.command_display(),
             command_line,
             cwd: plan.cwd.display().to_string(),
             elevated: plan.needs_elevation,

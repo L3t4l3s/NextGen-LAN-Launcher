@@ -6,6 +6,7 @@
   import { formatBytes, formatPercent, formatRevision, formatSpeed, placeholderGradient, stripHtml, percentWidth } from "$lib/format";
   import { isBusy, isPlayable, phaseBadge } from "$lib/phase";
   import ProblemCard from "./ProblemCard.svelte";
+  import GameConfigDialog from "./GameConfigDialog.svelte";
 
   let { game, onclose }: { game: GameView; onclose: () => void } = $props();
 
@@ -21,6 +22,7 @@
   const folderMode = $derived(app.health ? app.health.kind === "folder" : !!app.bootstrap?.transportError);
   let working = $state(false);
   let showExeChooser = $state(false);
+  let showConfig = $state(false);
   let executables = $state<string[]>([]);
   let plan = $state<LaunchPlan | null>(null);
   let runnerChoices = $state<RunnerChoices | null>(null);
@@ -314,6 +316,7 @@
             <strong>{t("detail.manifest.autodetect")}</strong>
           {/if}
           <br /><span>{t(`detail.manifest.${game.manifest.origin}`)}</span>
+          {#if game.manifest.ownConfig}<br /><span>{t("detail.manifest.own_config")}</span>{/if}
           {#if !game.manifest.verifiedForRevision}<br /><span class="warn-text">{t("detail.manifest.unverified")}</span>{/if}
           {#if game.manifest.notes}<br />{game.manifest.notes}{/if}
         </p>
@@ -332,10 +335,11 @@
       {#if playable && platform !== "windows"}
         <div class="row">
           <button class="ghost" onclick={openExeChooser}>{t("action.choose_exe")}</button>
+          <button class="ghost" onclick={() => (showConfig = true)}>{t("action.launch_config")}</button>
         </div>
       {/if}
       {#if plan}
-        <pre class="plan">{plan.runner}\n{plan.program} {plan.args.join(" ")}\ncwd: {plan.cwd}</pre>
+        <pre class="plan">{plan.runner}\n{plan.wrapper?.length ? `${plan.wrapper.join(" ")} ` : ""}{plan.program} {plan.args.join(" ")}\ncwd: {plan.cwd}</pre>
       {/if}
     </section>
 
@@ -351,6 +355,17 @@
     {/if}
   </div>
 </div>
+
+{#if showConfig}
+  <GameConfigDialog
+    {game}
+    onclose={() => (showConfig = false)}
+    onsaved={() => {
+      runnerRevision += 1;
+      void app.reloadGames();
+    }}
+  />
+{/if}
 
 {#if showExeChooser}
   <div class="modal-backdrop" role="presentation" onclick={() => (showExeChooser = false)} onkeydown={(e) => e.key === "Escape" && (showExeChooser = false)}>

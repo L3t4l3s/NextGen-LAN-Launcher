@@ -198,6 +198,12 @@ again.
   real CrossOver: a failing `cxbottle --create` no longer stops the start (a missed probe made
   games with an existing bottle unstartable). What it said is in the log and at the top of a start
   transcript captured from Diagnostics.
+- **Launch configurations from testers:** the editor, the saved profile and the report are covered
+  by tests and were clicked through in the browser mock at Steam Deck resolution; a wrapper was run
+  in front of a real program in a test. Not tried: the real app writing the profile, opening the
+  mail program or browser through `mailto:`/the issue link on a Deck or Mac (in Game Mode there is
+  usually no mail program — copy and save are the fallback), and a long report against the length
+  limits of mail programs and GitHub's issue URL.
 - **Bazzite and other Fedora-based systems:** not tried on a real machine. System-wide Proton
   builds (`/usr/share/steam/compatibilitytools.d`) are found, covered by a test. The firewalld check
   parses `firewall-cmd --list-all-zones` in the documented format and is tested against that text,

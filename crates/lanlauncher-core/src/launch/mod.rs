@@ -40,6 +40,24 @@ pub struct LaunchPlan {
     /// informational.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_command_line: Option<String>,
+    /// Programs the start runs through, in front of `program`: `gamemoderun`,
+    /// `mangohud`, `gamescope -w 1280 -h 800 --`. Kept apart rather than
+    /// folded into `program`, because what the plan *runs* — the Proton or
+    /// Wine that the prefix record and `cxbottle` look at — stays `program`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wrapper: Vec<String>,
+}
+
+impl LaunchPlan {
+    /// What is started, for logs and the diagnostics page: the wrapper, if
+    /// any, in front of the program.
+    pub fn command_display(&self) -> String {
+        if self.wrapper.is_empty() {
+            self.program.display().to_string()
+        } else {
+            format!("{} {}", self.wrapper.join(" "), self.program.display())
+        }
+    }
 }
 
 /// Inputs shared by the platform launchers.
@@ -87,6 +105,7 @@ pub fn extra_plan(extra: Extra, ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
                 runner: "keygen.exe".into(),
                 needs_elevation: false,
                 raw_command_line: None,
+                wrapper: Vec::new(),
             })
         }
         Extra::Server => windows::server_plan(
@@ -146,6 +165,7 @@ pub fn prereq_plan(installer: &std::path::Path) -> LaunchPlan {
         runner: "preqsetup.exe".into(),
         needs_elevation: true,
         raw_command_line: None,
+        wrapper: Vec::new(),
     }
 }
 
@@ -339,7 +359,14 @@ pub async fn spawn_elevated(
 pub async fn spawn(plan: &LaunchPlan, log: Option<&Path>) -> Result<(u32, ExitWatch)> {
     ensure_proton_prefix(plan)?;
     let bottle_note = ensure_crossover_bottle(plan).await;
-    let mut cmd = tokio::process::Command::new(&plan.program);
+    let mut cmd = match plan.wrapper.split_first() {
+        Some((first, rest)) => {
+            let mut cmd = tokio::process::Command::new(first);
+            cmd.args(rest).arg(&plan.program);
+            cmd
+        }
+        None => tokio::process::Command::new(&plan.program),
+    };
     cmd.current_dir(&plan.cwd);
     // Before the plan's own environment: a manifest may set one of these
     // deliberately for a game, and that value is the one that counts.
@@ -375,9 +402,14 @@ pub async fn spawn(plan: &LaunchPlan, log: Option<&Path>) -> Result<(u32, ExitWa
             .stdout(std::process::Stdio::from(out))
             .stderr(std::process::Stdio::from(err));
     }
-    let child = cmd
-        .spawn()
-        .map_err(|e| Error::Launch(format!("cannot start {}: {e}", plan.program.display())))?;
+    let child = cmd.spawn().map_err(|e| match plan.wrapper.first() {
+        // The wrapper is what failed to start, not the Proton behind it.
+        Some(wrapper) => Error::Launch(format!(
+            "cannot start {wrapper} (in front of {}): {e}",
+            plan.program.display()
+        )),
+        None => Error::Launch(format!("cannot start {}: {e}", plan.program.display())),
+    })?;
     Ok(watch(child))
 }
 
@@ -719,6 +751,7 @@ mod tests {
             runner: "Proton".into(),
             needs_elevation: false,
             raw_command_line: None,
+            wrapper: Vec::new(),
         };
 
         ensure_proton_prefix(&plan).unwrap();
@@ -754,6 +787,7 @@ mod tests {
             runner: "CrossOver".into(),
             needs_elevation: false,
             raw_command_line: None,
+            wrapper: Vec::new(),
         };
 
         // The note is what the failure left for the transcript; its wording
@@ -762,6 +796,31 @@ mod tests {
         assert!(
             note.starts_with("cxbottle --create nll-g exited with"),
             "{note}"
+        );
+    }
+
+    /// The wrapper really runs in front of the program: `env` with a
+    /// variable starts `sh`, and what `sh` prints lands in the log.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_wrapper_starts_the_program_it_is_put_in_front_of() {
+        let tmp = tempfile::tempdir().unwrap();
+        let log = tmp.path().join("out.log");
+        let plan = LaunchPlan {
+            program: PathBuf::from("/bin/sh"),
+            args: vec!["-c".into(), "echo started with $NLL_WRAPPED".into()],
+            cwd: tmp.path().to_path_buf(),
+            env: BTreeMap::new(),
+            runner: "native".into(),
+            needs_elevation: false,
+            raw_command_line: None,
+            wrapper: vec!["env".into(), "NLL_WRAPPED=wrapper".into()],
+        };
+        let (_, exit) = spawn(&plan, Some(&log)).await.unwrap();
+        assert_eq!(exit.await.unwrap(), Some(0));
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap().trim(),
+            "started with wrapper"
         );
     }
 

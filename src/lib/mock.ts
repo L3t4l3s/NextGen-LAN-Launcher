@@ -2,7 +2,7 @@
 // download that gets "stuck at 99 %" in the sync engine but completes through
 // local verification – the scenario this launcher exists to fix.
 
-import type { BootstrapInfo, GameStatus, GameView, Phase, Report, Settings } from "./types";
+import type { BootstrapInfo, GameConfig, GameStatus, GameView, Phase, Report, Settings } from "./types";
 
 const demoGames: Omit<GameView, "status">[] = [
   g("amongus", 1, "Among Us", "20250308", 0.45, "2018", "Innersloth", "15", "Casual", "Wer ist der Impostor? Bis zu 15 Spieler im lokalen Netzwerk."),
@@ -58,8 +58,9 @@ function g(
             alternatives: id === "goldsrc" ? ["Counter-Strike 1.5", "Half-Life"] : [],
             notes: null,
             verifiedForRevision: true,
+            ownConfig: false,
           }
-        : { origin: "derived_from_script", exe: `${id}.exe`, args: [], runner: "auto", alternatives: [], notes: null, verifiedForRevision: false },
+        : { origin: "derived_from_script", exe: `${id}.exe`, args: [], runner: "auto", alternatives: [], notes: null, verifiedForRevision: false, ownConfig: false },
     disabledByEvent: false,
     shareDir: `D:\\LAN\\${id}`,
     hasKeygen: id === "cod4",
@@ -80,6 +81,7 @@ interface Sim {
 export function createMock() {
   const sims = new Map<string, Sim>();
   const listeners = new Map<string, Set<(p: unknown) => void>>();
+  const gameConfigs: Record<string, GameConfig> = {};
   let settings: Settings = {
     version: 1,
     library: { roots: [{ path: "D:\\LAN", label: "SSD D:", isDefault: true }, { path: "E:\\LAN", label: "HDD E:", isDefault: false }] },
@@ -184,7 +186,8 @@ export function createMock() {
   const bootstrap: BootstrapInfo = {
     settings,
     demo: true,
-    platform: "windows",
+    // `?platform=linux` shows the macOS/Linux parts (launch configuration).
+    platform: (new URLSearchParams(location.search).get("platform") as BootstrapInfo["platform"] | null) ?? "windows",
     version: "0.1.0-browser",
     event: {
       config: {
@@ -315,6 +318,47 @@ export function createMock() {
         return ["Game.exe", "bin/Launcher.exe", "tools/Config.exe"];
       case "set_exe_override":
         return;
+      case "get_game_config":
+        return {
+          config: gameConfigs[id] ?? { exe: "Game.exe", args: "+set name %player%", workdir: "", runner: "auto", env: [], dllOverrides: "", wrapper: "" },
+          own: !!gameConfigs[id],
+          configError: null,
+          executables: ["Game.exe", "bin/Launcher.exe", "tools/Config.exe"],
+          platform: bootstrap.platform,
+          reportEmail: "launcher@schimnick.de",
+        };
+      case "save_game_config": {
+        const config = args.config as GameConfig;
+        if (!config.exe.trim()) throw new Error("err.config_exe_missing");
+        gameConfigs[id] = config;
+        return true;
+      }
+      case "reset_game_config":
+        delete gameConfigs[id];
+        return;
+      case "share_game_config": {
+        const c = gameConfigs[id];
+        const toml = `schema = 1\nid = "${id}"\n\n[platform.${bootstrap.platform}]\nexe = "${c?.exe ?? "Game.exe"}"\nrunner = "${c?.runner ?? "auto"}"\n`;
+        const body = `Game: ${id}\nLauncher: ${bootstrap.version}\nPlatform: ${bootstrap.platform} – Browser-Demo\n${args.comment ? `\nNotes:\n${args.comment}\n` : ""}\nProfile (${id}.toml):\n\`\`\`toml\n${toml}\`\`\`\n`;
+        const subject = `[game-config] ${id} on ${bootstrap.platform}`;
+        return {
+          subject,
+          body,
+          toml,
+          mailto: `mailto:launcher@schimnick.de?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
+          issueUrl: `https://github.com/L3t4l3s/NextGen-LAN-Launcher/issues/new?title=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
+          fileName: `${id}-${bootstrap.platform}.toml`,
+        };
+      }
+      case "export_game_config": {
+        // The browser cannot open a native save dialog; hand out a download.
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(new Blob([args.contents as string], { type: "text/plain" }));
+        link.download = args.fileName as string;
+        link.click();
+        URL.revokeObjectURL(link.href);
+        return null;
+      }
       case "get_settings":
         return settings;
       case "save_settings": {
