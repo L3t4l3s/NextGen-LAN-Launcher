@@ -265,8 +265,20 @@ impl Event {
 /// sealed) form, with the time this launcher first saw it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Stored {
+    /// When it reached this launcher, by its own clock: what "unread" is
+    /// measured with.
     pub seen: i64,
     pub event: Event,
+    /// When it first reached the LAN, worked out from the age the sender
+    /// reported; what expiry counts from. `None`: the same as `seen`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub born: Option<i64>,
+}
+
+impl Stored {
+    pub fn born(&self) -> i64 {
+        self.born.unwrap_or(self.seen)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -383,6 +395,8 @@ impl PollState {
 #[derive(Debug)]
 struct Entry {
     seen: i64,
+    /// See [`Stored::born`].
+    born: i64,
     /// As received: signed, private bodies sealed. This is what is saved and
     /// passed on.
     wire: Event,
@@ -391,6 +405,16 @@ struct Entry {
     plain: Event,
     /// Folded into the state; `false` for events kept only to pass on.
     opened: bool,
+}
+
+impl Entry {
+    fn stored(&self) -> Stored {
+        Stored {
+            seen: self.seen,
+            event: self.wire.clone(),
+            born: (self.born != self.seen).then_some(self.born),
+        }
+    }
 }
 
 /// All events this launcher knows, folded into messages and polls.
@@ -408,6 +432,9 @@ pub struct ChatState {
     pending: HashMap<String, Vec<Event>>,
     /// Message id → ids of the messages replying to it.
     replies: HashMap<String, Vec<String>>,
+    /// Ids that expired here, with when (this launcher's clock): a peer that
+    /// got them later still has them and would hand them back.
+    gone: HashMap<String, i64>,
 }
 
 impl ChatState {
@@ -419,6 +446,7 @@ impl ChatState {
             ids: HashSet::new(),
             items: HashMap::new(),
             pending: HashMap::new(),
+            gone: HashMap::new(),
             replies: HashMap::new(),
         }
     }
@@ -433,13 +461,14 @@ impl ChatState {
 
     /// Everything kept, in the form saved and sent on.
     pub fn stored(&self) -> Vec<Stored> {
-        self.events
-            .iter()
-            .map(|e| Stored {
-                seen: e.seen,
-                event: e.wire.clone(),
-            })
-            .collect()
+        self.events.iter().map(Entry::stored).collect()
+    }
+
+    /// Back-date an event just taken in to when it first reached the LAN.
+    pub fn set_born(&mut self, id: &str, born: i64) {
+        if let Some(e) = self.events.iter_mut().rev().find(|e| e.plain.id == id) {
+            e.born = born.min(e.seen);
+        }
     }
 
     pub fn floor(&self) -> i64 {
@@ -481,6 +510,7 @@ impl ChatState {
     /// or older than what is kept.
     pub fn insert_opened(&mut self, plain: Event, wire: Event, seen: i64) -> Option<Vec<String>> {
         if self.ids.contains(&plain.id)
+            || self.gone.contains_key(&plain.id)
             || wire.id != plain.id
             || !plain.is_valid()
             || !self.concerns_me(&plain)
@@ -491,6 +521,7 @@ impl ChatState {
         self.ids.insert(plain.id.clone());
         self.events.push(Entry {
             seen,
+            born: seen,
             wire,
             plain: plain.clone(),
             opened: true,
@@ -506,12 +537,17 @@ impl ChatState {
     /// does with everything, private events of others included. The caller
     /// has checked the signature. Returns whether it was new.
     pub fn insert_opaque(&mut self, wire: Event, seen: i64) -> bool {
-        if self.ids.contains(&wire.id) || !wire.envelope_is_valid() || wire.ts < self.floor {
+        if self.ids.contains(&wire.id)
+            || self.gone.contains_key(&wire.id)
+            || !wire.envelope_is_valid()
+            || wire.ts < self.floor
+        {
             return false;
         }
         self.ids.insert(wire.id.clone());
         self.events.push(Entry {
             seen,
+            born: seen,
             plain: wire.clone(),
             wire,
             opened: false,
@@ -533,19 +569,72 @@ impl ChatState {
                 .then_with(|| a.plain.id.cmp(&b.plain.id))
         });
         entries.drain(..entries.len() - limit);
-        self.floor = entries.first().map_or(self.floor, |e| e.plain.ts);
+        self.floor = entries
+            .first()
+            .map_or(self.floor, |e| e.plain.ts.max(self.floor));
+        self.refold(entries);
+        true
+    }
+
+    /// Forget what this launcher got more than `keep` ago and refuse it from
+    /// now on: the chat of the last LAN is not the chat of this one.
+    ///
+    /// Measured by arrival on this launcher's own clock, never by the
+    /// author's: an author whose clock is days off (a flat CMOS battery)
+    /// would otherwise have their messages refused everywhere. What it does
+    /// not cover is this launcher's own clock jumping while it runs: forward,
+    /// and what it holds expires early on this machine; backward, and arrival
+    /// times lie in the future — those are pulled back to now, so they still
+    /// expire, just later. Expired ids are remembered for another `keep`, by
+    /// which time every launcher has let them go too. Returns whether
+    /// anything went.
+    pub fn expire(&mut self, now: i64, keep: i64) -> bool {
+        for e in self.events.iter_mut() {
+            e.born = e.born.min(now);
+        }
+        for at in self.gone.values_mut() {
+            *at = (*at).min(now);
+        }
+        self.gone.retain(|_, at| now - *at < keep);
+        if !self.events.iter().any(|e| now - e.born >= keep) {
+            return false;
+        }
+        let mut entries = std::mem::take(&mut self.events);
+        entries.retain(|e| {
+            let keep_it = now - e.born < keep;
+            if !keep_it {
+                self.gone.insert(e.plain.id.clone(), now);
+            }
+            keep_it
+        });
+        self.refold(entries);
+        true
+    }
+
+    /// Expired ids with when they expired, to save; see [`ChatState::expire`].
+    pub fn gone(&self) -> &HashMap<String, i64> {
+        &self.gone
+    }
+
+    pub fn set_gone(&mut self, gone: HashMap<String, i64>) {
+        self.gone = gone;
+    }
+
+    /// Fold the state again from `entries`, as if they had just arrived.
+    fn refold(&mut self, entries: Vec<Entry>) {
         self.ids.clear();
         self.items.clear();
         self.pending.clear();
         self.replies.clear();
         for e in entries {
+            let (id, born) = (e.plain.id.clone(), e.born);
             if e.opened {
                 self.insert_opened(e.plain, e.wire, e.seen);
             } else {
                 self.insert_opaque(e.wire, e.seen);
             }
+            self.set_born(&id, born);
         }
-        true
     }
 
     fn apply(&mut self, event: Event, seen: i64, changed: &mut Vec<String>) {
@@ -744,14 +833,15 @@ impl ChatState {
     }
 
     /// Events visible to `peer` that are not in `have` and not older than
-    /// `since` (what the peer no longer keeps), in arrival order, as sent.
+    /// `since` (what the peer no longer keeps), in arrival order, as sent,
+    /// with when they arrived here.
     pub fn missing_for(
         &self,
         peer: &str,
         have: &HashSet<String>,
         since: i64,
         all: bool,
-    ) -> Vec<Event> {
+    ) -> Vec<Stored> {
         self.events
             .iter()
             .filter(|e| {
@@ -759,7 +849,7 @@ impl ChatState {
                     && e.plain.ts >= since
                     && !have.contains(&e.plain.id)
             })
-            .map(|e| e.wire.clone())
+            .map(Entry::stored)
             .collect()
     }
 }
@@ -1213,7 +1303,7 @@ mod tests {
         let missing: Vec<String> = s
             .missing_for("a", &have, 0, false)
             .into_iter()
-            .map(|e| e.id)
+            .map(|e| e.event.id)
             .collect();
         assert_eq!(missing, vec!["me:2"]);
         assert_eq!(s.last_own_seq(), 3);
@@ -1287,6 +1377,36 @@ mod tests {
         assert_eq!(relay.ids_for("r2", true).len(), 2);
         assert!(relay.trim(1));
         assert_eq!(relay.len(), 1);
+    }
+
+    #[test]
+    fn expired_messages_go_and_do_not_come_back() {
+        let mut s = ChatState::new("me");
+        // Arrival decides, not the author's clock: "a:1" claims to be new
+        // but arrived long ago; "b:2" comes from a PC whose clock is years
+        // behind but arrived just now.
+        s.insert(ev("a", 1_000, None, text("last LAN")), 1);
+        s.insert(ev("b", 2, None, text("wrong clock")), 100);
+        assert!(!s.expire(50, 60), "nothing older than the window");
+        assert!(s.expire(100, 60));
+        assert!(s.view("a:1000").is_none());
+        assert!(s.view("b:2").is_some());
+        // Someone who got it later hands it back: refused.
+        assert!(s
+            .insert(ev("a", 1_000, None, text("last LAN")), 101)
+            .is_none());
+        // A clock that went back does not keep a message forever.
+        let mut back = ChatState::new("me");
+        back.insert(ev("c", 1, None, text("x")), 1_000);
+        assert!(
+            !back.expire(500, 60),
+            "arrival in the future: pulled to now"
+        );
+        assert!(back.expire(560, 60));
+        // Once everybody has let it go, the id is forgotten too.
+        s.expire(200, 60);
+        assert!(!s.gone().contains_key("a:1000"));
+        assert!(s.gone().contains_key("b:2"), "expired in this round");
     }
 
     #[test]

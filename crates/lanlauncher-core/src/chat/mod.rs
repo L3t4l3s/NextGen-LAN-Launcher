@@ -43,6 +43,12 @@ const PROTOCOL: u8 = 1;
 const MAX_FRAME: usize = 1024 * 1024;
 /// Events per frame stay below this many bytes when catching a peer up.
 const BATCH_BYTES: usize = 256 * 1024;
+/// How long the chat keeps what was said, counted from when this launcher got
+/// it: a LAN weekend with room to spare, so the chat of the last LAN is gone
+/// at the next one.
+pub const KEEP_FOR: Duration = Duration::from_secs(5 * 24 * 3600);
+/// How often old messages are looked for while the chat runs.
+const EXPIRE_EVERY: Duration = Duration::from_secs(60);
 /// Every so often the history is compared again, in case a message was lost
 /// to a connection that broke while it was on its way.
 const RESYNC_EVERY: Duration = Duration::from_secs(120);
@@ -140,7 +146,15 @@ enum Frame {
     },
     /// Parsed one by one: an event of a newer version must not take the
     /// others in the frame down with it.
-    Events { events: Vec<serde_json::Value> },
+    Events {
+        events: Vec<serde_json::Value>,
+        /// How long the sender has had each event, in milliseconds. A
+        /// duration, so neither clock needs to be right: the receiver counts
+        /// the five days from when the event first reached the LAN, not
+        /// from when it caught up on it. Missing means just written.
+        #[serde(default)]
+        ages: Vec<i64>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -196,6 +210,7 @@ struct Peer {
 
 struct Inner {
     relay: bool,
+    data_dir: PathBuf,
     /// Relays the LANPage names: only these get private events (sealed).
     /// Any machine can call itself a relay, and even sealed, a private
     /// message tells who wrote to whom and when.
@@ -281,6 +296,7 @@ impl Chat {
         let mut state = ChatState::new(&me);
         let mut dropped = damaged;
         for s in stored {
+            let (id, born) = (s.event.id.clone(), s.born());
             // A history from before signing, or one edited by hand.
             let kept = if config.relay {
                 crypto::verify(&s.event) && state.insert_opaque(s.event, s.seen)
@@ -290,9 +306,17 @@ impl Chat {
                     None => false,
                 }
             };
+            if kept {
+                state.set_born(&id, born);
+            }
             dropped |= !kept;
         }
-        if state.trim(store::HISTORY_LIMIT) || dropped {
+        state.set_gone(store::load_gone(&config.data_dir));
+        let expired = state.expire(now_ms(), KEEP_FOR.as_millis() as i64);
+        if expired {
+            store::save_gone(&config.data_dir, state.gone());
+        }
+        if state.trim(store::HISTORY_LIMIT) || dropped || expired {
             history.rewrite(&state.stored());
         }
         let seq = state.last_own_seq();
@@ -315,6 +339,7 @@ impl Chat {
         let (updates, _) = broadcast::channel(256);
         let inner = Arc::new(Inner {
             relay: config.relay,
+            data_dir: config.data_dir.clone(),
             trusted_relays: Mutex::new(HashSet::new()),
             keys,
             me,
@@ -380,10 +405,10 @@ impl Chat {
             {
                 continue;
             }
-            let private: Vec<Event> = lock(&self.inner.state)
+            let private: Vec<Stored> = lock(&self.inner.state)
                 .missing_for(&id, &HashSet::new(), 0, true)
                 .into_iter()
-                .filter(|e| e.to.is_some())
+                .filter(|s| s.event.to.is_some())
                 .collect();
             for line in batches(&private) {
                 self.inner.send_to(&id, line);
@@ -648,9 +673,10 @@ impl Inner {
         }
         let wire = self.keys.seal(&event).ok_or(ERR_INVALID)?;
         let id = event.id.clone();
-        self.take_in_opened(vec![(Some(event.clone()), wire.clone())]);
+        self.take_in_opened(vec![(Some(event.clone()), wire.clone(), now_ms())]);
         let frame = Frame::Events {
             events: vec![serde_json::to_value(&wire).map_err(|_| ERR_INVALID)?],
+            ages: vec![0],
         };
         // Trusted relays get private events too: sealed, they keep them for
         // a recipient who is not here yet.
@@ -677,23 +703,29 @@ impl Inner {
 
     /// Events from the network: only those whose signature holds and, if
     /// private, that open for us — or, on a relay, every signed one.
-    fn take_in(&self, events: Vec<Event>) {
+    /// `ages` says how long the sender has had each one.
+    fn take_in(&self, events: Vec<(Event, i64)>) {
+        let now = now_ms();
+        let keep = KEEP_FOR.as_millis() as i64;
         let checked = events
             .into_iter()
-            .filter_map(|wire| {
+            .filter_map(|(wire, age)| {
+                let born = now - age.clamp(0, keep);
                 if self.relay {
-                    crypto::verify(&wire).then_some((None, wire))
+                    crypto::verify(&wire).then_some((None, wire, born))
                 } else {
-                    Some((Some(self.keys.open(&wire)?), wire))
+                    Some((Some(self.keys.open(&wire)?), wire, born))
                 }
             })
             .collect();
         self.take_in_opened(checked);
     }
 
-    /// Store new (plain, wire) events — plain `None` for one kept only to
-    /// pass on — save them and tell the interface what changed.
-    fn take_in_opened(&self, events: Vec<(Option<Event>, Event)>) {
+    /// Store new (plain, wire, born) events — plain `None` for one kept only
+    /// to pass on, born when it first reached the LAN (expiry counts from
+    /// there; "unread" from now) — save them and tell the interface what
+    /// changed.
+    fn take_in_opened(&self, events: Vec<(Option<Event>, Event, i64)>) {
         let seen = now_ms();
         let mut changed: Vec<String> = Vec::new();
         let mut accepted: Vec<Stored> = Vec::new();
@@ -703,7 +735,8 @@ impl Inner {
         // outside it could overwrite an event appended in between.
         let trimmed = {
             let mut state = lock(&self.state);
-            for (plain, wire) in events {
+            for (plain, wire, born) in events {
+                let id = wire.id.clone();
                 let new = match plain {
                     Some(plain) => state.insert_opened(plain, wire.clone(), seen).map(|ids| {
                         changed.extend(ids);
@@ -711,7 +744,12 @@ impl Inner {
                     None => state.insert_opaque(wire.clone(), seen).then_some(()),
                 };
                 if new.is_some() {
-                    accepted.push(Stored { seen, event: wire });
+                    state.set_born(&id, born);
+                    accepted.push(Stored {
+                        seen,
+                        event: wire,
+                        born: (born < seen).then_some(born),
+                    });
                 }
             }
             let trimmed = state.len() > store::HISTORY_LIMIT + store::HISTORY_LIMIT / 10
@@ -806,11 +844,32 @@ impl Inner {
         }
     }
 
+    /// Drop what has grown older than [`KEEP_FOR`], on disk too.
+    fn expire_old(&self) {
+        let expired = {
+            let mut state = lock(&self.state);
+            let expired = state.expire(now_ms(), KEEP_FOR.as_millis() as i64);
+            if expired {
+                lock(&self.history).rewrite(&state.stored());
+                store::save_gone(&self.data_dir, state.gone());
+            }
+            expired
+        };
+        if expired {
+            let _ = self.updates.send(ChatUpdate::Reset);
+        }
+    }
+
     async fn beacon_loop(self: Arc<Self>, every: Duration) {
         let mut tick = tokio::time::interval(every);
+        let mut last_expiry = Instant::now();
         loop {
             tick.tick().await;
             self.send_beacon(false).await;
+            if last_expiry.elapsed() >= EXPIRE_EVERY {
+                last_expiry = Instant::now();
+                self.expire_old();
+            }
             // Who has gone quiet, and who is due for a history comparison.
             let mut gone = false;
             let mut resync = Vec::new();
@@ -1088,10 +1147,16 @@ impl Inner {
                     self.send_to(&peer, line);
                 }
             }
-            Frame::Events { events } => {
-                let events: Vec<Event> = events
+            Frame::Events { events, ages } => {
+                let events: Vec<(Event, i64)> = events
                     .into_iter()
-                    .filter_map(|v| serde_json::from_value(v).ok())
+                    .enumerate()
+                    .filter_map(|(i, v)| {
+                        Some((
+                            serde_json::from_value(v).ok()?,
+                            ages.get(i).copied().unwrap_or(0),
+                        ))
+                    })
                     .collect();
                 self.take_in(events);
             }
@@ -1105,27 +1170,35 @@ fn frame_line(frame: &Frame) -> Option<Arc<str>> {
     (text.len() <= MAX_FRAME).then(|| Arc::from(text))
 }
 
-/// Frames of at most [`BATCH_BYTES`] carrying `events`.
-fn batches(events: &[Event]) -> Vec<Arc<str>> {
+/// Frames of at most [`BATCH_BYTES`] carrying `events`, each with how long
+/// this launcher has had it.
+fn batches(events: &[Stored]) -> Vec<Arc<str>> {
+    let now = now_ms();
     let mut out = Vec::new();
     let mut current: Vec<serde_json::Value> = Vec::new();
+    let mut ages: Vec<i64> = Vec::new();
     let mut size = 0;
-    for e in events {
-        let Ok(value) = serde_json::to_value(e) else {
+    for s in events {
+        let Ok(value) = serde_json::to_value(&s.event) else {
             continue;
         };
         let len = value.to_string().len();
         if !current.is_empty() && size + len > BATCH_BYTES {
             out.extend(frame_line(&Frame::Events {
                 events: std::mem::take(&mut current),
+                ages: std::mem::take(&mut ages),
             }));
             size = 0;
         }
         size += len;
         current.push(value);
+        ages.push((now - s.born()).max(0));
     }
     if !current.is_empty() {
-        out.extend(frame_line(&Frame::Events { events: current }));
+        out.extend(frame_line(&Frame::Events {
+            events: current,
+            ages,
+        }));
     }
     out
 }

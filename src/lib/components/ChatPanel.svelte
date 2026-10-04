@@ -16,8 +16,6 @@
   let showPoll = $state(false);
   let list = $state<HTMLDivElement | null>(null);
   let input = $state<HTMLTextAreaElement | null>(null);
-  /** The list sits at its end, so new messages scroll into view. */
-  let atBottom = $state(true);
 
   const osIcon: Record<string, string> = { windows: "🪟", linux: "🐧", macos: "🍎" };
 
@@ -28,23 +26,61 @@
   const partner = $derived(chat.active ? chat.peers.find((p) => p.id === chat.active) : null);
   const unreadElsewhere = $derived(chat.conversations.filter((c) => c.id !== chat.active).reduce((n, c) => n + c.unread, 0));
 
-  // Stay at the bottom while new messages come in, unless the user scrolled
-  // up to read; then the button below offers the way back.
+  const unreadHere = $derived(chat.unread(chat.active));
+
+  // A conversation (or the panel) was opened: start at "new messages" when
+  // there are any, like the big messengers, otherwise at the end.
   $effect(() => {
-    void items.length;
     void chat.active;
-    if (atBottom) void tick().then(() => scrollToEnd());
+    void chat.open;
+    const from = chat.unreadFrom;
+    void tick().then(() => {
+      const marker = from ? document.getElementById("chat-unread") : null;
+      if (marker) {
+        marker.scrollIntoView({ block: "start" });
+        onScroll();
+      } else {
+        scrollToEnd();
+      }
+    });
   });
 
+  // Stay at the end while new messages come in, unless the user scrolled up
+  // to read; then the button below offers the way down.
+  $effect(() => {
+    void items.length;
+    if (chat.atBottom) {
+      void tick().then(() => {
+        // Still at the end once the new rows are drawn: the marker or the
+        // reader may have moved in between.
+        if (chat.atBottom) scrollToEnd();
+      });
+    }
+  });
+
+  /** To the end; whether that is where the list now sits comes from the
+   *  geometry, as for any scroll. */
   function scrollToEnd() {
     if (list) list.scrollTop = list.scrollHeight;
-    chat.markRead();
+    onScroll();
   }
 
   function onScroll() {
     if (!list) return;
-    atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
-    if (atBottom) chat.markRead();
+    chat.atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+    if (chat.atBottom) chat.markRead();
+  }
+
+  /** The button at the bottom: to the first unread message while it is
+   *  still below what is shown, otherwise to the end. */
+  function down() {
+    const id = chat.firstUnread;
+    const el = id ? document.getElementById(`msg-${id}`) : null;
+    if (el && list && el.getBoundingClientRect().top > list.getBoundingClientRect().bottom - 8) {
+      el.scrollIntoView({ block: "start", behavior: "smooth" });
+    } else {
+      scrollToEnd();
+    }
   }
 
   function jump(id: string) {
@@ -63,7 +99,7 @@
       await api.chat.send(chat.active, body, chat.replyTo?.id ?? null);
       text = "";
       chat.replyTo = null;
-      atBottom = true;
+      chat.atBottom = true;
       await tick();
       autosize();
     } catch (e) {
@@ -151,7 +187,8 @@
               {:else}
                 <span class="dot" class:ok={c.online}></span>{c.nick}
               {/if}
-              {#if c.unread > 0}<span class="badge-count">{c.unread}</span>{/if}
+              {#if c.muted}<span class="muted-icon" title={t("chat.muted")}>🔕</span>{/if}
+              {#if c.unread > 0}<span class="badge-count" class:quiet={c.muted}>{c.unread}</span>{/if}
             </button>
             {#if c.id !== null}
               <button class="close" title={t("chat.hide")} onclick={() => c.id && chat.hide(c.id)}>✕</button>
@@ -180,16 +217,28 @@
         </div>
       {/if}
 
-      {#if chat.active}
-        <div class="partner">
-          {t("chat.private_with", { nick: chat.nickOf(chat.active) })}
-          {#if !partner?.online}<span class="muted"> · {t("chat.offline_hint", { nick: chat.nickOf(chat.active) })}</span>{/if}
-        </div>
-      {/if}
+      <div class="partner">
+        <span class="grow">
+          {#if chat.active}
+            {t("chat.private_with", { nick: chat.nickOf(chat.active) })}
+            {#if !partner?.online}<span class="muted"> · {t("chat.offline_hint", { nick: chat.nickOf(chat.active) })}</span>{/if}
+          {:else}
+            # {t("chat.public")}
+          {/if}
+        </span>
+        <button
+          class="icon small"
+          title={chat.isMuted(chat.active) ? t("chat.unmute_conversation") : t("chat.mute_conversation")}
+          onclick={() => chat.toggleMute(chat.active)}
+        >
+          {chat.isMuted(chat.active) ? "🔕" : "🔔"}
+        </button>
+      </div>
 
       <div class="messages" bind:this={list} onscroll={onScroll}>
         {#each shown as r (r.item.id)}
           {#if r.day}<div class="day"><span>{r.day === today ? t("chat.today") : r.day}</span></div>{/if}
+          {#if r.item.id === chat.unreadFrom}<div class="unread-line" id="chat-unread"><span>{t("chat.unread_here")}</span></div>{/if}
           <ChatMessage item={r.item} head={r.head} onjump={jump} />
         {:else}
           <div class="empty">
@@ -197,8 +246,10 @@
           </div>
         {/each}
       </div>
-      {#if !atBottom}
-        <button class="to-end" onclick={() => { atBottom = true; scrollToEnd(); }}>↓</button>
+      {#if !chat.atBottom}
+        <button class="to-end" class:has-unread={unreadHere > 0} title={t("chat.to_end")} onclick={down}>
+          ↓{#if unreadHere > 0}<span>{t("chat.jump_unread", { count: unreadHere })}</span>{/if}
+        </button>
       {/if}
       {#if unreadElsewhere > 0 && !showPeople}
         <div class="elsewhere">{t("chat.unread_elsewhere", { count: unreadElsewhere })}</div>
@@ -413,9 +464,42 @@
     opacity: 0.8;
   }
   .partner {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
     font-size: 0.78rem;
-    padding: 0.35rem 0.9rem;
+    padding: 0.15rem 0.4rem 0.15rem 0.9rem;
     border-bottom: 1px solid var(--color-border);
+  }
+  .icon.small {
+    font-size: 0.8rem;
+    padding: 0.15em 0.4em;
+  }
+  .muted-icon {
+    font-size: 0.7rem;
+    opacity: 0.7;
+  }
+  .badge-count.quiet {
+    background: var(--color-surface-alt);
+    color: var(--color-text-muted);
+  }
+  .unread-line {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.7rem 0.6rem 0.2rem;
+    color: var(--color-primary);
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .unread-line::before,
+  .unread-line::after {
+    content: "";
+    flex: 1;
+    border-top: 1px solid currentColor;
+    opacity: 0.6;
   }
   .messages {
     flex: 1;
@@ -449,10 +533,21 @@
     right: 1rem;
     bottom: 5.2rem;
     border-radius: 999px;
-    width: 2.2rem;
+    min-width: 2.2rem;
     height: 2.2rem;
-    padding: 0;
+    padding: 0 0.7rem;
     box-shadow: var(--shadow);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+  }
+  .to-end.has-unread {
+    background: var(--color-primary);
+    color: var(--color-primary-text);
+    border-color: transparent;
+    font-weight: 600;
+    font-size: 0.8rem;
   }
   .elsewhere {
     font-size: 0.75rem;

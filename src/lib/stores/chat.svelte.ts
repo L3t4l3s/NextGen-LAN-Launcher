@@ -11,6 +11,7 @@ import type { ChatItem, ChatPeer, ChatSnapshot, ChatUpdate } from "$lib/types";
 const OPEN_KEY = "nll.chat.open";
 const READ_KEY = "nll.chat.read";
 const SINCE_KEY = "nll.chat.since";
+const MUTED_KEY = "nll.chat.muted";
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -35,6 +36,7 @@ export interface Conversation {
   nick: string;
   online: boolean;
   unread: number;
+  muted: boolean;
 }
 
 class ChatStore {
@@ -58,6 +60,15 @@ class ChatStore {
   private opened = $state<string[]>([]);
   /** Conversations closed by hand; a new message brings them back. */
   private hidden = $state<string[]>([]);
+  /** Conversations that make no sound ("" = public). The bell in the
+   *  header (the `chatSound` setting) still silences all of them. */
+  muted = $state<string[]>(load(MUTED_KEY, []));
+  /** The message list is scrolled to its end; only then is what arrives read. */
+  atBottom = $state(true);
+  /** First unread message when the conversation was opened: the panel draws
+   *  "new messages" above it and starts there instead of at the end. */
+  unreadFrom = $state<string | null>(null);
+  private placed = false;
 
   /** The bell: one setting, saved on its own. */
   async setSound(on: boolean) {
@@ -100,6 +111,12 @@ class ChatStore {
     // A first start has read nothing and missed nothing: the history that
     // arrives is the room's past, not a pile of unread messages.
     store(SINCE_KEY, this.since);
+    // Only the first load places the marker; a later one (the chat restarted,
+    // old messages expired) must not pull the reader away from where they are.
+    if (!this.placed) {
+      this.placed = true;
+      this.captureUnread();
+    }
     this.markRead();
   }
 
@@ -120,7 +137,7 @@ class ChatStore {
       if (!fresh || item.mine || item.deleted) continue;
       // Only what is new for everyone rings, not history caught up on.
       if (!rings(item, Date.now())) continue;
-      if (this.isOnScreen(item.conversation)) continue;
+      if (this.isOnScreen(item.conversation) || this.isMuted(item.conversation)) continue;
       const direct = item.conversation !== null || mentions(item.text, this.nick);
       sound = direct ? "direct" : (sound ?? "message");
     }
@@ -134,8 +151,34 @@ class ChatStore {
     return this.open && this.active === conversation && typeof document !== "undefined" && document.hasFocus();
   }
 
+  isMuted(conversation: string | null): boolean {
+    return this.muted.includes(convKey(conversation));
+  }
+
+  toggleMute(conversation: string | null) {
+    const key = convKey(conversation);
+    this.muted = this.muted.includes(key) ? this.muted.filter((k) => k !== key) : [...this.muted, key];
+    store(MUTED_KEY, this.muted);
+  }
+
+  /** Remember where the unread part of the shown conversation begins. Runs
+   *  when a conversation is opened, before anything is marked read. */
+  private captureUnread() {
+    const read = this.readUpTo[convKey(this.active)] ?? 0;
+    this.unreadFrom = this.list(this.active).find((i) => isUnread(i, read, this.since))?.id ?? null;
+    // The panel starts at the marker; until it reports being at the end,
+    // nothing below the marker counts as read.
+    if (this.unreadFrom) this.atBottom = false;
+  }
+
+  /** The first unread message of the shown conversation now, for the jump button. */
+  get firstUnread(): string | null {
+    const read = this.readUpTo[convKey(this.active)] ?? 0;
+    return this.list(this.active).find((i) => isUnread(i, read, this.since))?.id ?? null;
+  }
+
   markRead() {
-    if (!this.isOnScreen(this.active)) return;
+    if (!this.isOnScreen(this.active) || !this.atBottom) return;
     const key = convKey(this.active);
     const newest = Math.max(0, ...this.list(this.active).map((i) => i.received));
     if (newest > (this.readUpTo[key] ?? 0)) {
@@ -145,17 +188,26 @@ class ChatStore {
   }
 
   setOpen(open: boolean) {
+    const opening = open && !this.open;
     this.open = open;
     store(OPEN_KEY, open);
+    if (opening) this.captureUnread();
     this.markRead();
   }
 
   show(conversation: string | null) {
     if (conversation && !this.opened.includes(conversation)) this.opened = [...this.opened, conversation];
     if (conversation) this.hidden = this.hidden.filter((c) => c !== conversation);
+    const switching = this.active !== conversation || !this.open;
     if (this.active !== conversation) this.replyTo = null;
     this.active = conversation;
-    this.setOpen(true);
+    if (switching) {
+      this.atBottom = true;
+      this.captureUnread();
+    }
+    this.open = true;
+    store(OPEN_KEY, true);
+    this.markRead();
   }
 
   /** Close a private conversation tab (its messages stay). */
@@ -166,7 +218,7 @@ class ChatStore {
     this.readUpTo = { ...this.readUpTo, [key]: Math.max(newest, this.readUpTo[key] ?? 0) };
     store(READ_KEY, this.readUpTo);
     this.hidden = [...this.hidden.filter((c) => c !== conversation), conversation];
-    if (this.active === conversation) this.active = null;
+    if (this.active === conversation) this.show(null);
   }
 
   list(conversation: string | null): ChatItem[] {
@@ -225,9 +277,10 @@ class ChatStore {
       nick: this.nickOf(id),
       online: this.peers.some((p) => p.id === id && p.online),
       unread: this.unread(id),
+      muted: this.isMuted(id),
     }));
     privates.sort((a, b) => a.nick.localeCompare(b.nick));
-    return [{ id: null, nick: "", online: true, unread: this.unread(null) }, ...privates];
+    return [{ id: null, nick: "", online: true, unread: this.unread(null), muted: this.isMuted(null) }, ...privates];
   }
 }
 

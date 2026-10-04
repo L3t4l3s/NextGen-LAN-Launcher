@@ -106,8 +106,13 @@ the Tauri asset-protocol scope at runtime so the WebView can load them.
   nothing; it keeps every signed event without folding it (`ChatState::insert_opaque`,
   private bodies stay sealed) and answers each `Hello` like any peer. No forwarding is needed on
   one flat network, where every launcher reaches every other directly.
-* **Storage:** `<data>/chat/history.jsonl` (newest 5000 events by author time, in their signed
-  and sealed form; older ones are not taken in again) and `identity.json` (the secret key; the
+* **Storage:** `<data>/chat/history.jsonl` (events this launcher got in the last five days,
+  `KEEP_FOR`, at most the newest 5000, in their signed and sealed form). Older ones are dropped at
+  start and every minute, so the chat of the last LAN is gone at the next. Arrival on the own
+  clock decides, never the author's clock, which may be days off. Events travel with their age
+  (`Frame::Events.ages`, a duration, so no clock has to be right), and a launcher that catches up
+  late counts from when the event first reached the LAN, not from its own catch-up. Expired ids are kept in
+  `expired.json` for another five days so a peer that got them later cannot hand them back. and `identity.json` (the secret key; the
   nickname is the player name).
 * **Shell:** `src-tauri/src/chat.rs` starts and stops the chat with `settings.chatEnabled` and
   forwards changes as `chat-update`/`chat-reset`. The panel is `ChatPanel.svelte`; sounds are

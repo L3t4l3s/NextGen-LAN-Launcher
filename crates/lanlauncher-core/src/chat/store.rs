@@ -69,6 +69,27 @@ impl History {
     }
 }
 
+/// Ids that expired here ([`super::model::ChatState::expire`]), so peers
+/// cannot hand them back after a restart. Unreadable means none.
+pub fn load_gone(dir: &Path) -> std::collections::HashMap<String, i64> {
+    std::fs::read_to_string(dir.join("expired.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_gone(dir: &Path, gone: &std::collections::HashMap<String, i64>) {
+    let path = dir.join("expired.json");
+    let tmp = path.with_extension("json.tmp");
+    let written = serde_json::to_string(gone)
+        .map_err(std::io::Error::other)
+        .and_then(|json| std::fs::write(&tmp, json))
+        .and_then(|_| std::fs::rename(&tmp, &path));
+    if let Err(e) = written {
+        log::warn!("chat {}: {e}", path.display());
+    }
+}
+
 /// This launcher's key pair, made once and kept in `identity.json`. Its
 /// public half is the peer id, which keeps a private conversation together
 /// when the nickname changes. The file holds a secret: it stays in the
@@ -127,6 +148,7 @@ mod tests {
                 },
                 sig: "00".into(),
             },
+            born: None,
         }
     }
 

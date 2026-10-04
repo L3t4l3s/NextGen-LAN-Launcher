@@ -24,6 +24,11 @@
   fehlende Windows-Firewall-Regel (mit „Jetzt beheben“) und eine firewalld-Zone, die den Port
   sperrt. Alle Nachrichten sind signiert, niemand kann unter fremder Kennung schreiben oder
   löschen; private Nachrichten sind Ende-zu-Ende verschlüsselt. Ungetestet auf einer echten LAN.
+- Der Chat behält Nachrichten fünf Tage; ältere verschwinden, auch beim Archiv, und werden beim
+  Abgleich nicht wieder hergeholt. Der Chat der letzten LAN ist auf der nächsten also weg.
+  Jede Unterhaltung lässt sich einzeln stummschalten (die Glocke oben schaltet weiterhin alle).
+  Beim Öffnen einer Unterhaltung markiert eine Linie „Neue Nachrichten“ die erste ungelesene,
+  und die Ansicht beginnt dort; der Knopf unten springt zur ersten ungelesenen.
 - **Chat-Archiv `nll-chat-relay`** (optional): ein kleines Programm ohne Oberfläche für einen
   Rechner, der die ganze LAN läuft. Es hebt alle Nachrichten auf und gibt sie jedem, der seinen
   Launcher später startet; private Nachrichten bewahrt es verschlüsselt auf und stellt sie zu,

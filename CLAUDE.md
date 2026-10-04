@@ -415,7 +415,13 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   gemeldeten Peer weder umadressieren noch umbenennen. Spitznamen sind nicht eindeutig — nur die
   ID dahinter ist fälschungssicher; nirgends anders behaupten. Der Verlauf ist auf 5000 Events
   begrenzt (`trim`, `floor`, `Hello.since`), sonst sprengt die ID-Liste eines `Hello` die
-  Rahmengrenze. `nll-chat-relay` (`src/bin/`) ist derselbe Code mit `ChatConfig::relay`: keine
+  Rahmengrenze. Was dieser Launcher vor mehr als fünf Tagen bekommen hat (`KEEP_FOR`, **eigene
+  Ankunftszeit**, nie die Uhr des Absenders — die geht auf LAN-Rechnern gern Tage falsch), fliegt
+  beim Start und jede Minute raus. Beim Weiterreichen reist das Alter mit (`Frame::Events.ages`,
+  eine Dauer, also uhrunabhängig), sonst startet ein spät nachgeholter Beitrag seine fünf Tage neu
+  und taucht auf der nächsten LAN wieder auf. Die IDs merkt sich `expired.json`
+  (`ChatState::gone`).
+  `nll-chat-relay` (`src/bin/`) ist derselbe Code mit `ChatConfig::relay`: keine
   Person, bekommt private Events (versiegelt, `insert_opaque`) nur, wenn `launcher.ini` seine ID
   nennt (`chat_relay`, `Chat::set_trusted_relays`) — das `relay`-Flag im Beacon beweist nichts —,
   und reicht sie per `Hello` weiter; es leitet nichts live weiter, im flachen LAN erreicht jeder Launcher jeden direkt.

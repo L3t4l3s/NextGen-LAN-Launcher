@@ -196,7 +196,7 @@ async fn reactions_votes_and_new_names_travel() {
 
 #[test]
 fn large_histories_are_split_into_frames_of_bounded_size() {
-    let events: Vec<Event> = (1..=300)
+    let events: Vec<Stored> = (1..=300)
         .map(|seq| Event {
             id: format!("a:{seq}"),
             from: "a".into(),
@@ -210,6 +210,11 @@ fn large_histories_are_split_into_frames_of_bounded_size() {
             },
             sig: String::new(),
         })
+        .map(|event| Stored {
+            seen: 0,
+            event,
+            born: None,
+        })
         .collect();
     let frames = batches(&events);
     assert!(frames.len() > 1);
@@ -217,7 +222,10 @@ fn large_histories_are_split_into_frames_of_bounded_size() {
     let total: usize = frames
         .iter()
         .map(|f| match serde_json::from_str::<Frame>(f).unwrap() {
-            Frame::Events { events } => events.len(),
+            Frame::Events { events, ages } => {
+                assert_eq!(ages.len(), events.len());
+                events.len()
+            }
             Frame::Hello { .. } => 0,
         })
         .sum();
@@ -336,4 +344,85 @@ fn the_block_the_relay_prints_parses_as_launcher_ini() {
     let ini = format!("chat_relay ### NextGen chat relay {{\n{id}\n}}\n");
     let config = crate::launcher_ini::LanConfig::parse(&ini).unwrap();
     assert_eq!(relays_from_launcher_ini(&config.extra), vec![id]);
+}
+
+#[tokio::test]
+async fn messages_from_the_last_lan_are_gone_at_start() {
+    let lan = Lan::new(1);
+    let dir = lan.dirs[0].path();
+    let keys = store::load_keys(dir).unwrap();
+    let day = 24 * 3600 * 1000;
+    let stored: Vec<Stored> = [
+        (1, now_ms() - 6 * day, "last LAN"),
+        (2, now_ms() - day, "yesterday"),
+    ]
+    .into_iter()
+    .map(|(seq, ts, text)| {
+        let plain = Event {
+            id: format!("{}:{seq}", keys.id()),
+            from: keys.id().to_string(),
+            nick: "Me".into(),
+            seq,
+            ts,
+            to: None,
+            body: Body::Text {
+                text: text.into(),
+                reply_to: None,
+            },
+            sig: String::new(),
+        };
+        Stored {
+            seen: ts,
+            event: keys.seal(&plain).unwrap(),
+            born: None,
+        }
+    })
+    .collect();
+    let (history, _, _) = store::History::open(dir);
+    history.append(&stored);
+    let chat = lan.start(0, "Me").await;
+    assert_eq!(texts(&chat), ["yesterday"]);
+    // Remembered, so a peer that still has it cannot hand it back after a
+    // restart either.
+    assert!(store::load_gone(dir).contains_key(&format!("{}:1", keys.id())));
+    let on_disk = std::fs::read_to_string(dir.join("history.jsonl")).unwrap();
+    assert!(
+        !on_disk.contains(&format!("{}:1\"", keys.id())),
+        "rewritten without it"
+    );
+    chat.stop().await;
+}
+
+#[tokio::test]
+async fn caught_up_history_keeps_its_age() {
+    let lan = Lan::new(2);
+    let a = lan.start(0, "Alice").await;
+    a.send_text(None, "from yesterday", None).unwrap();
+    // Alice has had it for a day.
+    {
+        let mut state = lock(&a.inner.state);
+        let stored = state.stored();
+        let mut fresh = ChatState::new(&a.me());
+        for s in stored {
+            let plain = a.inner.keys.open(&s.event).unwrap();
+            fresh.insert_opened(plain, s.event, s.seen - 24 * 3600 * 1000);
+        }
+        *state = fresh;
+    }
+    let b = lan.start(1, "Bob").await;
+    until("catch-up", || texts(&b).len() == 1).await;
+    let a_day = 24 * 3600 * 1000;
+    // For "unread", it arrived just now ...
+    let received = b.snapshot().items[0].received;
+    assert!(now_ms() - received < 60_000, "new to Bob");
+    // ... but its five days count from when Alice got it, on disk too.
+    let born = lock(&b.inner.state).stored()[0].born();
+    assert!(
+        (now_ms() - born - a_day).abs() < 60_000,
+        "expires with Alice's copy"
+    );
+    let on_disk = store::History::open(lan.dirs[1].path()).1;
+    assert_eq!(on_disk[0].born(), born);
+    a.stop().await;
+    b.stop().await;
 }
