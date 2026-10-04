@@ -1525,6 +1525,7 @@ pub fn run() {
                 catalog_sig: std::sync::Mutex::new(CatalogSig::default()),
                 catalog_reload: tokio::sync::Mutex::new(()),
                 config_lock: std::sync::Mutex::new(()),
+                prefix_use: std::sync::Mutex::new(Default::default()),
                 runner_choice: tokio::sync::Mutex::new(()),
                 startup_catalog: RwLock::new(None),
             });
@@ -1559,6 +1560,7 @@ pub fn run() {
             commands::reset_game_config,
             commands::share_game_config,
             commands::export_game_config,
+            commands::install_components,
             commands::save_settings,
             commands::frontend_ready,
             commands::get_last_launch,

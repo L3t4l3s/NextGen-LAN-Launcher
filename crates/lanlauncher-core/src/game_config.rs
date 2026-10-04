@@ -10,7 +10,9 @@
 //! `[platform.linux]` block of one tester and the `[platform.macos]` block of
 //! another merge into one file for the next release.
 
-use crate::manifest::{is_safe_relative, ConfigOverlay, Manifest, PlatformOverride, Runner};
+use crate::manifest::{
+    is_safe_relative, is_winetricks_verb, ConfigOverlay, Manifest, PlatformOverride, Runner,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -41,6 +43,9 @@ pub struct GameConfig {
     pub dll_overrides: String,
     /// Programs in front of the start, e.g. `gamemoderun mangohud`.
     pub wrapper: String,
+    /// Windows components for the prefix, as winetricks verbs separated by
+    /// spaces: `directplay vcrun2010`.
+    pub winetricks: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -104,6 +109,7 @@ impl GameConfig {
             } else {
                 String::new()
             },
+            winetricks: spec.winetricks.join(" "),
         }
     }
 
@@ -141,6 +147,14 @@ impl GameConfig {
             split_words(&self.args).map_err(|e| ConfigError(format!("err.config_quotes|{e}")))?;
         let wrapper = split_words(&self.wrapper)
             .map_err(|e| ConfigError(format!("err.config_quotes|{e}")))?;
+        let verbs: Vec<String> = self
+            .winetricks
+            .split_whitespace()
+            .map(String::from)
+            .collect();
+        if let Some(bad) = verbs.iter().find(|v| !is_winetricks_verb(v)) {
+            return Err(ConfigError(format!("err.config_verb|{bad}")));
+        }
         let mut env = BTreeMap::new();
         for var in &self.env {
             let name = var.name.trim();
@@ -167,6 +181,7 @@ impl GameConfig {
             workdir: (workdir != shown.workdir).then_some(workdir),
             runner: (self.runner != spec.runner).then_some(self.runner),
             wrapper: (wrapper != shown_wrapper).then_some(wrapper),
+            winetricks: (verbs != spec.winetricks).then_some(verbs),
             unset_env: spec
                 .env
                 .keys()
@@ -820,6 +835,42 @@ mod tests {
         assert_eq!(block.exe.as_deref(), Some("tools/Config.exe"));
         assert_eq!(block.args.as_deref(), Some(&[][..]));
         assert_eq!(block.workdir.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn components_are_kept_as_verbs_and_refused_as_options() {
+        let profile = base();
+        let config = GameConfig {
+            winetricks: "  directplay   vcrun2010 sound=alsa ".into(),
+            ..GameConfig::from_manifest(Some(&profile), "linux", None)
+        };
+        let block = config.to_block(Some(&profile), "q3", "linux").unwrap();
+        assert_eq!(
+            block.winetricks.as_deref().unwrap(),
+            ["directplay", "vcrun2010", "sound=alsa"]
+        );
+        let m = laid(&profile, block);
+        assert_eq!(
+            m.launch_for("linux").winetricks,
+            ["directplay", "vcrun2010", "sound=alsa"]
+        );
+        assert_eq!(
+            GameConfig::from_manifest(Some(&m), "linux", None).winetricks,
+            "directplay vcrun2010 sound=alsa"
+        );
+        for bad in ["--force", "a;b", "$(x)"] {
+            let config = GameConfig {
+                winetricks: format!("directplay {bad}"),
+                ..config.clone()
+            };
+            assert_eq!(
+                config
+                    .to_block(Some(&profile), "q3", "linux")
+                    .unwrap_err()
+                    .0,
+                format!("err.config_verb|{bad}")
+            );
+        }
     }
 
     #[test]

@@ -3,6 +3,7 @@
 
 import type {
   BootstrapInfo,
+  ComponentsReport,
   ConfigReport,
   Extra,
   FixAction,
@@ -73,6 +74,7 @@ export const api = {
   shareGameConfig: (gameId: string, comment: string) => invoke<ConfigReport>("share_game_config", { gameId, comment }),
   /** Opens the system's save dialog; the saved path, or null when cancelled. */
   exportGameConfig: (fileName: string, contents: string) => invoke<string | null>("export_game_config", { fileName, contents }),
+  installComponents: (gameId: string, force = false) => invoke<ComponentsReport>("install_components", { gameId, force }),
   settings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { settings }),
   diagnostics: () => invoke<Report>("run_diagnostics"),

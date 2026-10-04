@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- macOS/Linux: Windows-Komponenten wie DirectPlay, Visual-C++-Laufzeiten oder d3dx9 lassen sich
+  pro Spiel eintragen (winetricks-Verben, im Profil `winetricks = [...]` oder in der
+  Startkonfiguration) und per Knopf in den Prefix des Spiels installieren – mit Wine und Proton,
+  nicht mit CrossOver. Ohne Internet nennt der Launcher, was fehlt; einmal mit Internet
+  installiert, bleiben die Komponenten im Prefix. winetricks (fest auf 20260125) und unter Linux
+  cabextract werden mitgeliefert, denn SteamOS bringt beides nicht mit. Schon Installiertes
+  überspringt winetricks; „Erneut installieren“ erzwingt es (z. B. nach einem Proton-Update).
+  Während der Installation startet das Spiel nicht (und ein laufendes Spiel verhindert sie), nach 45 Minuten wird ein hängender
+  Installer samt Wine-Prozessen beendet. Befehle von winetricks selbst (`annihilate`, `shell`,
+  `prefix=` …) sind als Verb nicht erlaubt.
+
 - macOS/Linux: In den Spieldetails gibt es eine **Startkonfiguration**: Startdatei, Argumente,
   Arbeitsordner, Kompatibilitätsschicht, vorangestellte Programme (z. B. `gamemoderun`,
   `gamescope`), DLL-Overrides und Umgebungsvariablen. Sie wird pro Spiel und Plattform

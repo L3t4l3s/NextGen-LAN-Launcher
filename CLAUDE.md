@@ -325,6 +325,65 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   `spawn` vorangestellt; `program` bleibt Wine/Proton, sonst sähen Prefix-Aufzeichnung und
   `cxbottle` das Falsche. Berichte gehen an `game_config::REPORT_EMAIL` oder als Issue an
   `REPORT_REPOSITORY`; `mailto:` ist dafür in `open_url` erlaubt.
+- **Windows-Komponenten (winetricks):** Profile nennen winetricks-Verben (`winetricks = […]`,
+  `manifest::is_winetricks_verb`: nie eine Option mit `-` und keiner der eigenen Befehle von
+  winetricks — `annihilate` löscht den Prefix samt Spielständen, und `--unattended` beantwortet die
+  Rückfrage mit Ja; `prefix=`, `shell`, `*.verb` ebenso gesperrt). Installiert wird **nur per
+  Knopf** (`install_components`), nie von selbst — dauert Minuten und braucht meist einmal
+  Internet. Im Demo-Modus gesperrt.
+  - *Ziel:* `launch/winetricks.rs` nimmt den Prefix aus dem Startplan: Wine `WINEPREFIX`, Proton
+    `<compat>/pfx` mit Protons Wine (`files/bin/wine`, früher `dist/`), wie protontricks. Proton
+    erkennt `target` am Programm `proton`, nicht an `STEAM_COMPAT_DATA_PATH` (das kann ein Profil
+    auch einem Wine-Start mitgeben). Vor dem ersten Proton-Start gibt es keinen Prefix
+    (`err.components_start_first`), CrossOver wird abgelehnt. Ein Wine-Start gibt `WINEARCH`,
+    `WINEDLLPATH`, `WINELOADER`, `WINESERVER` weiter (`CARRIED`), sonst würde ein `win32`-Prefix
+    64-bittig angelegt; liegt neben dem Wine ein `wineserver`, gilt der (winetricks sucht sonst
+    `${WINE}server` und dann im `PATH` — „version mismatch“).
+  - *Proton:* **nur Wine** bekommt Protons Bibliotheken (Proton 8+: `lib/x86_64-linux-gnu`,
+    `lib/i386-linux-gnu`; davor `lib64`/`lib`). `WINE`/`WINESERVER` zeigen auf Platzhalter-Skripte
+    in `<data>/tools/proton-shims` (`SHIM`), die Protons gleichnamige Binärdatei mit
+    `LD_LIBRARY_PATH` starten; `WINE_BIN`/`WINESERVER_BIN` nennen winetricks die echten
+    (Architektur-Erkennung). `LD_LIBRARY_PATH` für den ganzen Lauf würde curl, sha256sum und
+    cabextract Protons Bibliotheken unterschieben. `WINELOADER` bleibt die echte Datei, Wine sucht
+    daneben seinen Preloader — und der Platzhalter muss so heißen wie die Binärdatei, Wine startet
+    sich unter diesem Namen neu.
+  - *Ergebnis:* **ein winetricks-Aufruf pro Verb, der Exit-Code entscheidet.** `winetricks.log`
+    taugt dafür nicht: winetricks trägt ein Verb ein, *bevor* es prüft, ob es wirklich drin ist,
+    Einstellungen und Aliase stehen unter anderem Namen darin (`vd`, `native d3d9`, `dotnet20`),
+    und Abhängigkeiten tauchen als eigene Aufrufe auf. Nach einem Fehler laufen die übrigen Verben
+    trotzdem. winetricks überspringt Installiertes selbst und wendet Einstellungen (`winxp`) erneut
+    an; „Erneut installieren“ hängt `--force` an. Die Ausgabe sagt nur, *warum* etwas fehlt
+    (`Downloading … failed` = offline, `Cannot find cabextract`).
+  - *Mitgeliefert:* winetricks fest auf `winetricks.lock.json`, unter Linux cabextract samt
+    libmspack hinter einem Wrapper (`tools/fetch-winetricks.mjs`, SteamOS hat kein cabextract).
+    Vor dem Lauf nach `<data>/tools/winetricks` kopiert, weil Ressourcen das Exec-Bit verlieren und
+    ein AppImage schreibgeschützt ist; unveränderte Dateien bleiben stehen (ein laufender Job führt
+    sie aus), was das Paket nicht mehr mitbringt, fliegt raus. Läuft per `sh`.
+  - *Abbruch:* eigene Prozessgruppe je Aufruf; nach 45 Minuten (für alle Verben zusammen) wird die
+    Gruppe beendet und `wine wineboot -k` räumt den Prefix
+    (`a_run_past_its_limit_ends_its_whole_process_group`); wird der Lauf verworfen, beendet
+    `GroupGuard` die Gruppe ebenso (einmal, per `libc::kill`; danach ist die ID vergessen, sie
+    wird nach dem Abholen des Prozesses neu vergeben). Beendet sich der Launcher selbst mitten im
+    Lauf, laufen die Installer weiter — dagegen hilft nichts, was im Prozess steckt.
+  - *Sperren* (`AppState::prefix_use`): immer nur ein Lauf. Start, Update, Reparieren,
+    Deinstallieren, Abbrechen, Wahl des Werkzeugs und Speichern/Zurücksetzen der Konfiguration
+    (`GameUse`) verweigern das Spiel, dessen Prefix gerade befüllt wird; `play_game` vergleicht
+    zusätzlich den Prefix des Plans (Profile dürfen sich einen teilen; Schlüssel über den nächsten
+    existierenden Ordner kanonisiert, `prefix_key`, weil winetricks den Prefix erst anlegt).
+    Umgekehrt verweigert der Lauf, solange irgendein Spiel einen `GameUse` hält, ein Spiel ohne
+    Receipt oder beim Prüfen/Entpacken/Setup (ein laufender Update-Download lässt die alte Version
+    stehen, die startet), und einen Prefix, in dem noch ein Prozess läuft:
+    `winetricks::prefix_in_use` liest `WINEPREFIX` aus der Umgebung aller Prozesse (relativ zu
+    deren Arbeitsordner), bei Proton auch `STEAM_COMPAT_DATA_PATH` (das Python-`proton` trägt nur
+    das), und übergeht Wines eigene Prozesse wie `wineserver`, die ein Spiel um Sekunden überleben
+    — nicht die PID des Starts, viele Spiele starten über ein Programm, das sich beendet.
+    Das sind Sperren pro Befehl; ein neuer Befehl, der Spielordner anfasst, braucht `GameUse`.
+  - Ein Lauf zählt für die Prefix-Aufzeichnung wie ein Start (`remember_default_prefix_user`),
+    denn winetricks legt den Prefix eines nie gestarteten Wine-Spiels an.
+  - Echter Lauf mit Wine: `NLL_TEST_WINETRICKS=<script> NLL_TEST_WINE_BIN=/usr/lib/wine cargo
+    test -p lanlauncher-core a_real_winetricks_run -- --ignored` (braucht `wine` und `xvfb-run`;
+    der zweite Test baut aus den Wine-Binärdateien des Rechners ein Proton-Layout und läuft über
+    die Platzhalter).
 - **Proton liegt nie im `PATH`:** Es wohnt in einer Steam-Bibliothek, und ein Steam Deck hat
   mindestens zwei (intern und SD-Karte, letztere unter `/run/media/…`). Die Bibliotheken stehen in
   `<steam root>/steamapps/libraryfolders.vdf`; wer die nicht liest, findet auf einem Deck die

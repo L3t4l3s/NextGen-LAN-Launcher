@@ -45,6 +45,7 @@
     ],
     "resources": {
       "resources/resilio/": "resilio/",
+      "resources/winetricks/": "winetricks/",
       "../manifests/": "manifests/",
       "../themes/": "themes/",
       "../assets/covers/": "covers/"

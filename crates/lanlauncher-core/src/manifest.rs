@@ -72,6 +72,11 @@ pub struct LaunchSpec {
     /// or one guessed from `game_start.cmd` must not start host programs.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub wrapper: Vec<String>,
+    /// Windows components the game needs in its prefix, as winetricks verbs
+    /// (`directplay`, `vcrun2010`, `d3dx9`). Installed on request from the
+    /// game details, never on their own.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub winetricks: Vec<String>,
     /// Alternative entry points (e.g. several games in one package).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub alternatives: Vec<Alternative>,
@@ -118,6 +123,7 @@ pub struct PlatformOverride {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
     pub wrapper: Option<Vec<String>>,
+    pub winetricks: Option<Vec<String>>,
     /// Variables of `[launch].env` this platform goes without.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub unset_env: Vec<String>,
@@ -191,6 +197,9 @@ impl PlatformOverride {
         if self.wrapper.is_some() {
             out.wrapper = self.wrapper.clone();
         }
+        if self.winetricks.is_some() {
+            out.winetricks = self.winetricks.clone();
+        }
         for name in &self.unset_env {
             out.env.remove(name);
             if !out.unset_env.contains(name) {
@@ -230,6 +239,48 @@ impl Default for Manifest {
             platform: BTreeMap::new(),
         }
     }
+}
+
+/// A winetricks verb as a profile may name one: `directplay`, `vcrun2010`,
+/// `sound=alsa`. Never an option (`--force`, `-q`) — the launcher decides
+/// how winetricks runs — nothing a shell would read as more than a word, and
+/// none of winetricks' own commands: `annihilate` deletes the prefix with
+/// the savegames in it (and `--unattended` answers its question with yes),
+/// `prefix=` moves the install elsewhere, `shell` or `winecfg` wait for a
+/// person, and a `*.verb` file is a script of the profile's choosing.
+pub fn is_winetricks_verb(verb: &str) -> bool {
+    const COMMANDS: [&str; 20] = [
+        "annihilate",
+        "apps",
+        "attended",
+        "benchmarks",
+        "dlls",
+        "explorer",
+        "folder",
+        "fonts",
+        "help",
+        "list",
+        "main",
+        "prefix",
+        "regedit",
+        "settings",
+        "shell",
+        "taskmgr",
+        "unattended",
+        "uninstaller",
+        "winecfg",
+        "winecmd",
+    ];
+    let word = verb.split('=').next().unwrap_or(verb);
+    !verb.is_empty()
+        && !verb.starts_with('-')
+        && verb
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '=' | '+' | '-'))
+        && !COMMANDS.contains(&word)
+        && !word.starts_with("list-")
+        && !matches!(word, "arch" | "wine_misc_exe")
+        && !verb.ends_with(".verb")
 }
 
 /// Reject relative paths that escape `local/`.
@@ -278,7 +329,27 @@ impl Manifest {
         if !workdir_ok(&self.launch.workdir) {
             return Err(err("launch.workdir must be relative to local/"));
         }
+        if let Some(bad) = self
+            .launch
+            .winetricks
+            .iter()
+            .find(|v| !is_winetricks_verb(v))
+        {
+            return Err(err(&format!(
+                "launch.winetricks: `{bad}` is no winetricks verb"
+            )));
+        }
         for (name, o) in &self.platform {
+            if let Some(bad) = o
+                .winetricks
+                .iter()
+                .flatten()
+                .find(|v| !is_winetricks_verb(v))
+            {
+                return Err(err(&format!(
+                    "platform.{name}.winetricks: `{bad}` is no winetricks verb"
+                )));
+            }
             if o.exe
                 .as_deref()
                 .is_some_and(|e| !e.is_empty() && !is_safe_relative(e))
@@ -335,6 +406,9 @@ impl Manifest {
             }
             if let Some(wrapper) = &o.wrapper {
                 spec.wrapper = wrapper.clone();
+            }
+            if let Some(verbs) = &o.winetricks {
+                spec.winetricks = verbs.clone();
             }
             if let Some(r) = o.runner {
                 spec.runner = r;
@@ -755,6 +829,42 @@ mod tests {
         .overlay_onto(&mut m, "linux");
         assert!(m.wrapper_is_trusted());
         assert!(m.launch_for("linux").wrapper.is_empty());
+    }
+
+    #[test]
+    fn winetricks_verbs_are_words_and_never_options() {
+        for ok in [
+            "directplay",
+            "vcrun2010",
+            "d3dx9_43",
+            "sound=alsa",
+            "dotnet4.8",
+            "vc++",
+        ] {
+            assert!(is_winetricks_verb(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "--force",
+            "-q",
+            "a b",
+            "x;rm",
+            "$(id)",
+            "a/b",
+            "annihilate",
+            "shell",
+            "winecmd",
+            "prefix=other",
+            "arch=win32",
+            "list-installed",
+            "evil.verb",
+            "winecfg",
+        ] {
+            assert!(!is_winetricks_verb(bad), "{bad}");
+        }
+        let text =
+            "schema = 1\nid = \"g\"\n[launch]\nexe = \"a.exe\"\nwinetricks = [\"--force\"]\n";
+        assert!(Manifest::parse(text, Path::new("g.toml")).is_err());
     }
 
     #[test]

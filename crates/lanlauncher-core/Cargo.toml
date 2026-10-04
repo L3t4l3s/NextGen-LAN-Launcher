@@ -32,6 +32,9 @@ walkdir = "2.5"
 async-trait = "0.1"
 futures = "0.3"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile = "3.27"
 tokio = { version = "1.53", features = ["full", "test-util"] }

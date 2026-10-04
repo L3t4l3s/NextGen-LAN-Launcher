@@ -383,6 +383,8 @@ async fn prepare_install_root(
 
 #[tauri::command]
 pub async fn install_game(state: State<'_, Arc<AppState>>, game_id: String) -> Cmd<()> {
+    // An update replaces the files the prefix lives among.
+    let _use = GameUse::claim(&state.prefix_use, &game_id)?;
     let manager = manager(&state).await?;
     let created = prepare_install_root(&state, &manager, &game_id).await?;
     match manager.install(&game_id).await {
@@ -411,6 +413,9 @@ pub async fn repair_game(state: State<'_, Arc<AppState>>, game_id: String) -> Cm
 }
 
 pub(crate) async fn repair_game_inner(state: &AppState, game_id: &str) -> Cmd<()> {
+    // Only for the request: the work after it shows in the game's phase,
+    // which a component installation checks.
+    let _use = GameUse::claim(&state.prefix_use, game_id)?;
     // A repair usually follows something the user just did to the folder;
     // the engine's state has to be read fresh, not from the last snapshot.
     if let Some(t) = state.transport.read().await.as_ref() {
@@ -436,6 +441,7 @@ pub async fn pause_game(state: State<'_, Arc<AppState>>, game_id: String, paused
 /// version (and its savegames) was kept because only an update was cancelled.
 #[tauri::command]
 pub async fn cancel_download(state: State<'_, Arc<AppState>>, game_id: String) -> Cmd<bool> {
+    let _use = GameUse::claim(&state.prefix_use, &game_id)?;
     manager(&state)
         .await?
         .cancel_download(&game_id)
@@ -445,6 +451,7 @@ pub async fn cancel_download(state: State<'_, Arc<AppState>>, game_id: String) -
 
 #[tauri::command]
 pub async fn uninstall_game(state: State<'_, Arc<AppState>>, game_id: String) -> Cmd<()> {
+    let _use = GameUse::claim(&state.prefix_use, &game_id)?;
     manager(&state)
         .await?
         .uninstall(&game_id)
@@ -457,6 +464,16 @@ async fn build_plan(
     game_id: &str,
     alternative: Option<usize>,
 ) -> Cmd<LaunchPlan> {
+    Ok(plan_with_profile(state, game_id, alternative).await?.0)
+}
+
+/// The plan and the profile it was made from, from one resolution: what a
+/// caller reads beside the plan must belong to the same configuration.
+async fn plan_with_profile(
+    state: &AppState,
+    game_id: &str,
+    alternative: Option<usize>,
+) -> Cmd<(LaunchPlan, Option<Manifest>)> {
     let catalog = state.catalog().await;
     let game = catalog.game(game_id).ok_or("err.unknown_game")?;
     let settings = state.settings.read().await.clone();
@@ -479,7 +496,8 @@ async fn build_plan(
             receipt: receipt.as_ref(),
             alternative,
         };
-        launch::plan(&ctx).map_err(err)
+        let plan = launch::plan(&ctx).map_err(err)?;
+        Ok((plan, manifest))
     })
     .await
     .map_err(|e| format!("err.plan_task|{e}"))?
@@ -555,6 +573,8 @@ pub async fn set_game_runner(
     program: Option<String>,
     kind: Option<lanlauncher_core::manifest::Runner>,
 ) -> Cmd<()> {
+    // Which prefix the game uses may change with the tool.
+    let _use = GameUse::claim(&state.prefix_use, &game_id)?;
     // One choice at a time, and taken before anything else here awaits, so
     // picks queue up in the order their commands started. The scan below
     // runs without the settings lock; without this, a quick second pick
@@ -653,7 +673,13 @@ pub async fn play_game(
     if state.demo {
         return Err("err.demo_no_play".into());
     }
+    // Held until the game has been spawned; from then on a component
+    // installation finds it running in its prefix.
+    let _starting = GameUse::claim(&state.prefix_use, &game_id)?;
     let plan = build_plan(&state, &game_id, alternative).await?;
+    if prefix_being_filled(&state, &plan) {
+        return Err("err.components_busy_game".into());
+    }
     let (allow, lang, player, paths) = {
         let s = state.settings.read().await;
         (
@@ -1588,6 +1614,8 @@ pub async fn save_game_config(
     game_id: String,
     config: lanlauncher_core::game_config::GameConfig,
 ) -> Cmd<bool> {
+    // The tool, and with it the prefix, may change.
+    let _use = GameUse::claim(&state.prefix_use, &game_id)?;
     let (game, paths) = game_and_paths(&state, &game_id).await?;
     let state = state.inner().clone();
     // Reading profiles, the receipt and the configuration: a blocking thread.
@@ -1652,6 +1680,7 @@ fn clear_exe_override(paths: &lanlauncher_core::paths::GamePaths) -> Cmd<()> {
 /// Drop this platform's configuration; the profile applies again.
 #[tauri::command]
 pub async fn reset_game_config(state: State<'_, Arc<AppState>>, game_id: String) -> Cmd<()> {
+    let _use = GameUse::claim(&state.prefix_use, &game_id)?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || -> Cmd<()> {
         let _one_at_a_time = state.config_lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -1790,4 +1819,223 @@ pub async fn export_game_config(
     })
     .await
     .map_err(err)?
+}
+
+/// What installing a game's Windows components came to.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComponentsReport {
+    #[serde(flatten)]
+    pub outcome: launch::winetricks::Outcome,
+    /// winetricks' output, for a failure the message cannot explain.
+    pub log: String,
+}
+
+/// A start, uninstall, repair or cancel of `game` in progress, see
+/// [`crate::state::AppState::prefix_use`]. Refused while components are
+/// being installed for the game: its prefix lives among its files.
+struct GameUse<'a>(&'a std::sync::Mutex<crate::state::PrefixUse>, String);
+
+impl<'a> GameUse<'a> {
+    fn claim(lock: &'a std::sync::Mutex<crate::state::PrefixUse>, game: &str) -> Cmd<Self> {
+        let mut used = lock.lock().unwrap_or_else(|e| e.into_inner());
+        if used.installing.as_ref().is_some_and(|(g, _)| g == game) {
+            return Err("err.components_busy_game".into());
+        }
+        used.busy.push(game.to_string());
+        Ok(Self(lock, game.to_string()))
+    }
+}
+
+impl Drop for GameUse<'_> {
+    fn drop(&mut self) {
+        let mut used = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = used.busy.iter().position(|g| *g == self.1) {
+            used.busy.remove(i);
+        }
+    }
+}
+
+/// The component installation in progress, cleared when it ends.
+struct ComponentsRun<'a>(&'a std::sync::Mutex<crate::state::PrefixUse>);
+
+impl<'a> ComponentsRun<'a> {
+    fn claim(
+        lock: &'a std::sync::Mutex<crate::state::PrefixUse>,
+        game: &str,
+        prefix: &std::path::Path,
+    ) -> Cmd<Self> {
+        let mut used = lock.lock().unwrap_or_else(|e| e.into_inner());
+        if used.installing.is_some() {
+            return Err("err.components_busy".into());
+        }
+        // Any game, not only this one: profiles may share a prefix, and a
+        // start, repair or uninstall takes seconds.
+        if !used.busy.is_empty() {
+            return Err("err.components_game_busy".into());
+        }
+        used.installing = Some((game.to_string(), prefix.to_path_buf()));
+        Ok(Self(lock))
+    }
+}
+
+impl Drop for ComponentsRun<'_> {
+    fn drop(&mut self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).installing = None;
+    }
+}
+
+/// A prefix as [`AppState::prefix_use`] keeps it: resolved before the lock
+/// is taken, so no file system call happens under it. Through the nearest
+/// folder that exists — a prefix winetricks is about to create resolves to
+/// the same key before and after (`/home` → `/var/home` on Bazzite).
+fn prefix_key(prefix: &std::path::Path) -> std::path::PathBuf {
+    let mut rest = Vec::new();
+    let mut dir = prefix;
+    loop {
+        if let Ok(real) = std::fs::canonicalize(dir) {
+            return rest.iter().rev().fold(real, |path, part| path.join(part));
+        }
+        match (dir.file_name(), dir.parent()) {
+            (Some(name), Some(parent)) => {
+                rest.push(name.to_os_string());
+                dir = parent;
+            }
+            _ => return prefix.to_path_buf(),
+        }
+    }
+}
+
+/// Whether `plan` would start in the prefix components are being
+/// installed into right now — another game's, when profiles share one.
+fn prefix_being_filled(state: &AppState, plan: &LaunchPlan) -> bool {
+    let running = state
+        .prefix_use
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .installing
+        .is_some();
+    if !running {
+        return false;
+    }
+    let Ok(target) = launch::winetricks::target(plan) else {
+        return false;
+    };
+    let key = prefix_key(target.prefix());
+    let used = state.prefix_use.lock().unwrap_or_else(|e| e.into_inner());
+    used.installing
+        .as_ref()
+        .is_some_and(|(_, prefix)| *prefix == key)
+}
+
+/// Install the Windows components the profile in force names (winetricks
+/// verbs) into the prefix the game starts in. Only on request: it takes
+/// minutes and usually needs the internet once. One run at a time, and the
+/// game does not start into a prefix that is being changed.
+#[tauri::command]
+pub async fn install_components(
+    state: State<'_, Arc<AppState>>,
+    game_id: String,
+    force: bool,
+) -> Cmd<ComponentsReport> {
+    if cfg!(windows) {
+        return Err("err.components_native".into());
+    }
+    if state.demo {
+        return Err("err.demo_no_play".into());
+    }
+    // The verbs are not part of the plan; both come from one resolution, so
+    // a configuration saved meanwhile cannot mix into one of them.
+    let (plan, manifest) = plan_with_profile(&state, &game_id, None).await?;
+    let verbs = manifest
+        .as_ref()
+        .map(|m| m.launch_for(Manifest::current_platform()).winetricks)
+        .unwrap_or_default();
+    if verbs.is_empty() {
+        return Err("err.components_none".into());
+    }
+    let target = launch::winetricks::target(&plan).map_err(|refusal| refusal.code())?;
+    let paths = state.settings.read().await.library.game_paths(&game_id);
+    // File system work on a blocking thread, not on a worker other commands
+    // wait for (an SD card is slow).
+    let (key, receipt, existed_before) = {
+        let (prefix, paths, plan, game_id) = (
+            target.prefix().to_path_buf(),
+            paths.clone(),
+            plan.clone(),
+            game_id.clone(),
+        );
+        tauri::async_runtime::spawn_blocking(move || {
+            let receipt = paths
+                .as_ref()
+                .is_some_and(|paths| Receipt::load(&paths.receipt).is_some());
+            // As a start asks it: winetricks may be what creates the prefix,
+            // and the record of who used it must not take that for a prefix
+            // from before.
+            let existed_before = paths.as_ref().is_some_and(|paths| {
+                launch::unix::own_prefix_exists_before_start(&plan, paths, &game_id)
+            });
+            (prefix_key(&prefix), receipt, existed_before)
+        })
+        .await
+        .map_err(err)?
+    };
+    let _run = ComponentsRun::claim(&state.prefix_use, &game_id, &key)?;
+    // Into an installed game only: one never installed or just removed has
+    // no receipt, and a repair or update being checked or extracted shows
+    // in its phase. An update still downloading leaves the old version in
+    // place, and that one starts.
+    let phase = manager(&state).await?.tracker_phase(&game_id).await;
+    use lanlauncher_core::install::Phase;
+    if !receipt
+        || matches!(
+            phase,
+            Some(Phase::Verifying | Phase::Extracting | Phase::Setup)
+        )
+    {
+        return Err("err.components_not_ready".into());
+    }
+    // After the claim: a start from now on is refused, and one before it
+    // runs in the prefix by now. A game there would share its wineserver
+    // with the installers, and the time limit's `wineboot -k` would end it.
+    let probe = target.clone();
+    let in_use =
+        tauri::async_runtime::spawn_blocking(move || launch::winetricks::prefix_in_use(&probe))
+            .await
+            .map_err(err)?;
+    if in_use {
+        return Err("err.components_game_running".into());
+    }
+    let host = launch::winetricks::HostEnv::current();
+    let (resource_dir, data_dir, path) = (
+        state.resource_dir.clone(),
+        state.dirs.data.clone(),
+        host.path.clone(),
+    );
+    let proton = matches!(target, launch::winetricks::Target::Proton { .. });
+    let tools = tauri::async_runtime::spawn_blocking(move || {
+        launch::winetricks::tools(resource_dir.as_deref(), &data_dir, &path, proton)
+    })
+    .await
+    .map_err(err)?
+    .ok_or("err.components_no_winetricks")?;
+    let job = launch::winetricks::job(&target, &verbs, force, &tools, &host);
+    let log = state.launch_log(&game_id, "winetricks");
+    // Long enough for the .NET runtimes; an installer waiting for a click
+    // nobody sees ends here instead of holding the prefix for ever.
+    let outcome = launch::winetricks::run(&job, &log, std::time::Duration::from_secs(45 * 60))
+        .await
+        .map_err(|e| format!("err.components_run|{e}"))?;
+    // The game's Wine or Proton ran in its prefix, as on a start.
+    if let Some(paths) = paths {
+        let game_id = game_id.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            launch::unix::remember_default_prefix_user(&plan, &paths, &game_id, existed_before)
+        })
+        .await;
+    }
+    Ok(ComponentsReport {
+        outcome,
+        log: log.display().to_string(),
+    })
 }

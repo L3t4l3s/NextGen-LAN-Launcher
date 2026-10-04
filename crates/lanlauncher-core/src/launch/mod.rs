@@ -11,6 +11,7 @@ pub mod elevate;
 pub mod proton;
 pub mod unix;
 pub mod windows;
+pub mod winetricks;
 
 use crate::error::{Error, Result};
 use crate::install::Receipt;
@@ -541,6 +542,23 @@ pub fn host_command(program: impl AsRef<std::ffi::OsStr>) -> tokio::process::Com
     let mut cmd = tokio::process::Command::new(program);
     give_the_host_environment_back(&mut cmd);
     cmd
+}
+
+/// The value of `name` a child started with [`host_command`] sees: what
+/// the recipe below sets or removes, else the launcher's own. Read back from
+/// the recipe itself, so the two cannot drift apart; it only ever sets and
+/// removes single variables, never clears the environment.
+pub fn host_value(name: &str) -> Option<String> {
+    let cmd = host_command("true");
+    let set = cmd
+        .as_std()
+        .get_envs()
+        .find(|(key, _)| *key == name)
+        .map(|(_, value)| value.map(|v| v.to_string_lossy().into_owned()));
+    match set {
+        Some(value) => value,
+        None => std::env::var(name).ok(),
+    }
 }
 
 /// The one recipe for a child of the machine rather than of the launcher,

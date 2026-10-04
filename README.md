@@ -198,6 +198,13 @@ again.
   real CrossOver: a failing `cxbottle --create` no longer stops the start (a missed probe made
   games with an existing bottle unstartable). What it said is in the log and at the top of a start
   transcript captured from Diagnostics.
+- **Windows components (winetricks):** tested here with a real Wine 9 and winetricks 20260125
+  (`winxp` installed into a prefix, also through the Proton stand-ins on a Proton layout built from
+  the host's Wine, an offline download recognised from winetricks' own output), and the bundled
+  cabextract ran without the system's libmspack. Not tried: a real Proton's Wine running winetricks
+  on a Steam Deck (the way protontricks does it, but without the Steam runtime), a real
+  installer such as DirectPlay or vcrun, and the button in the real app; the CI step that bundles
+  winetricks and cabextract runs first on the next full CI.
 - **Launch configurations from testers:** the editor, the saved profile and the report are covered
   by tests and were clicked through in the browser mock at Steam Deck resolution; a wrapper was run
   in front of a real program in a test. Not tried: the real app writing the profile, opening the

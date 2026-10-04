@@ -1,5 +1,12 @@
+<script lang="ts" module>
+  import type { ComponentsReport as Report } from "$lib/types";
+  // Outlive the dialog: a run takes minutes, and closing and reopening the
+  // dialog must still show that it runs and, afterwards, how it went.
+  const componentRuns = $state<{ running: string | null; results: Record<string, Report> }>({ running: null, results: {} });
+</script>
+
 <script lang="ts">
-  import type { ConfigReport, GameConfig, GameConfigView, GameView, RunnerKind } from "$lib/types";
+  import type { ComponentsReport, ConfigReport, GameConfig, GameConfigView, GameView, RunnerKind } from "$lib/types";
   import { app } from "$lib/stores/app.svelte";
   import { api, confirmDialog, copyText } from "$lib/api";
   import { t, userText } from "$lib/i18n";
@@ -15,6 +22,9 @@
     ({ linux: "Linux", macos: "macOS", windows: "Windows" } as Record<string, string>)[view?.platform ?? ""] ?? view?.platform ?? "",
   );
   let working = $state(false);
+  const installing = $derived(componentRuns.running === game.id);
+  const components = $derived<ComponentsReport | null>(componentRuns.results[game.id] ?? null);
+  let forceComponents = $state(false);
   let step = $state<"edit" | "share">("edit");
   let comment = $state("");
   let report = $state<ConfigReport | null>(null);
@@ -139,8 +149,33 @@
 
   // A stray touch outside the dialog must not throw away what was typed.
   async function close() {
+    if (installing && !(await confirmDialog(t("config.components.leave")))) return;
     if (dirty && !(await confirmDialog(t("config.discard")))) return;
     onclose();
+  }
+
+  // Components go into the prefix from what is saved: unsaved changes —
+  // the component list among them — are saved first.
+  async function installComponents() {
+    if (dirty && !(await save())) return;
+    const id = game.id;
+    const title = game.title;
+    componentRuns.running = id;
+    delete componentRuns.results[id];
+    try {
+      // The toast carries the result: the dialog may be closed by now.
+      const result = await api.installComponents(id, forceComponents);
+      componentRuns.results[id] = result;
+      const failed = result.failed.length > 0;
+      app.toast(
+        failed ? "error" : "success",
+        t(failed ? "config.components.failed_toast" : "config.components.done_toast", { title, verbs: result.failed.join(" ") }),
+      );
+    } catch (e) {
+      app.toast("error", userText(e));
+    } finally {
+      componentRuns.running = null;
+    }
   }
 
   const addEnv = () => config?.env.push({ name: "", value: "" });
@@ -185,6 +220,29 @@
         <label for="cfg-dll">{t("config.dll")}</label>
         <input id="cfg-dll" bind:value={config.dllOverrides} placeholder="dinput8=n,b;ddraw=n" />
 
+        <label for="cfg-components">{t("config.components")}</label>
+        <div class="row">
+          <input id="cfg-components" class="grow" bind:value={config.winetricks} placeholder="directplay vcrun2010 d3dx9" />
+          <button onclick={installComponents} disabled={working || componentRuns.running !== null || !config.winetricks.trim()}>
+            {installing ? t("config.components.installing") : t("config.components.install")}
+          </button>
+        </div>
+        <p class="hint field-hint">{t("config.components_hint")}</p>
+        <label class="check"><input type="checkbox" bind:checked={forceComponents} disabled={installing} /> {t("config.components.force")}</label>
+        {#if installing}<p class="hint field-hint" role="status">{t("config.components.wait")}</p>{/if}
+        {#if components}
+          <div class="components" role="status">
+            {#if components.installed.length}<p>{t("config.components.installed", { verbs: components.installed.join(" ") })}</p>{/if}
+            {#if components.timedOut}<p class="warn">{t("config.components.timed_out")}</p>{/if}
+            {#if components.failed.length}
+              <p class="warn">{t("config.components.missing", { verbs: components.failed.join(" ") })}</p>
+              {#if components.offline}<p class="warn">{t("config.components.offline")}</p>{/if}
+              {#if components.missingTool}<p class="warn">{t("config.components.tool", { tool: components.missingTool })}</p>{/if}
+              <p class="hint field-hint">{t("config.components.log", { path: components.log })}</p>
+            {/if}
+          </div>
+        {/if}
+
         <span class="label">{t("config.env")}</span>
         <datalist id="cfg-env-names">
           {#each commonEnv as name (name)}<option value={name}></option>{/each}
@@ -201,12 +259,12 @@
 
       <div class="row end">
         {#if view.own || view.configError}
-          <button class="ghost" onclick={reset} disabled={working}>{t("config.reset")}</button>
+          <button class="ghost" onclick={reset} disabled={working || installing}>{t("config.reset")}</button>
         {/if}
         <span class="grow"></span>
-        <button class="ghost" onclick={toShare} disabled={working}>{t("config.share")}</button>
+        <button class="ghost" onclick={toShare} disabled={working || installing}>{t("config.share")}</button>
         <button data-gamepad-back onclick={close}>{t("action.close")}</button>
-        <button class="primary" onclick={save} disabled={working || !dirty}>{t("config.save")}</button>
+        <button class="primary" onclick={save} disabled={working || installing || !dirty}>{t("config.save")}</button>
       </div>
     {:else}
       <p class="hint">{t("config.share.intro")}</p>
@@ -267,6 +325,17 @@
   }
   .warn {
     color: var(--color-warning);
+  }
+  .fields .check {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    font-weight: normal;
+    margin-top: 0.3rem;
+  }
+  .components p {
+    margin: 0.2rem 0;
+    font-size: 0.85rem;
   }
   .env .value {
     width: 7rem;

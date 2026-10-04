@@ -21,3 +21,5 @@ game.db
 !crates/lanlauncher-core/tests/fixtures/**/*.sql
 /src-tauri/resources/resilio/*
 !/src-tauri/resources/resilio/README.md
+/src-tauri/resources/winetricks/*
+!/src-tauri/resources/winetricks/README.md

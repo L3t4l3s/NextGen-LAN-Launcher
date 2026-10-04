@@ -45,11 +45,16 @@ jobs:
         if: matrix.os == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev cabextract
       - run: npm ci
       - name: Fetch Resilio Sync binary
         shell: bash
         run: node tools/fetch-resilio.mjs ${{ matrix.platform }} src-tauri/resources/resilio
+      # winetricks for the Windows components a profile names; on Linux with
+      # the cabextract it needs (SteamOS has none). Pinned in winetricks.lock.json.
+      - name: Fetch winetricks
+        shell: bash
+        run: node tools/fetch-winetricks.mjs ${{ matrix.platform }} src-tauri/resources/winetricks
       # Build and upload are two steps on purpose: the AppImage has to be
       # opened up again in between, and tauri-action publishes from inside the
       # same step it builds in, which would be too late.

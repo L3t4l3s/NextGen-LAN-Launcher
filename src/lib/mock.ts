@@ -320,7 +320,7 @@ export function createMock() {
         return;
       case "get_game_config":
         return {
-          config: gameConfigs[id] ?? { exe: "Game.exe", args: "+set name %player%", workdir: "", runner: "auto", env: [], dllOverrides: "", wrapper: "" },
+          config: gameConfigs[id] ?? { exe: "Game.exe", args: "+set name %player%", workdir: "", runner: "auto", env: [], dllOverrides: "", wrapper: "", winetricks: "" },
           own: !!gameConfigs[id],
           configError: null,
           executables: ["Game.exe", "bin/Launcher.exe", "tools/Config.exe"],
@@ -349,6 +349,13 @@ export function createMock() {
           issueUrl: `https://github.com/L3t4l3s/NextGen-LAN-Launcher/issues/new?title=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
           fileName: `${id}-${bootstrap.platform}.toml`,
         };
+      }
+      case "install_components": {
+        const verbs = (gameConfigs[id]?.winetricks ?? "").split(/\s+/).filter(Boolean);
+        if (!verbs.length) throw new Error("err.components_none");
+        await new Promise((r) => setTimeout(r, 1500));
+        // The browser demo has no internet-free LAN: the last verb "fails" offline.
+        return { installed: verbs.slice(0, -1), failed: verbs.slice(-1), offline: true, missingTool: null, timedOut: false, log: "/tmp/demo-winetricks.log" };
       }
       case "export_game_config": {
         // The browser cannot open a native save dialog; hand out a download.

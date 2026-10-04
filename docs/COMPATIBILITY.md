@@ -125,7 +125,24 @@ env = { WINEDLLOVERRIDES = "dinput8=n,b", PROTON_USE_WINED3D = "1" }
 unset_env = ["WINEDEBUG"]              # variables of [launch].env this platform goes without
 ```
 
-`[platform.<os>]` replaces `exe`, `args`, `workdir`, `runner` and `wrapper` of `[launch]`, removes
+`winetricks = ["directplay", "vcrun2010"]` (in `[launch]` or `[platform.<os>]`) names Windows
+components as winetricks verbs. They are never installed on their own: the launch configuration
+has a button that runs winetricks on the prefix the game starts in (`launch/winetricks.rs`) — Wine's
+`WINEPREFIX`, or Proton's `<compat>/pfx` with Proton's own Wine (`files/` or `dist/`), as
+protontricks does it; Proton must have started the game once to create that prefix. CrossOver is
+refused: its own "Install Software" does this for a bottle. winetricks runs once per verb, and its exit
+status says whether that verb went in; it skips what the prefix's `winetricks.log` records unless
+"reinstall" (`--force`) is ticked, and settings such as `winxp` apply again on every run. winetricks' own commands
+(`annihilate`, `shell`, `prefix=`, a `*.verb` file …) are refused as verbs. One installation runs at
+a time, the game does not start meanwhile (and a running game blocks it), and after 45 minutes the run is ended with every process
+it started (an installer waiting for a click). winetricks downloads most installers; without internet the launcher
+says so and the components can be installed once elsewhere — they stay in the prefix. The builds
+bundle winetricks (pinned in `winetricks.lock.json`) and, on Linux, `cabextract` with `libmspack`
+(`tools/fetch-winetricks.mjs`), copied to `<data dir>/tools/winetricks` before use. Under Proton
+only its Wine gets Proton's libraries, through small stand-in scripts for `wine` and `wineserver`;
+the downloads and checksums winetricks runs keep the host's.
+
+`[platform.<os>]` replaces `exe`, `args`, `workdir`, `runner`, `wrapper` and `winetricks` of `[launch]`, removes
 the names in `unset_env` from its `env` and adds its own. Windows never reads these profiles; it
 runs `game_start.cmd`.
 

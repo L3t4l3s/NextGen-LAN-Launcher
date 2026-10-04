@@ -330,6 +330,17 @@ export interface GameConfig {
   env: { name: string; value: string }[];
   dllOverrides: string;
   wrapper: string;
+  /** Windows components for the prefix, winetricks verbs separated by spaces. */
+  winetricks: string;
+}
+
+export interface ComponentsReport {
+  installed: string[];
+  failed: string[];
+  offline: boolean;
+  missingTool: string | null;
+  timedOut: boolean;
+  log: string;
 }
 
 export interface GameConfigView {

@@ -45,6 +45,9 @@ pub struct AppState {
     /// Serialises changes to the launch configurations and the receipt's
     /// executable choice: each reads, changes and writes the same files.
     pub config_lock: std::sync::Mutex<()>,
+    /// Who is using a game's prefix right now: a component installation
+    /// and the starts in progress, so neither begins under the other.
+    pub prefix_use: std::sync::Mutex<PrefixUse>,
     /// Serialises `set_game_runner`: it scans for runners without holding
     /// the settings lock, and two picks must still land in the order made.
     pub runner_choice: tokio::sync::Mutex<()>,
@@ -52,6 +55,17 @@ pub struct AppState {
     /// engine may take its whole API timeout to come up); `catalog()` falls
     /// back to it so the library shows up right away.
     pub startup_catalog: RwLock<Option<Catalog>>,
+}
+
+/// See [`AppState::prefix_use`].
+#[derive(Default)]
+pub struct PrefixUse {
+    /// The game whose Windows components are being installed, and its
+    /// prefix: profiles may give two games the same one.
+    pub installing: Option<(String, std::path::PathBuf)>,
+    /// Games being started (until spawned), uninstalled, repaired or
+    /// cancelled: what a component installation must not run beside.
+    pub busy: Vec<String>,
 }
 
 /// What the launcher started (or failed to start) last, as shown on the
