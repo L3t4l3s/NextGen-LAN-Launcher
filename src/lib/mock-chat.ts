@@ -8,10 +8,11 @@ type Emit = (event: string, payload: unknown) => void;
 
 const ME = "me0000000000demo";
 const peers: ChatPeer[] = [
-  { id: "a1b2c3d4e5f60001", nick: "Gandalf", os: "linux", online: true, address: "192.168.1.21" },
-  { id: "a1b2c3d4e5f60002", nick: "Tinkerbell", os: "windows", online: true, address: "192.168.1.34" },
-  { id: "a1b2c3d4e5f60003", nick: "xX_Sniper_Xx", os: "windows", online: true, address: "192.168.1.57" },
-  { id: "a1b2c3d4e5f60004", nick: "MacGyver", os: "macos", online: false, address: "192.168.1.80" },
+  { id: "a1b2c3d4e5f60001", nick: "Gandalf", os: "linux", online: true, address: "192.168.1.21", relay: false },
+  { id: "a1b2c3d4e5f60002", nick: "Tinkerbell", os: "windows", online: true, address: "192.168.1.34", relay: false },
+  { id: "a1b2c3d4e5f60003", nick: "xX_Sniper_Xx", os: "windows", online: true, address: "192.168.1.57", relay: false },
+  { id: "a1b2c3d4e5f60004", nick: "MacGyver", os: "macos", online: false, address: "192.168.1.80", relay: false },
+  { id: "a1b2c3d4e5f600ff", nick: "Chat-Archiv", os: "linux", online: true, address: "192.168.1.10", relay: true },
 ];
 const [gandalf, tink, sniper] = peers;
 

@@ -24,6 +24,9 @@ pub const MAX_POLL_OPTIONS: usize = 12;
 pub const MAX_POLL_OPTIONS_TOTAL: usize = 30;
 /// A reaction is one emoji; the longest family/flag sequences stay below this.
 pub const MAX_EMOJI_BYTES: usize = 32;
+/// Longest sealed body (hex) a relay keeps without being able to read it:
+/// the largest readable body, encrypted, with room to spare.
+const MAX_SEALED_HEX: usize = 64 * 1024;
 const MAX_ID: usize = 64;
 
 /// Error codes the chat hands to the interface (`err.chat_*`, see i18n).
@@ -175,6 +178,28 @@ pub fn clean_nick(nick: &str) -> String {
 }
 
 impl Event {
+    /// Whether the outside of an event is well-formed, for a relay that
+    /// keeps private events it cannot open: ids, nickname, and a sealed body
+    /// of sane size exactly where the event is private.
+    pub fn envelope_is_valid(&self) -> bool {
+        match (&self.to, &self.body) {
+            (Some(_), Body::Sealed { nonce, data }) => {
+                let mut outside = self.clone();
+                outside.body = Body::Delete {
+                    target: format!("{}:0", self.from),
+                };
+                outside.is_valid()
+                    && nonce.len() == 48
+                    && data.len() <= MAX_SEALED_HEX
+                    && [nonce, data]
+                        .iter()
+                        .all(|h| h.chars().all(|c| c.is_ascii_hexdigit()))
+            }
+            (None, _) => self.is_valid(),
+            (Some(_), _) => false,
+        }
+    }
+
     /// Whether the event is well-formed. Anyone on the LAN can send anything,
     /// so this runs on every event that arrives, before it is stored.
     pub fn is_valid(&self) -> bool {
@@ -361,8 +386,11 @@ struct Entry {
     /// As received: signed, private bodies sealed. This is what is saved and
     /// passed on.
     wire: Event,
-    /// As read: what the state is folded from.
+    /// As read: what the state is folded from. For an event kept only to
+    /// be passed on (a relay), the same as `wire`.
     plain: Event,
+    /// Folded into the state; `false` for events kept only to pass on.
+    opened: bool,
 }
 
 /// All events this launcher knows, folded into messages and polls.
@@ -465,12 +493,30 @@ impl ChatState {
             seen,
             wire,
             plain: plain.clone(),
+            opened: true,
         });
         let mut changed = Vec::new();
         self.apply(plain, seen, &mut changed);
         changed.sort();
         changed.dedup();
         Some(changed)
+    }
+
+    /// Keep an event only to pass it on, without reading it: what a relay
+    /// does with everything, private events of others included. The caller
+    /// has checked the signature. Returns whether it was new.
+    pub fn insert_opaque(&mut self, wire: Event, seen: i64) -> bool {
+        if self.ids.contains(&wire.id) || !wire.envelope_is_valid() || wire.ts < self.floor {
+            return false;
+        }
+        self.ids.insert(wire.id.clone());
+        self.events.push(Entry {
+            seen,
+            plain: wire.clone(),
+            wire,
+            opened: false,
+        });
+        true
     }
 
     /// Keep the newest `limit` events (by author time) and fold the state
@@ -493,7 +539,11 @@ impl ChatState {
         self.pending.clear();
         self.replies.clear();
         for e in entries {
-            self.insert_opened(e.plain, e.wire, e.seen);
+            if e.opened {
+                self.insert_opened(e.plain, e.wire, e.seen);
+            } else {
+                self.insert_opaque(e.wire, e.seen);
+            }
         }
         true
     }
@@ -683,22 +733,31 @@ impl ChatState {
     }
 
     /// Ids of the events `peer` may see: everything public and its private
-    /// conversation with this launcher. What it lacks of these is sent to it.
-    pub fn ids_for(&self, peer: &str) -> Vec<String> {
+    /// conversation with this launcher — or, for a relay (`all`), everything,
+    /// since it keeps private events sealed. What it lacks is sent to it.
+    pub fn ids_for(&self, peer: &str, all: bool) -> Vec<String> {
         self.events
             .iter()
-            .filter(|e| e.plain.visible_to(peer))
+            .filter(|e| all || e.plain.visible_to(peer))
             .map(|e| e.plain.id.clone())
             .collect()
     }
 
     /// Events visible to `peer` that are not in `have` and not older than
     /// `since` (what the peer no longer keeps), in arrival order, as sent.
-    pub fn missing_for(&self, peer: &str, have: &HashSet<String>, since: i64) -> Vec<Event> {
+    pub fn missing_for(
+        &self,
+        peer: &str,
+        have: &HashSet<String>,
+        since: i64,
+        all: bool,
+    ) -> Vec<Event> {
         self.events
             .iter()
             .filter(|e| {
-                e.plain.visible_to(peer) && e.plain.ts >= since && !have.contains(&e.plain.id)
+                (all || e.plain.visible_to(peer))
+                    && e.plain.ts >= since
+                    && !have.contains(&e.plain.id)
             })
             .map(|e| e.wire.clone())
             .collect()
@@ -894,8 +953,8 @@ mod tests {
         assert!(s.insert(ev("a", 2, Some("me"), text("psst")), 2).is_some());
         let v = s.view("a:2").unwrap();
         assert_eq!(v.conversation.as_deref(), Some("a"));
-        assert!(s.ids_for("c").is_empty());
-        assert_eq!(s.ids_for("a"), vec!["a:2".to_string()]);
+        assert!(s.ids_for("c", false).is_empty());
+        assert_eq!(s.ids_for("a", false), vec!["a:2".to_string()]);
     }
 
     #[test]
@@ -1152,7 +1211,7 @@ mod tests {
         s.insert(ev("me", 3, Some("b"), text("to b")), 3);
         let have: HashSet<String> = ["a:1".to_string()].into();
         let missing: Vec<String> = s
-            .missing_for("a", &have, 0)
+            .missing_for("a", &have, 0, false)
             .into_iter()
             .map(|e| e.id)
             .collect();
@@ -1198,7 +1257,36 @@ mod tests {
         assert_eq!(s.view("a:2").unwrap().reactions.len(), 1);
         // A peer sending the trimmed message again does not bring it back.
         assert!(s.insert(ev("a", 1, None, text("old")), 4).is_none());
-        assert_eq!(s.missing_for("x", &HashSet::new(), 3).len(), 1);
+        assert_eq!(s.missing_for("x", &HashSet::new(), 3, false).len(), 1);
+    }
+
+    #[test]
+    fn a_relay_keeps_sealed_private_events_it_cannot_read() {
+        let mut relay = ChatState::new("relay");
+        let mut sealed = ev("a", 1, Some("b"), text("x"));
+        sealed.body = Body::Sealed {
+            nonce: "0".repeat(48),
+            data: "ab".repeat(40),
+        };
+        assert!(relay.insert_opaque(sealed.clone(), 1));
+        assert!(!relay.insert_opaque(sealed.clone(), 2), "duplicate");
+        // Readable bodies of private events, or sealed public ones, are not
+        // what a launcher sends.
+        assert!(!relay.insert_opaque(ev("a", 2, Some("b"), text("x")), 3));
+        let mut open_sealed = sealed.clone();
+        open_sealed.to = None;
+        open_sealed.id = "a:3".into();
+        open_sealed.seq = 3;
+        assert!(!relay.insert_opaque(open_sealed, 4));
+        assert!(relay.insert_opaque(ev("c", 4, None, text("hi")), 5));
+        assert!(relay.views().is_empty(), "nothing folded");
+        // Bob gets both; Carol only the public one; another relay all.
+        let none = HashSet::new();
+        assert_eq!(relay.missing_for("b", &none, 0, false).len(), 2);
+        assert_eq!(relay.missing_for("c", &none, 0, false).len(), 1);
+        assert_eq!(relay.ids_for("r2", true).len(), 2);
+        assert!(relay.trim(1));
+        assert_eq!(relay.len(), 1);
     }
 
     #[test]

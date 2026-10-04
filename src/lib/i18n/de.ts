@@ -516,6 +516,7 @@ export const de: Messages = {
   "chat.close": "Chat einklappen",
   "chat.public": "Alle",
   "chat.people": "Wer ist online?",
+  "chat.relay": "Chat-Archiv online: Was hier geschrieben wird, sehen auch alle, die ihren Launcher später starten. Private Nachrichten bewahrt es verschlüsselt auf, lesen kann es sie nicht.",
   "chat.online": "{count} online",
   "chat.you": "du",
   "chat.nobody": "Noch niemand gefunden. Andere Launcher erscheinen hier, sobald sie im selben Netz sind.",

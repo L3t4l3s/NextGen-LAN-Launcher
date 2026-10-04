@@ -35,6 +35,7 @@ pub(crate) async fn apply_settings(app: &tauri::AppHandle, state: &Arc<AppState>
                     forward_updates(app.clone(), &chat);
                     *state.chat.write().await = Some(chat);
                     *state.chat_error.write().await = None;
+                    trust_relays(state).await;
                     let _ = app.emit(CHAT_RESET_EVENT, ());
                 }
                 Err(e) => {
@@ -53,6 +54,24 @@ pub(crate) async fn apply_settings(app: &tauri::AppHandle, state: &Arc<AppState>
         }
         (false, None) => *state.chat_error.write().await = None,
     }
+}
+
+/// Pass the relays the LANPage names (`chat_relay` in `launcher.ini`) on to
+/// the chat: only those get private messages. Called after every LANPage
+/// fetch and when the chat starts.
+pub(crate) async fn trust_relays(state: &AppState) {
+    let Some(chat) = state.chat.read().await.clone() else {
+        return;
+    };
+    let relays = state
+        .event
+        .read()
+        .await
+        .config
+        .as_ref()
+        .map(|c| lanlauncher_core::chat::relays_from_launcher_ini(&c.extra))
+        .unwrap_or_default();
+    chat.set_trusted_relays(relays);
 }
 
 fn forward_updates(app: tauri::AppHandle, chat: &Chat) {

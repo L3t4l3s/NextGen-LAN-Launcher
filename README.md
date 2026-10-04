@@ -28,6 +28,36 @@ Play / Update), but the secondary actions **Repair**, **Pause sync**, **Open fol
 stay visible at all times, whatever the launcher is currently doing. Repair stops the sync,
 verifies the archive and re-extracts it.
 
+## Chat archive (optional)
+
+The LAN chat needs no server: launchers find each other and exchange what they have when they
+meet. What was said while nobody else was online, though, only reaches a later arrival if some
+launcher that heard it is still running. `nll-chat-relay` closes that gap: run it on a machine
+that is on all weekend (the sync server, say) and it keeps every message and hands it to each
+launcher that starts later. Private messages are kept encrypted — the relay cannot read them —
+and delivered when their recipient comes online, even if the sender has left by then.
+
+```bash
+./nll-chat-relay-linux-x64 --data /srv/nll-chat --name "Chat-Archiv"
+```
+
+It needs UDP and TCP port 41950 open, like the launchers, and appears in the chat header as 🗄
+rather than as a person. Releases carry it for Linux, Windows and macOS; from source:
+`cargo build --release -p lanlauncher-core --bin nll-chat-relay`.
+
+Public messages need no configuration. Private messages go only to a relay the LANPage names,
+because any machine on the LAN could call itself a relay, and even encrypted, a private message
+tells who wrote to whom and when. The relay prints its id at start; add it to `launcher.ini`:
+
+```
+chat_relay ### NextGen chat relay {
+<id the relay printed>
+}
+```
+
+(`launcher.ini` is ETI's block format; a `key = value` line there would make the launchers
+discard the whole file.)
+
 ## The Resilio API key
 
 Resilio's documented Sync API (`/api?method=…`) needs an `api_key`; without one the launcher falls
@@ -154,7 +184,8 @@ again.
   reaction arrived). Not tested: Windows Firewall (the first start may raise Windows' own prompt;
   diagnostics offers `chat.firewall_missing` with a one-click rule otherwise), Wi-Fi access points
   that drop broadcasts between clients, machines with several network cards, and a few dozen
-  launchers at once. Every event is signed with the sender's key (the peer id is the public key)
+  launchers at once, and `nll-chat-relay` on a real server (tested here only in `chat::tests`).
+  The release step that builds it is untested too. Every event is signed with the sender's key (the peer id is the public key)
   and private messages are end-to-end encrypted; nicknames are not unique, though — anyone can
   pick any name, the id behind it is what cannot be faked.
 - **Wayland libraries in the AppImage:** measured on a built image — `libEGL`, `libGL`, `libgbm`

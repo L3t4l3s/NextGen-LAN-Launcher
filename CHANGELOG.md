@@ -24,6 +24,12 @@
   fehlende Windows-Firewall-Regel (mit „Jetzt beheben“) und eine firewalld-Zone, die den Port
   sperrt. Alle Nachrichten sind signiert, niemand kann unter fremder Kennung schreiben oder
   löschen; private Nachrichten sind Ende-zu-Ende verschlüsselt. Ungetestet auf einer echten LAN.
+- **Chat-Archiv `nll-chat-relay`** (optional): ein kleines Programm ohne Oberfläche für einen
+  Rechner, der die ganze LAN läuft. Es hebt alle Nachrichten auf und gibt sie jedem, der seinen
+  Launcher später startet; private Nachrichten bewahrt es verschlüsselt auf und stellt sie zu,
+  sobald der Empfänger da ist, auch wenn der Absender schon weg ist. Für öffentliche Nachrichten
+  ist nichts einzustellen; private bekommt es nur, wenn die `launcher.ini` der LANPage seine ID
+  nennt (`chat_relay`), die es beim Start ausgibt. Liegt den Releases für Linux, Windows und macOS bei.
 
 - macOS/Linux: In den Spieldetails gibt es eine **Startkonfiguration**: Startdatei, Argumente,
   Arbeitsordner, Kompatibilitätsschicht, vorangestellte Programme (z. B. `gamemoderun`,

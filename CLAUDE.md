@@ -415,7 +415,11 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   gemeldeten Peer weder umadressieren noch umbenennen. Spitznamen sind nicht eindeutig — nur die
   ID dahinter ist fälschungssicher; nirgends anders behaupten. Der Verlauf ist auf 5000 Events
   begrenzt (`trim`, `floor`, `Hello.since`), sonst sprengt die ID-Liste eines `Hello` die
-  Rahmengrenze. Tests laufen mit mehreren Chats auf 127.0.0.1 und direkten Beacon-Zielen
+  Rahmengrenze. `nll-chat-relay` (`src/bin/`) ist derselbe Code mit `ChatConfig::relay`: keine
+  Person, bekommt private Events (versiegelt, `insert_opaque`) nur, wenn `launcher.ini` seine ID
+  nennt (`chat_relay`, `Chat::set_trusted_relays`) — das `relay`-Flag im Beacon beweist nichts —,
+  und reicht sie per `Hello` weiter; es leitet nichts live weiter, im flachen LAN erreicht jeder Launcher jeden direkt.
+  Tests laufen mit mehreren Chats auf 127.0.0.1 und direkten Beacon-Zielen
   (`ChatConfig::beacon_targets`), nicht über Broadcast.
 - **Clippy:** In `resilio.rs` müssen alle Items vor `mod tests` stehen (`items_after_test_module`).
 - **Fehlertexte:** Tauri-Commands und Fix-Aktionen geben keine deutschen Sätze zurück, sondern Codes

@@ -24,7 +24,12 @@ impl Lan {
     }
 
     async fn start(&self, i: usize, nick: &str) -> Chat {
+        self.start_as(i, nick, false).await
+    }
+
+    async fn start_as(&self, i: usize, nick: &str, relay: bool) -> Chat {
         let mut config = ChatConfig::new(self.dirs[i].path().to_path_buf(), nick);
+        config.relay = relay;
         config.port = self.ports[i];
         config.bind = IpAddr::V4(Ipv4Addr::LOCALHOST);
         config.beacon_every = Duration::from_millis(100);
@@ -276,4 +281,59 @@ async fn a_hello_in_someone_elses_name_gets_nothing() {
     assert_eq!(tcp_port_of(&a, &b.me()), bob_port, "Bob's address stays");
     a.stop().await;
     b.stop().await;
+}
+
+#[tokio::test]
+async fn a_relay_hands_on_what_was_said_while_nobody_else_was_there() {
+    let lan = Lan::new(3);
+    let relay = lan.start_as(0, "Archiv", true).await;
+    let a = lan.start(1, "Alice").await;
+    until("relay seen", || {
+        a.snapshot().peers.iter().any(|p| p.online && p.relay)
+    })
+    .await;
+    // Bob's id is known from an earlier meeting; he is not here now.
+    let bob_dir = lan.dirs[2].path().to_path_buf();
+    let bob_id = store::load_keys(&bob_dir).unwrap().id().to_string();
+    a.send_text(None, "Turnier um 20 Uhr", None).unwrap();
+    a.send_text(Some(bob_id.clone()), "du schuldest mir ein Bier", None)
+        .unwrap();
+    // A relay the LANPage does not name gets public messages only: anyone
+    // can call themselves a relay.
+    until("public stored", || lock(&relay.inner.state).len() == 1).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(lock(&relay.inner.state).len(), 1);
+    // Named, it is caught up on the private one right away.
+    a.set_trusted_relays(vec![relay.me()]);
+    until("relay stored", || lock(&relay.inner.state).len() == 2).await;
+    a.stop().await;
+    // The relay cannot read the private message, on disk or in memory.
+    let history = std::fs::read_to_string(lan.dirs[0].path().join("history.jsonl")).unwrap();
+    assert!(history.contains("Turnier"));
+    assert!(!history.contains("Bier"));
+    assert!(relay.snapshot().items.is_empty());
+    // Bob starts after Alice has gone and gets both.
+    let b = lan.start(2, "Bob").await;
+    assert_eq!(b.me(), bob_id);
+    until("catch-up from the relay", || texts(&b).len() == 2).await;
+    assert!(online(&b).contains(&"Archiv".to_string()));
+    relay.stop().await;
+    b.stop().await;
+}
+
+#[test]
+fn relay_ids_come_from_launcher_ini() {
+    let id = "AB".repeat(32);
+    let extra =
+        std::collections::BTreeMap::from([("chat_relay".to_string(), format!("{id}, not-an-id"))]);
+    assert_eq!(relays_from_launcher_ini(&extra), vec![id.to_lowercase()]);
+    assert!(relays_from_launcher_ini(&Default::default()).is_empty());
+}
+
+#[test]
+fn the_block_the_relay_prints_parses_as_launcher_ini() {
+    let id = "cd".repeat(32);
+    let ini = format!("chat_relay ### NextGen chat relay {{\n{id}\n}}\n");
+    let config = crate::launcher_ini::LanConfig::parse(&ini).unwrap();
+    assert_eq!(relays_from_launcher_ini(&config.extra), vec![id]);
 }

@@ -122,6 +122,7 @@
   <aside class="panel">
     <header>
       <strong class="grow">💬 {t("chat.title")}</strong>
+      {#if chat.relayOnline}<span class="relay" title={t("chat.relay")}>🗄</span>{/if}
       {#if chat.enabled}
         <button class="icon" class:active={showPeople} title={t("chat.people")} onclick={() => (showPeople = !showPeople)}>👥 {chat.online.length}</button>
         <button class="icon" title={app.settings?.chatSound ? t("chat.sound.off") : t("chat.sound.on")} onclick={() => chat.setSound(!app.settings?.chatSound).catch((e) => app.toast("error", userText(e)))}>
@@ -166,7 +167,7 @@
             <span class="dot ok"></span>
             <span class="grow">{chat.nick} <small class="muted">({t("chat.you")})</small></span>
           </div>
-          {#each chat.peers as p (p.id)}
+          {#each chat.people as p (p.id)}
             <button class="person" class:off={!p.online} title={`${p.address} · ${p.os}`} onclick={() => openPrivate(p.id)}>
               <span class="dot" class:ok={p.online}></span>
               <span class="grow" style:color={nickColor(p.id)}>{p.nick}</span>
@@ -300,6 +301,11 @@
   }
   .icon.active {
     background: var(--color-surface-alt);
+  }
+  .relay {
+    font-size: 0.85rem;
+    opacity: 0.8;
+    cursor: help;
   }
   .badge-count {
     background: var(--color-primary);

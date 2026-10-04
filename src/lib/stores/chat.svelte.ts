@@ -184,8 +184,18 @@ class ChatStore {
     return this.conversations.reduce((n, c) => n + c.unread, 0);
   }
 
+  /** People, without relays. */
+  get people(): ChatPeer[] {
+    return this.peers.filter((p) => !p.relay);
+  }
+
   get online(): ChatPeer[] {
-    return this.peers.filter((p) => p.online);
+    return this.people.filter((p) => p.online);
+  }
+
+  /** A relay keeps what is said for those who start later. */
+  get relayOnline(): boolean {
+    return this.peers.some((p) => p.relay && p.online);
   }
 
   nickOf(peer: string): string {
@@ -198,7 +208,7 @@ class ChatStore {
 
   /** Every nickname known, for @mentions. */
   get nicks(): string[] {
-    return [...new Set([this.nick, ...this.peers.map((p) => p.nick)])];
+    return [...new Set([this.nick, ...this.people.map((p) => p.nick)])];
   }
 
   /** The public room, then private conversations: opened ones, and those

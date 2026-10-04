@@ -84,6 +84,19 @@ jobs:
               -exec cp {} installers/ \;
           done
           ls -l installers
+      # The chat relay (crates/lanlauncher-core/src/bin/nll-chat-relay.rs) for
+      # a machine that stays on all weekend: one plain program per platform,
+      # no installer. Cargo builds it for the runner's own architecture.
+      - name: Build the chat relay
+        shell: bash
+        run: |
+          set -eu
+          cargo build --release -p lanlauncher-core --bin nll-chat-relay
+          case "${{ matrix.os }}" in
+            windows-latest) cp target/release/nll-chat-relay.exe installers/nll-chat-relay-windows-x64.exe ;;
+            ubuntu-22.04) cp target/release/nll-chat-relay installers/nll-chat-relay-linux-x64 ;;
+            macos-latest) cp target/release/nll-chat-relay installers/nll-chat-relay-macos-arm64 ;;
+          esac
       # Only for a tag. A manual run builds and leaves the installers as a
       # workflow artifact instead of inventing a release from a branch name.
       - name: Publish to the draft release
@@ -94,7 +107,7 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: "NextGen LAN Launcher ${{ github.ref_name }}"
-          body: "Siehe CHANGELOG.md. Windows: Setup.exe doppelklicken. macOS: DMG öffnen. Linux: AppImage ausführbar machen."
+          body: "Siehe CHANGELOG.md. Windows: Setup.exe doppelklicken. macOS: DMG öffnen. Linux: AppImage ausführbar machen. nll-chat-relay: optionales Chat-Archiv für einen Rechner, der die ganze LAN läuft (siehe README)."
           draft: true
           prerelease: true
           files: installers/*

@@ -1640,6 +1640,7 @@ async fn refresh_event(state: &AppState, app: &tauri::AppHandle) {
     );
     *state.event.write().await = bundle.clone();
     let _ = app.emit(EVENT_UPDATED, &bundle);
+    crate::chat::trust_relays(state).await;
 }
 
 async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {

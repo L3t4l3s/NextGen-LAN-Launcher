@@ -514,6 +514,7 @@ export const en: Messages = {
   "chat.close": "Collapse chat",
   "chat.public": "Everyone",
   "chat.people": "Who is online?",
+  "chat.relay": "Chat archive online: what is written here is also seen by everyone who starts their launcher later. It keeps private messages encrypted and cannot read them.",
   "chat.online": "{count} online",
   "chat.you": "you",
   "chat.nobody": "Nobody found yet. Other launchers show up here once they are on the same network.",

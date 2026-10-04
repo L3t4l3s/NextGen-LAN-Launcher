@@ -100,6 +100,12 @@ the Tauri asset-protocol scope at runtime so the WebView can load them.
   their private conversation, minus what the asker no longer keeps (`since`). That is how a late arrival gets the backlog and how a private
   message to someone offline arrives later. For reactions and votes the highest `seq` of a person
   wins, so the order of arrival does not matter. `ChatState` folds events into `ItemView`s.
+* **Relay:** `nll-chat-relay` (`crates/lanlauncher-core/src/bin/`) runs the same code with
+  `ChatConfig::relay`. Its beacon says `relay`, launchers do not list it as a person; they send it
+  private events only if `launcher.ini` names its id (`chat_relay`), since the beacon flag proves
+  nothing; it keeps every signed event without folding it (`ChatState::insert_opaque`,
+  private bodies stay sealed) and answers each `Hello` like any peer. No forwarding is needed on
+  one flat network, where every launcher reaches every other directly.
 * **Storage:** `<data>/chat/history.jsonl` (newest 5000 events by author time, in their signed
   and sealed form; older ones are not taken in again) and `identity.json` (the secret key; the
   nickname is the player name).

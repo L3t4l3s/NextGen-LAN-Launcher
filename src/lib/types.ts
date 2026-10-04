@@ -431,6 +431,8 @@ export interface ChatPeer {
   os: string;
   online: boolean;
   address: string;
+  /** A chat relay (nll-chat-relay) keeping the history, not a person. */
+  relay: boolean;
 }
 
 export interface ChatSnapshot {

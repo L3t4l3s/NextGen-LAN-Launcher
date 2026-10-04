@@ -59,6 +59,10 @@ pub struct ChatConfig {
     /// Where history and identity are kept.
     pub data_dir: PathBuf,
     pub nick: String,
+    /// Run as a relay (`nll-chat-relay`): no person, only a memory. It keeps
+    /// every event — private ones sealed, as it cannot open them — and hands
+    /// them to whoever starts later.
+    pub relay: bool,
 }
 
 impl ChatConfig {
@@ -70,8 +74,25 @@ impl ChatConfig {
             beacon_every: Duration::from_secs(3),
             data_dir,
             nick: nick.to_string(),
+            relay: false,
         }
     }
+}
+
+/// Relay ids from the LANPage's `launcher.ini`, a `chat_relay { … }` block
+/// with one or more ids (by line or comma): the relays trusted with private
+/// messages. Anything that is not a peer id is ignored.
+pub fn relays_from_launcher_ini(extra: &std::collections::BTreeMap<String, String>) -> Vec<String> {
+    extra
+        .get("chat_relay")
+        .map(|v| {
+            v.split(|c: char| c == ',' || c.is_whitespace())
+                .map(str::trim)
+                .filter(|id| id.len() == 64 && id.chars().all(|c| c.is_ascii_hexdigit()))
+                .map(str::to_ascii_lowercase)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The computer's name, for a launcher whose player has not given a name.
@@ -95,6 +116,9 @@ struct Beacon {
     /// Sent when the chat shuts down, so the others need not wait for the timeout.
     #[serde(default)]
     bye: bool,
+    /// A relay, not a person ([`ChatConfig::relay`]).
+    #[serde(default)]
+    relay: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -111,6 +135,8 @@ enum Frame {
         /// it never trimmed. Older events are not sent to it.
         #[serde(default)]
         since: i64,
+        #[serde(default)]
+        relay: bool,
     },
     /// Parsed one by one: an event of a newer version must not take the
     /// others in the frame down with it.
@@ -126,6 +152,8 @@ pub struct PeerView {
     pub os: String,
     pub online: bool,
     pub address: String,
+    /// A relay keeping the history, not a person to write to.
+    pub relay: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -163,9 +191,15 @@ struct Peer {
     last_seen: Instant,
     online: bool,
     last_hello: Instant,
+    relay: bool,
 }
 
 struct Inner {
+    relay: bool,
+    /// Relays the LANPage names: only these get private events (sealed).
+    /// Any machine can call itself a relay, and even sealed, a private
+    /// message tells who wrote to whom and when.
+    trusted_relays: Mutex<HashSet<String>>,
     keys: crypto::Keys,
     me: String,
     os: String,
@@ -248,12 +282,15 @@ impl Chat {
         let mut dropped = damaged;
         for s in stored {
             // A history from before signing, or one edited by hand.
-            match keys.open(&s.event) {
-                Some(plain) => {
-                    state.insert_opened(plain, s.event, s.seen);
+            let kept = if config.relay {
+                crypto::verify(&s.event) && state.insert_opaque(s.event, s.seen)
+            } else {
+                match keys.open(&s.event) {
+                    Some(plain) => state.insert_opened(plain, s.event, s.seen).is_some(),
+                    None => false,
                 }
-                None => dropped = true,
-            }
+            };
+            dropped |= !kept;
         }
         if state.trim(store::HISTORY_LIMIT) || dropped {
             history.rewrite(&state.stored());
@@ -277,6 +314,8 @@ impl Chat {
         };
         let (updates, _) = broadcast::channel(256);
         let inner = Arc::new(Inner {
+            relay: config.relay,
+            trusted_relays: Mutex::new(HashSet::new()),
             keys,
             me,
             os: std::env::consts::OS.to_string(),
@@ -320,6 +359,36 @@ impl Chat {
             t.abort();
         }
         lock(&self.inner.links).clear();
+    }
+
+    /// The relays the LANPage names ([`relays_from_launcher_ini`]). One that
+    /// is new to the list is caught up on the private messages it lacks.
+    pub fn set_trusted_relays(&self, ids: Vec<String>) {
+        let ids: HashSet<String> = ids.into_iter().collect();
+        let added: Vec<String> = {
+            let mut trusted = lock(&self.inner.trusted_relays);
+            let added = ids.difference(&trusted).cloned().collect();
+            *trusted = ids;
+            added
+        };
+        // Comparing histories is a pull: the relay would only ask in a few
+        // minutes. It already had everything public; the private events
+        // (sealed) go to it now.
+        for id in added {
+            if !self.inner.is_relay(&id)
+                || !lock(&self.inner.peers).get(&id).is_some_and(|p| p.online)
+            {
+                continue;
+            }
+            let private: Vec<Event> = lock(&self.inner.state)
+                .missing_for(&id, &HashSet::new(), 0, true)
+                .into_iter()
+                .filter(|e| e.to.is_some())
+                .collect();
+            for line in batches(&private) {
+                self.inner.send_to(&id, line);
+            }
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<ChatUpdate> {
@@ -579,18 +648,22 @@ impl Inner {
         }
         let wire = self.keys.seal(&event).ok_or(ERR_INVALID)?;
         let id = event.id.clone();
-        self.take_in_opened(vec![(event.clone(), wire.clone())]);
+        self.take_in_opened(vec![(Some(event.clone()), wire.clone())]);
         let frame = Frame::Events {
             events: vec![serde_json::to_value(&wire).map_err(|_| ERR_INVALID)?],
         };
-        let recipients: Vec<String> = match &event.to {
-            Some(peer) => vec![peer.clone()],
-            None => lock(&self.peers)
-                .iter()
-                .filter(|(_, p)| p.online)
-                .map(|(id, _)| id.clone())
-                .collect(),
-        };
+        // Trusted relays get private events too: sealed, they keep them for
+        // a recipient who is not here yet.
+        let trusted = lock(&self.trusted_relays).clone();
+        let recipients: Vec<String> = lock(&self.peers)
+            .iter()
+            .filter(|(id, p)| {
+                p.online
+                    && (event.to.as_ref().is_none_or(|to| to == *id)
+                        || (p.relay && trusted.contains(*id)))
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
         if let Some(line) = frame_line(&frame) {
             for peer in recipients {
                 // Someone offline gets it when they are back (`Hello`).
@@ -603,18 +676,24 @@ impl Inner {
     }
 
     /// Events from the network: only those whose signature holds and, if
-    /// private, that open for us.
+    /// private, that open for us — or, on a relay, every signed one.
     fn take_in(&self, events: Vec<Event>) {
-        let opened = events
+        let checked = events
             .into_iter()
-            .filter_map(|wire| Some((self.keys.open(&wire)?, wire)))
+            .filter_map(|wire| {
+                if self.relay {
+                    crypto::verify(&wire).then_some((None, wire))
+                } else {
+                    Some((Some(self.keys.open(&wire)?), wire))
+                }
+            })
             .collect();
-        self.take_in_opened(opened);
+        self.take_in_opened(checked);
     }
 
-    /// Store new (plain, wire) events, save them and tell the interface what
-    /// changed.
-    fn take_in_opened(&self, events: Vec<(Event, Event)>) {
+    /// Store new (plain, wire) events — plain `None` for one kept only to
+    /// pass on — save them and tell the interface what changed.
+    fn take_in_opened(&self, events: Vec<(Option<Event>, Event)>) {
         let seen = now_ms();
         let mut changed: Vec<String> = Vec::new();
         let mut accepted: Vec<Stored> = Vec::new();
@@ -625,8 +704,13 @@ impl Inner {
         let trimmed = {
             let mut state = lock(&self.state);
             for (plain, wire) in events {
-                if let Some(ids) = state.insert_opened(plain, wire.clone(), seen) {
-                    changed.extend(ids);
+                let new = match plain {
+                    Some(plain) => state.insert_opened(plain, wire.clone(), seen).map(|ids| {
+                        changed.extend(ids);
+                    }),
+                    None => state.insert_opaque(wire.clone(), seen).then_some(()),
+                };
+                if new.is_some() {
                     accepted.push(Stored { seen, event: wire });
                 }
             }
@@ -665,6 +749,7 @@ impl Inner {
                 os: p.os.clone(),
                 online: p.online,
                 address: p.addr.ip().to_string(),
+                relay: p.relay,
             })
             .collect();
         out.sort_by(|a, b| {
@@ -690,6 +775,7 @@ impl Inner {
             port: self.tcp_port,
             os: self.os.clone(),
             bye,
+            relay: self.relay,
         })
         .unwrap_or_default()
     }
@@ -788,7 +874,8 @@ impl Inner {
             return;
         }
         let addr = SocketAddr::new(from.ip(), b.port);
-        let (came_online, changed) = self.saw_peer(&b.id, &b.nick, &b.os, addr, Some(from));
+        let (came_online, changed) =
+            self.saw_peer(&b.id, &b.nick, &b.os, b.relay, addr, Some(from));
         if came_online {
             // Answer directly, so the other side need not wait for our next
             // broadcast — or ever receive one, where broadcasts do not pass.
@@ -808,6 +895,7 @@ impl Inner {
         id: &str,
         nick: &str,
         os: &str,
+        relay: bool,
         addr: SocketAddr,
         beacon_from: Option<SocketAddr>,
     ) -> (bool, bool) {
@@ -837,9 +925,11 @@ impl Inner {
                     p.addr = addr;
                     p.addr_seen = now;
                 }
-                let changed = came_online || moved || p.nick != nick || p.os != os;
+                let changed =
+                    came_online || moved || p.nick != nick || p.os != os || p.relay != relay;
                 p.nick = nick;
                 p.os = os;
+                p.relay = relay;
                 if beacon_from.is_some() {
                     p.beacon_from = beacon_from;
                 }
@@ -862,6 +952,7 @@ impl Inner {
                         last_seen: now,
                         online: true,
                         last_hello: now,
+                        relay,
                     },
                 );
                 (true, true, false)
@@ -869,6 +960,9 @@ impl Inner {
         };
         drop(peers);
         let (came_online, changed, moved) = seen;
+        if came_online {
+            log::info!("chat: {id} online{}", if relay { " (relay)" } else { "" });
+        }
         // The writer holds on to the old address, or to a connection the
         // other side dropped when it restarted (a first write into it would
         // still "succeed"); the next frame starts a fresh one.
@@ -878,10 +972,18 @@ impl Inner {
         (came_online, changed)
     }
 
+    /// Whether `peer` is a relay the LANPage names, which may get every
+    /// event (private ones sealed).
+    fn is_relay(&self, peer: &str) -> bool {
+        lock(&self.trusted_relays).contains(peer)
+            && lock(&self.peers).get(peer).is_some_and(|p| p.relay)
+    }
+
     fn send_hello(&self, peer: &str) {
+        let all = self.is_relay(peer);
         let (have, since) = {
             let state = lock(&self.state);
-            (state.ids_for(peer), state.floor())
+            (state.ids_for(peer, all), state.floor())
         };
         let frame = Frame::Hello {
             from: self.me.clone(),
@@ -890,6 +992,7 @@ impl Inner {
             os: self.os.clone(),
             have,
             since,
+            relay: self.relay,
         };
         match frame_line(&frame) {
             Some(line) => self.send_to(peer, line),
@@ -964,12 +1067,13 @@ impl Inner {
                 os,
                 have,
                 since,
+                relay,
             } => {
                 if peer == self.me || !valid_peer_id(&peer) {
                     return;
                 }
                 let addr = SocketAddr::new(from.ip(), port);
-                let (came_online, changed) = self.saw_peer(&peer, &nick, &os, addr, None);
+                let (came_online, changed) = self.saw_peer(&peer, &nick, &os, relay, addr, None);
                 if came_online {
                     // Its beacons may not reach us; compare the other way too.
                     self.send_hello(&peer);
@@ -978,7 +1082,8 @@ impl Inner {
                     self.emit_peers();
                 }
                 let have: HashSet<String> = have.into_iter().collect();
-                let missing = lock(&self.state).missing_for(&peer, &have, since);
+                let all = self.is_relay(&peer);
+                let missing = lock(&self.state).missing_for(&peer, &have, since, all);
                 for line in batches(&missing) {
                     self.send_to(&peer, line);
                 }
