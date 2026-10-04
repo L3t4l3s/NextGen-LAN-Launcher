@@ -3,6 +3,7 @@
 //! Everything in this crate is GUI-independent and testable on any platform:
 //!
 //! * [`catalog`] reads the ETI `game.db` catalog and the `assets.eti` cover archive.
+//! * [`chat`] is the serverless LAN chat between launchers.
 //! * [`launcher_ini`] parses the `launcher.ini` block format served by an ETI LANPage.
 //! * [`theme`] models the per-event visual theme.
 //! * [`settings`] / [`library`] hold user settings and the list of library roots.
@@ -19,6 +20,7 @@
 //! * [`diagnostics`] runs environment checks and produces actionable problems.
 
 pub mod catalog;
+pub mod chat;
 pub mod diagnostics;
 pub mod error;
 pub mod extract;

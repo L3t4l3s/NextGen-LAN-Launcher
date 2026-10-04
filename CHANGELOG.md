@@ -12,6 +12,18 @@
   Während der Installation startet das Spiel nicht (und ein laufendes Spiel verhindert sie), nach 45 Minuten wird ein hängender
   Installer samt Wine-Prozessen beendet. Befehle von winetricks selbst (`annihilate`, `shell`,
   `prefix=` …) sind als Verb nicht erlaubt.
+- **LAN-Chat** rechts im Launcher-Fenster: Alle Launcher im Netz chatten automatisch
+  miteinander, egal unter welchem Betriebssystem, ganz ohne Server. Man sieht, wer online ist,
+  kann private Nachrichten schicken, gezielt auf Nachrichten antworten, mit Emojis reagieren und
+  eigene Nachrichten löschen. Umfragen gibt es als Einzel- und Mehrfachwahl, als Spielwahl aus
+  der Bibliothek (mit Cover) und als Ja/Nein/Vielleicht; auf Wunsch dürfen alle Antworten
+  ergänzen. Neue Nachrichten machen einen Ton (privat und bei @Erwähnung höher), der sich
+  stummschalten lässt. Wer später dazukommt, bekommt den Verlauf; private Nachrichten an
+  jemanden, der offline ist, kommen an, sobald er wieder da ist. Der Chat nutzt Port 41950
+  (UDP und TCP) und lässt sich in den Einstellungen ausschalten. Die Diagnose meldet eine
+  fehlende Windows-Firewall-Regel (mit „Jetzt beheben“) und eine firewalld-Zone, die den Port
+  sperrt. Alle Nachrichten sind signiert, niemand kann unter fremder Kennung schreiben oder
+  löschen; private Nachrichten sind Ende-zu-Ende verschlüsselt. Ungetestet auf einer echten LAN.
 
 - macOS/Linux: In den Spieldetails gibt es eine **Startkonfiguration**: Startdatei, Argumente,
   Arbeitsordner, Kompatibilitätsschicht, vorangestellte Programme (z. B. `gamemoderun`,

@@ -80,6 +80,13 @@
     }
   }
 
+  // The bell in the chat panel saves this one setting by itself; the form
+  // must not put the old value back on its next Save.
+  $effect(() => {
+    const on = app.settings?.chatSound;
+    if (draft && on !== undefined) draft.chatSound = on;
+  });
+
   const spaceFor = (path: string) => space.find((s) => s.path === path);
 </script>
 
@@ -147,6 +154,13 @@
         <h2>{t("settings.transport")}</h2>
         <label class="radio"><input type="checkbox" bind:checked={draft.lanMode} /> {t("settings.lan_mode")}</label>
         <p class="hint">{t("settings.lan_mode.hint")}</p>
+      </section>
+
+      <section class="card">
+        <h2>{t("settings.chat")}</h2>
+        <label class="radio"><input type="checkbox" bind:checked={draft.chatEnabled} /> {t("settings.chat.enabled")}</label>
+        <p class="hint">{t("settings.chat.enabled.hint")}</p>
+        <label class="radio"><input type="checkbox" bind:checked={draft.chatSound} disabled={!draft.chatEnabled} /> {t("settings.chat.sound")}</label>
       </section>
 
       {#if app.bootstrap?.platform === "windows"}

@@ -68,6 +68,11 @@ pub struct Settings {
     /// Diagnostics warnings the user has hidden, by
     /// [`crate::problem::Problem::dismiss_key`]. Sorted and unique.
     pub ignored_problems: Vec<String>,
+    /// Take part in the LAN chat (beacons and messages on
+    /// [`crate::chat::CHAT_PORT`]). Off means no socket is opened at all.
+    pub chat_enabled: bool,
+    /// Play a sound for new chat messages.
+    pub chat_sound: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +121,8 @@ impl Default for Settings {
             resilio_binary: None,
             resilio_api_key: None,
             ignored_problems: Vec::new(),
+            chat_enabled: true,
+            chat_sound: true,
         }
     }
 }
@@ -313,6 +320,8 @@ mod tests {
         assert_eq!(s.lanpage_host, "launcher.lan");
         assert_eq!(s.catalog_key, None);
         assert_eq!(s.resilio_api_key, None);
+        // A file from before the chat joins it, with sound.
+        assert!(s.chat_enabled && s.chat_sound);
     }
 
     #[test]

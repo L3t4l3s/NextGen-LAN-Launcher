@@ -79,6 +79,34 @@ videos are looked up at `eti_launcher/video/<id>.mp4` (also `videos/`, `update/v
 inside the default library root and played muted in the detail header. Library roots are added to
 the Tauri asset-protocol scope at runtime so the WebView can load them.
 
+## LAN chat
+
+`crates/lanlauncher-core/src/chat/` is a chat between launchers without a server:
+
+* **Presence:** each launcher broadcasts a UDP beacon (`{nll, id, nick, port, os}`) on port
+  41950 every 3 s, to the broadcast address of every IPv4 card and to 255.255.255.255. A peer
+  not heard from for 12 s is offline; a closing launcher sends `bye`. A new peer is answered
+  directly, so one direction of broadcasts is enough.
+* **Messages:** newline-delimited JSON over TCP (41950, or a random port when taken; the beacon
+  names it), one writer per peer. Public events go to every online peer, private ones only to
+  their recipient. Nothing is relayed.
+* **Identity:** the peer id is an Ed25519 public key (`chat/crypto.rs`). Every event is signed;
+  the body of a private event is sealed with a NaCl box (Curve25519 keys derived from the two
+  ids), so only the two participants can read it, whoever else receives it. The envelope (who,
+  to whom, when, nickname) stays readable. Events whose signature fails are dropped.
+* **History:** everything is an immutable `Event` (`Text`, `React`, `Poll`, `PollOption`,
+  `Vote`, `ClosePoll`, `Delete`) with id `<peer>:<seq>`. When two launchers meet, and every two
+  minutes, each sends `Hello` with the ids it has and receives what it lacks — public events and
+  their private conversation, minus what the asker no longer keeps (`since`). That is how a late arrival gets the backlog and how a private
+  message to someone offline arrives later. For reactions and votes the highest `seq` of a person
+  wins, so the order of arrival does not matter. `ChatState` folds events into `ItemView`s.
+* **Storage:** `<data>/chat/history.jsonl` (newest 5000 events by author time, in their signed
+  and sealed form; older ones are not taken in again) and `identity.json` (the secret key; the
+  nickname is the player name).
+* **Shell:** `src-tauri/src/chat.rs` starts and stops the chat with `settings.chatEnabled` and
+  forwards changes as `chat-update`/`chat-reset`. The panel is `ChatPanel.svelte`; sounds are
+  synthesised with WebAudio (`chat-sound.ts`).
+
 ## Diagnostics and fixes
 
 `diagnostics.rs` produces `Problem { code, severity, params, steps, fix }`. The UI localises
@@ -90,6 +118,7 @@ exclusions, transport restart, repair, open folder/URL.
 ## Directories
 
 * Settings: `<config dir>/settings.json` (atomic writes).
-* Data: `<data dir>/transport` (Resilio storage), `manifests/` (user overrides), `demo/`.
+* Data: `<data dir>/transport` (Resilio storage), `manifests/` (user overrides), `demo/`,
+  `chat/` (history and chat identity).
 * Cache: `<cache dir>/covers/<game_id>.jpg` from `assets.eti`.
 * Library root(s): ETI layout `<root>/<game_id>/{<id>.eti, version.ini, game_start.cmd, local/}`.

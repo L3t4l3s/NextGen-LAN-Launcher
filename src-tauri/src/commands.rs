@@ -1037,6 +1037,8 @@ pub async fn save_settings(
         // Resilio ignores re-adding a known folder with a different key.
         crate::register_catalog_share(&state).await;
     }
+    // Switched on or off, or a new name to announce.
+    crate::chat::apply_settings(&app, state.inner()).await;
     // Newly added secondary roots may already contain a catalog. Load in
     // the background without waiting for the periodic file watcher.
     if library_changed && !state.demo {
@@ -1099,8 +1101,9 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
     let managed = transport
         .as_ref()
         .is_some_and(|t| t.kind() == lanlauncher_core::transport::TransportKind::Resilio);
+    let chat_on = state.chat.read().await.is_some();
     // A Python start and a D-Bus round trip; alongside the engine query too.
-    let firewalld = (cfg!(target_os = "linux") && managed).then(|| {
+    let firewalld = (cfg!(target_os = "linux") && (managed || chat_on)).then(|| {
         checks.push("firewalld".into());
         tauri::async_runtime::spawn(firewalld_zones())
     });
@@ -1139,7 +1142,9 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
             .ok()
             .flatten();
             if let Some(program) = ours {
-                if crate::fixes::firewall_rule_present().await == Some(false) {
+                if crate::fixes::firewall_rule_present(diagnostics::FIREWALL_RULE_IN).await
+                    == Some(false)
+                {
                     problems.push(diagnostics::firewall_missing_problem(&program));
                 }
             }
@@ -1149,8 +1154,19 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
         let found = handle.await.unwrap_or_default();
         problems.extend(diagnostics::check_network_profiles(&found));
     }
+    if chat_on && cfg!(target_os = "windows") {
+        checks.push("chat_firewall".into());
+        if crate::fixes::firewall_rule_present(diagnostics::FIREWALL_RULE_CHAT).await == Some(false)
+        {
+            problems.push(diagnostics::chat_firewall_missing_problem());
+        }
+    }
     if let Some(handle) = firewalld {
-        if let Some(zones) = handle.await.ok().flatten() {
+        let zones = handle.await.ok().flatten();
+        if let (true, Some(zones)) = (chat_on, &zones) {
+            problems.extend(diagnostics::check_firewalld_chat(zones));
+        }
+        if let (true, Some(zones)) = (managed, zones) {
             // A port of 0 in the settings lets the engine pick; which one it
             // took is in its listening sockets.
             let random = settings.sync_port == 0;

@@ -4,6 +4,9 @@
 import type {
   BootstrapInfo,
   ComponentsReport,
+  ChatItem,
+  ChatSnapshot,
+  PollKind,
   ConfigReport,
   Extra,
   FixAction,
@@ -102,6 +105,21 @@ export const api = {
   sharePeers: (gameId: string) => invoke<SharePeer[]>("get_share_peers", { gameId }),
   librarySpace: () => invoke<LibrarySpace[]>("get_library_space"),
   restartTransport: () => invoke<void>("restart_transport"),
+  chat: {
+    /** null while the chat is switched off. */
+    snapshot: () => invoke<ChatSnapshot | null>("chat_snapshot"),
+    setSound: (on: boolean) => invoke<void>("set_chat_sound", { on }),
+    send: (to: string | null, text: string, replyTo: string | null) => invoke<ChatItem>("chat_send", { to, text, replyTo }),
+    /** An empty emoji takes the reaction back. */
+    react: (target: string, emoji: string) => invoke<void>("chat_react", { target, emoji }),
+    createPoll: (to: string | null, question: string, options: { text: string; game: string | null }[], kind: PollKind, open: boolean) =>
+      invoke<ChatItem>("chat_create_poll", { to, question, options, kind, open }),
+    /** The complete answer; an empty list withdraws the vote. */
+    vote: (poll: string, choices: string[]) => invoke<void>("chat_vote", { poll, choices }),
+    addPollOption: (poll: string, text: string, game: string | null) => invoke<void>("chat_add_poll_option", { poll, text, game }),
+    closePoll: (poll: string) => invoke<void>("chat_close_poll", { poll }),
+    remove: (target: string) => invoke<void>("chat_delete", { target }),
+  },
 };
 
 export async function pickFolder(): Promise<string | null> {

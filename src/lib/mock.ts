@@ -3,6 +3,7 @@
 // local verification – the scenario this launcher exists to fix.
 
 import type { BootstrapInfo, GameConfig, GameStatus, GameView, Phase, Report, Settings } from "./types";
+import { createChatMock } from "./mock-chat";
 
 const demoGames: Omit<GameView, "status">[] = [
   g("amongus", 1, "Among Us", "20250308", 0.45, "2018", "Innersloth", "15", "Casual", "Wer ist der Impostor? Bis zu 15 Spieler im lokalen Netzwerk."),
@@ -100,6 +101,8 @@ export function createMock() {
     catalogKey: null,
     resilioBinary: null,
     resilioApiKey: null,
+    chatEnabled: true,
+    chatSound: true,
   };
   // pre-seeded states for a lively screenshot
   // A playable game with a leftover setup warning, as seen with adopted ETI installs.
@@ -171,6 +174,8 @@ export function createMock() {
   function emit(event: string, payload: unknown) {
     listeners.get(event)?.forEach((cb) => cb(payload));
   }
+
+  const chatMock = createChatMock(emit, () => settings.playerName || "DemoPlayer");
 
   setInterval(() => {
     emit("install-status", [...sims.keys()].map(status).filter(Boolean));
@@ -255,6 +260,11 @@ export function createMock() {
   const invoke = async (cmd: string, args: Record<string, unknown> = {}): Promise<unknown> => {
     await new Promise((r) => setTimeout(r, 60));
     const id = args.gameId as string;
+    if (cmd === "set_chat_sound") {
+      settings = { ...settings, chatSound: args.on as boolean };
+      return;
+    }
+    if (cmd.startsWith("chat_")) return chatMock.invoke(cmd, args);
     switch (cmd) {
       case "get_bootstrap":
         return { ...bootstrap, settings };
@@ -373,6 +383,7 @@ export function createMock() {
         const key = next.catalogKey?.trim() ?? "";
         if (key && !/^B[A-Z2-7]{32}$/.test(key)) throw new Error("err.invalid_catalog_key");
         settings = { ...next, catalogKey: key || null };
+        chatMock.setEnabled(settings.chatEnabled);
         return settings;
       }
       case "run_diagnostics":

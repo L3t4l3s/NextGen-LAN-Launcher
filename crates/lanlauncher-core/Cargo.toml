@@ -31,6 +31,11 @@ sysinfo = "0.38"
 walkdir = "2.5"
 async-trait = "0.1"
 futures = "0.3"
+if-addrs = "0.15.0"
+socket2 = "0.6.5"
+gethostname = "1.1.0"
+ed25519-dalek = "2.2"
+crypto_box = "0.9.1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

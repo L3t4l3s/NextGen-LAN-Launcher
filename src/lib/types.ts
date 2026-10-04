@@ -17,6 +17,7 @@ export type Severity = "info" | "warning" | "error";
 export type FixAction =
   | { kind: "set_network_profile_private"; interface_index: number }
   | { kind: "add_firewall_rules" }
+  | { kind: "add_chat_firewall_rules" }
   | { kind: "restart_transport" }
   | { kind: "repair_game"; game_id: string }
   | { kind: "open_folder"; path: string }
@@ -121,6 +122,10 @@ export interface Settings {
   /** Explicit Resilio binary (e.g. the ETI launcher's btsync.exe). */
   resilioBinary: string | null;
   resilioApiKey: string | null;
+  /** Take part in the LAN chat. */
+  chatEnabled: boolean;
+  /** Play a sound for new chat messages. */
+  chatSound: boolean;
 }
 
 export interface RunnerOption {
@@ -370,3 +375,71 @@ export interface LibrarySpace {
   totalBytes: number | null;
   games: number;
 }
+
+// LAN chat (`lanlauncher_core::chat`).
+
+export type PollKind = "single" | "multiple";
+
+export interface ChatReaction {
+  emoji: string;
+  nicks: string[];
+  mine: boolean;
+}
+
+export interface ChatPollOption {
+  id: string;
+  text: string;
+  /** Catalog id when the option is a game. */
+  game: string | null;
+  voters: string[];
+  mine: boolean;
+  /** Nickname of whoever added it to an open poll. */
+  addedBy: string | null;
+}
+
+export interface ChatPoll {
+  question: string;
+  kind: PollKind;
+  /** Everyone may add answers. */
+  open: boolean;
+  closed: boolean;
+  options: ChatPollOption[];
+  participants: number;
+}
+
+export interface ChatItem {
+  id: string;
+  from: string;
+  nick: string;
+  /** Milliseconds since the epoch, by the author's clock (clamped to arrival). */
+  ts: number;
+  /** When this launcher got it, by its own clock. */
+  received: number;
+  /** null: the public room; otherwise the other person's peer id. */
+  conversation: string | null;
+  mine: boolean;
+  deleted: boolean;
+  text: string | null;
+  reply: { id: string; nick: string | null; text: string | null; deleted: boolean } | null;
+  reactions: ChatReaction[];
+  poll: ChatPoll | null;
+}
+
+export interface ChatPeer {
+  id: string;
+  nick: string;
+  os: string;
+  online: boolean;
+  address: string;
+}
+
+export interface ChatSnapshot {
+  me: string;
+  nick: string;
+  items: ChatItem[];
+  peers: ChatPeer[];
+  /** `err.chat_*` code when the chat cannot reach the LAN as it should. */
+  problem: string | null;
+}
+
+export type ChatUpdate = { kind: "items"; items: ChatItem[] } | { kind: "peers"; peers: ChatPeer[] } | { kind: "reset" };

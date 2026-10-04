@@ -151,14 +151,16 @@ pub(crate) async fn ensure_firewall_rules(
     }
 }
 
-/// Windows: does the inbound firewall rule for the sync engine exist?
+/// Windows: does the inbound firewall rule `name` exist
+/// ([`diagnostics::FIREWALL_RULE_IN`] for the sync engine,
+/// [`diagnostics::FIREWALL_RULE_CHAT`] for the chat)?
 ///
 /// `netsh` answers in milliseconds and says it in its exit code — 0 when a
 /// rule matched, 1 when none did — so nothing depends on its localised text.
 /// `Get-NetFirewallRule` would be tidier to read but loads a PowerShell
 /// module first, which is most of the several seconds the diagnostics page
 /// used to take. `None` off Windows or when netsh cannot be run at all.
-pub async fn firewall_rule_present() -> Option<bool> {
+pub async fn firewall_rule_present(name: &str) -> Option<bool> {
     if !cfg!(target_os = "windows") {
         return None;
     }
@@ -169,7 +171,7 @@ pub async fn firewall_rule_present() -> Option<bool> {
             "firewall",
             "show",
             "rule",
-            &format!("name={}", diagnostics::FIREWALL_RULE_IN),
+            &format!("name={name}"),
         ])
         .output()
         .await
@@ -268,6 +270,37 @@ async fn netsh(_args: &[String]) -> Result<(), String> {
     Err("err.windows_only".into())
 }
 
+/// Drop `stale` rules, then add `rules`, elevated where needed.
+///
+/// The stale rules are cleared first; `netsh` treats "no rule matched" as a
+/// failure, so only the allow rules decide whether the repair worked.
+async fn replace_firewall_rules(
+    state: &AppState,
+    stem: &str,
+    stale: &[Vec<String>],
+    rules: &[Vec<String>],
+) -> Result<(), String> {
+    if needs_runas() {
+        use lanlauncher_core::launch::elevate::BatchLine;
+        let lines = stale
+            .iter()
+            .map(|r| BatchLine::optional(netsh_line(r)))
+            .chain(rules.iter().map(|r| BatchLine::from(netsh_line(r))))
+            .collect();
+        run_admin_lines(state, stem, lines, &state.dirs.data).await?;
+    } else {
+        for rule in stale {
+            if let Err(e) = netsh(rule).await {
+                log::debug!("netsh delete rule: {e}");
+            }
+        }
+        for rule in rules {
+            netsh(rule).await?;
+        }
+    }
+    Ok(())
+}
+
 pub async fn apply(
     app: &tauri::AppHandle,
     state: &Arc<AppState>,
@@ -308,30 +341,20 @@ pub async fn apply(
             let binary = located
                 .found
                 .ok_or_else(|| format!("err.resilio_not_found|{}", located.probed.len()))?;
-            // The stale rules are cleared first; `netsh` treats "no rule
-            // matched" as a failure, so only the allow rules are checked.
             let stale = diagnostics::firewall_stale_rules(&binary);
             let rules = diagnostics::firewall_rules(&binary, port);
-            if needs_runas() {
-                use lanlauncher_core::launch::elevate::BatchLine;
-                // The deletes are expected to fail when no rule matched; only
-                // the allow rules decide whether the repair worked.
-                let lines = stale
-                    .iter()
-                    .map(|r| BatchLine::optional(netsh_line(r)))
-                    .chain(rules.iter().map(|r| BatchLine::from(netsh_line(r))))
-                    .collect();
-                run_admin_lines(state, "firewall-rules", lines, &state.dirs.data).await?;
-            } else {
-                for rule in &stale {
-                    if let Err(e) = netsh(rule).await {
-                        log::debug!("netsh delete rule: {e}");
-                    }
-                }
-                for rule in &rules {
-                    netsh(rule).await?;
-                }
-            }
+            replace_firewall_rules(state, "firewall-rules", &stale, &rules).await?;
+            Ok("msg.firewall_added".into())
+        }
+        FixAction::AddChatFirewallRules => {
+            // netsh does not take the `\\?\` form `current_exe` may return.
+            let program = std::env::current_exe()
+                .map(lanlauncher_core::paths::strip_verbatim)
+                .map_err(|e| format!("err.elevation_failed|{e}"))?;
+            let port = lanlauncher_core::chat::CHAT_PORT;
+            let stale = diagnostics::chat_firewall_stale_rules(&program, port);
+            let rules = diagnostics::chat_firewall_rules(&program, port);
+            replace_firewall_rules(state, "chat-firewall-rules", &stale, &rules).await?;
             Ok("msg.firewall_added".into())
         }
         FixAction::RestartTransport => {

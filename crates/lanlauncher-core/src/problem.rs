@@ -28,6 +28,8 @@ pub enum FixAction {
     SetNetworkProfilePrivate { interface_index: u32 },
     /// Add inbound/outbound firewall rules for the sync engine on all profiles.
     AddFirewallRules,
+    /// Add inbound firewall rules for the launcher's LAN chat.
+    AddChatFirewallRules,
     /// Terminate orphaned sync engine processes and restart the transport.
     RestartTransport,
     /// Re-run verification and extraction for a game ("Repair").

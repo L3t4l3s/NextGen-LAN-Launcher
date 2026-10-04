@@ -349,6 +349,73 @@ pub fn firewall_rules(program: &Path, listening_port: u16) -> Vec<Vec<String>> {
     rules
 }
 
+/// Name of the inbound rule [`chat_firewall_rules`] creates for the launcher.
+pub const FIREWALL_RULE_CHAT: &str = "NextGen LAN Launcher Chat (in)";
+
+/// The launcher itself listens for the LAN chat; without a rule Windows drops
+/// the beacons and messages of the others (or asked once, and was declined).
+pub fn chat_firewall_missing_problem() -> Problem {
+    Problem::new("chat.firewall_missing", Severity::Warning)
+        .param("port", crate::chat::CHAT_PORT)
+        .step("chat.firewall_missing.step.fix")
+        .with_fix(FixAction::AddChatFirewallRules)
+        .dismissible("chat.firewall_missing")
+}
+
+/// `netsh` commands that clear what [`chat_firewall_rules`] would add: every
+/// rule for the launcher program (a block rule from a declined prompt
+/// among them) and the port rules by name, which `netsh` would otherwise add
+/// a second time on every repair. Exit status ignored, as for
+/// [`firewall_stale_rules`].
+pub fn chat_firewall_stale_rules(program: &Path, port: u16) -> Vec<Vec<String>> {
+    let mut rules = firewall_stale_rules(program);
+    for proto in ["UDP", "TCP"] {
+        rules.push(vec![
+            "advfirewall".to_string(),
+            "firewall".to_string(),
+            "delete".to_string(),
+            "rule".to_string(),
+            format!("name=NextGen LAN Launcher Chat {proto} {port}"),
+        ]);
+    }
+    rules
+}
+
+/// `netsh` commands that let the chat in: the launcher program on every
+/// profile, plus its port for both protocols. Run [`firewall_stale_rules`]
+/// for the launcher first; a block rule from a declined prompt wins otherwise.
+pub fn chat_firewall_rules(program: &Path, port: u16) -> Vec<Vec<String>> {
+    let prog = program.to_string_lossy().to_string();
+    let mut rules = vec![vec![
+        "advfirewall".to_string(),
+        "firewall".to_string(),
+        "add".to_string(),
+        "rule".to_string(),
+        format!("name={FIREWALL_RULE_CHAT}"),
+        "dir=in".to_string(),
+        "action=allow".to_string(),
+        format!("program={prog}"),
+        "profile=any".to_string(),
+        "enable=yes".to_string(),
+    ]];
+    for proto in ["UDP", "TCP"] {
+        rules.push(vec![
+            "advfirewall".to_string(),
+            "firewall".to_string(),
+            "add".to_string(),
+            "rule".to_string(),
+            format!("name=NextGen LAN Launcher Chat {proto} {port}"),
+            "dir=in".to_string(),
+            "action=allow".to_string(),
+            format!("protocol={proto}"),
+            format!("localport={port}"),
+            "profile=any".to_string(),
+            "enable=yes".to_string(),
+        ]);
+    }
+    rules
+}
+
 pub fn check_disk_space(library: &Library, min_free_bytes: u64) -> Vec<Problem> {
     let mut out = Vec::new();
     for root in &library.roots {
@@ -572,17 +639,8 @@ fn zone_admits(zone: &FirewalldZone, protocol: &str, from: u16, to: u16) -> bool
     })
 }
 
-/// What an active firewalld zone keeps out of the sync engine.
-///
-/// SteamOS runs no firewall; Fedora-based systems such as Bazzite run
-/// firewalld, and a zone that closes the engine's port leaves only the
-/// connections this machine opens itself — fewer peers, slower downloads,
-/// nothing passed on to others — and the LAN search goes unanswered.
-///
-/// `listening_port` 0 means the engine picked one at random; then only a zone
-/// that admits every unprivileged port (as Fedora Workstation's does) is
-/// known to be open, and the advice is to fix the port in the settings.
-pub fn check_firewalld(zones: &[FirewalldZone], listening_port: u16, random: bool) -> Vec<Problem> {
+/// The zones that apply to the LAN: those a network card is bound to.
+fn lan_zones(zones: &[FirewalldZone]) -> Vec<&FirewalldZone> {
     // The zones a network card is bound to. Where none is — only a Docker,
     // libvirt or VPN zone is active — the card falls into the default zone.
     let virtual_interface = |name: &String| {
@@ -597,12 +655,48 @@ pub fn check_firewalld(zones: &[FirewalldZone], listening_port: u16, random: boo
     if relevant.is_empty() {
         relevant = zones.iter().filter(|z| z.default).collect();
     }
+    relevant
+}
+
+/// What an active firewalld zone keeps out of the sync engine.
+///
+/// SteamOS runs no firewall; Fedora-based systems such as Bazzite run
+/// firewalld, and a zone that closes the engine's port leaves only the
+/// connections this machine opens itself — fewer peers, slower downloads,
+/// nothing passed on to others — and the LAN search goes unanswered.
+///
+/// `listening_port` 0 means the engine picked one at random; then only a zone
+/// that admits every unprivileged port (as Fedora Workstation's does) is
+/// known to be open, and the advice is to fix the port in the settings.
+pub fn check_firewalld(zones: &[FirewalldZone], listening_port: u16, random: bool) -> Vec<Problem> {
     let mut needed = vec![("udp", RESILIO_DISCOVERY_PORT, RESILIO_DISCOVERY_PORT)];
     match listening_port {
         0 => needed.extend([("tcp", 1025, u16::MAX), ("udp", 1025, u16::MAX)]),
         RESILIO_DISCOVERY_PORT => needed.push(("tcp", listening_port, listening_port)),
         port => needed.extend([("tcp", port, port), ("udp", port, port)]),
     }
+    closed_in_zones(zones, &needed, "transport.firewalld_closed", random)
+}
+
+/// The same for the LAN chat: without its UDP port nobody sees this machine
+/// online, without the TCP port nobody's messages arrive.
+pub fn check_firewalld_chat(zones: &[FirewalldZone]) -> Vec<Problem> {
+    let port = crate::chat::CHAT_PORT;
+    closed_in_zones(
+        zones,
+        &[("udp", port, port), ("tcp", port, port)],
+        "chat.firewalld_closed",
+        false,
+    )
+}
+
+fn closed_in_zones(
+    zones: &[FirewalldZone],
+    needed: &[(&str, u16, u16)],
+    code: &str,
+    random: bool,
+) -> Vec<Problem> {
+    let relevant = lan_zones(zones);
     let mut out = Vec::new();
     for zone in relevant {
         let missing: Vec<_> = needed
@@ -628,7 +722,7 @@ pub fn check_firewalld(zones: &[FirewalldZone], listening_port: u16, random: boo
                 open.push(port);
             }
         }
-        let mut problem = Problem::new("transport.firewalld_closed", Severity::Warning)
+        let mut problem = Problem::new(code, Severity::Warning)
             .param("zone", &zone.name)
             .param(
                 "missing",
@@ -637,7 +731,7 @@ pub fn check_firewalld(zones: &[FirewalldZone], listening_port: u16, random: boo
         // A port the engine drew at random is drawn again at its next start,
         // and a rule for it then opens nothing.
         if random {
-            problem = problem.step("transport.firewalld_closed.step.port");
+            problem = problem.step(format!("{code}.step.port"));
         }
         if !open.is_empty() {
             let command = format!(
@@ -650,9 +744,9 @@ pub fn check_firewalld(zones: &[FirewalldZone], listening_port: u16, random: boo
             );
             problem = problem
                 .param("command", command)
-                .step("transport.firewalld_closed.step.command");
+                .step(format!("{code}.step.command"));
         }
-        out.push(problem.dismissible(format!("transport.firewalld_closed:{}", zone.name)));
+        out.push(problem.dismissible(format!("{code}:{}", zone.name)));
     }
     out
 }
@@ -911,6 +1005,47 @@ trusted
             check_firewalld(&[], 0, true).is_empty(),
             "firewalld not running"
         );
+    }
+
+    #[test]
+    fn a_zone_closed_to_the_chat_says_which_ports_to_open() {
+        let closed = FirewalldZone {
+            name: "public".into(),
+            active: true,
+            interfaces: vec!["enp3s0".into()],
+            ports: vec!["41950/udp".into()],
+            ..Default::default()
+        };
+        let problems = check_firewalld_chat(&[closed]);
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0].code, "chat.firewalld_closed");
+        assert_eq!(problems[0].params["missing"], "41950/tcp");
+        assert_eq!(problems[0].steps, ["chat.firewalld_closed.step.command"]);
+        let zones = parse_firewalld_zones(ZONES);
+        let open: Vec<_> = zones
+            .into_iter()
+            .map(|mut z| {
+                z.active = z.default;
+                z
+            })
+            .collect();
+        assert!(check_firewalld_chat(&open).is_empty());
+    }
+
+    #[test]
+    fn chat_rules_name_the_program_and_both_protocols() {
+        let stale = chat_firewall_stale_rules(Path::new("launcher.exe"), 41950);
+        // Every port rule added is first deleted by its name.
+        for added in &chat_firewall_rules(Path::new("launcher.exe"), 41950)[1..] {
+            let name = added.iter().find(|a| a.starts_with("name=")).unwrap();
+            assert!(stale.iter().any(|r| r.contains(name)), "{name}");
+        }
+        let rules = chat_firewall_rules(Path::new(r"C:\Program Files\NLL\launcher.exe"), 41950);
+        assert_eq!(rules.len(), 3);
+        assert!(rules[0].contains(&format!("name={FIREWALL_RULE_CHAT}")));
+        assert!(rules[0].contains(&r"program=C:\Program Files\NLL\launcher.exe".to_string()));
+        assert!(rules[1].contains(&"protocol=UDP".to_string()));
+        assert!(rules[2].contains(&"localport=41950".to_string()));
     }
 
     #[test]

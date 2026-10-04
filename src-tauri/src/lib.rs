@@ -1,5 +1,6 @@
 //! Tauri shell around `lanlauncher-core`.
 
+mod chat;
 mod commands;
 mod fixes;
 mod state;
@@ -1528,6 +1529,9 @@ pub fn run() {
                 prefix_use: std::sync::Mutex::new(Default::default()),
                 runner_choice: tokio::sync::Mutex::new(()),
                 startup_catalog: RwLock::new(None),
+                chat: RwLock::new(None),
+                chat_lifecycle: tokio::sync::Mutex::new(()),
+                chat_error: RwLock::new(None),
             });
             app.manage(state.clone());
             let handle = app.handle().clone();
@@ -1575,6 +1579,15 @@ pub fn run() {
             commands::get_share_peers,
             commands::get_library_space,
             commands::restart_transport,
+            chat::chat_snapshot,
+            chat::set_chat_sound,
+            chat::chat_send,
+            chat::chat_react,
+            chat::chat_create_poll,
+            chat::chat_vote,
+            chat::chat_add_poll_option,
+            chat::chat_close_poll,
+            chat::chat_delete,
         ])
         .build(tauri::generate_context!())
         .expect("error while running NextGen LAN Launcher")
@@ -1588,6 +1601,11 @@ pub fn run() {
                 };
                 let state = state.inner().clone();
                 tauri::async_runtime::block_on(async move {
+                    // The others see this launcher go offline right away
+                    // instead of after the beacon timeout.
+                    if let Some(chat) = state.chat.read().await.clone() {
+                        chat.stop().await;
+                    }
                     let transport = state.transport.read().await.clone();
                     if let Some(t) = transport {
                         log::info!("shutting the sync engine down");
@@ -1625,6 +1643,8 @@ async fn refresh_event(state: &AppState, app: &tauri::AppHandle) {
 }
 
 async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
+    // The chat needs neither the engine nor the catalog; it starts first.
+    crate::chat::apply_settings(&app, &state).await;
     let lifecycle = state.transport_lifecycle.lock().await;
     let library = state.library.clone();
     // The catalog is loaded while the sync engine starts (which may take up

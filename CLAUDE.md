@@ -29,7 +29,7 @@ Der Fortschrittswert des Sync-Engines ist reine Anzeige (`crates/lanlauncher-cor
 |---|---|
 | `crates/lanlauncher-core/` | Rust-Bibliothek ohne GUI. Alles Testbare gehört hierhin. |
 | `src-tauri/` | Tauri-2-Schale: Commands (`commands.rs`), Fix-Aktionen (`fixes.rs`), Dienst-Schleifen (`lib.rs`). |
-| `src/` | Svelte-5-Frontend (Runes). `src/lib/mock.ts` simuliert das Backend im Browser. |
+| `src/` | Svelte-5-Frontend (Runes). `src/lib/mock.ts` simuliert das Backend im Browser (Chat: `mock-chat.ts`). |
 | `manifests/` | TOML-Startprofile für macOS/Linux, eines pro ETI-Game-ID. |
 | `assets/covers/` | Mitgelieferte Cover (`<id>.jpg`) aus dem öffentlichen Repo eti-lan/LAN-Launcher (Public Domain). Aktualisieren mit `tools/update-covers.sh`, Upstream-Commit steht in `UPSTREAM`. Zur Laufzeit gewinnt der Cover-Cache aus `assets.eti` (`AppState::cover_dirs`). |
 | `themes/`, `tools/dev-lanpage/` | Beispiel-Themes, lokale LANPage-Attrappe. |
@@ -398,6 +398,25 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   Benutzer denselben Build selbst installiert, bleibt nur seine Kopie (gleicher Name); Tests rufen `find_protons_in(home, &[])`, sonst sähen sie, was der
   Testrechner installiert hat. Alles in
   `crates/lanlauncher-core/src/launch/proton.rs`, rein dateisystembasiert und damit testbar.
+- **LAN-Chat** (`crates/lanlauncher-core/src/chat/`, Shell `src-tauri/src/chat.rs`, Panel
+  `ChatPanel.svelte`): serverlos, UDP-Beacons und TCP auf Port 41950. Alles ist ein
+  unveränderliches `Event`; zwei Launcher gleichen beim Treffen und alle zwei Minuten per `Hello`
+  ab, was fehlt. **Nie ein Event verändern oder Reihenfolge voraussetzen** — Reaktionen und
+  Stimmen entscheidet die höchste `seq` je Person, sonst kippt das Ergebnis je nach
+  Ankunftsreihenfolge. Private Events gehen nur an Beteiligte (`Event::visible_to`), auch beim
+  Abgleich; ein Event, das auf eine private Nachricht zeigt, muss in deren Unterhaltung bleiben.
+  Eine TCP-Verbindung, die die Gegenseite beim Neustart geschlossen hat, nimmt den ersten Schreib-
+  vorgang noch „erfolgreich“ an — deshalb prüft `link_writer` vor dem Schreiben per `try_read`, und
+  ein wieder auftauchender Peer bekommt eine frische Verbindung (der Test
+  `a_late_arrival_reads_the_history_and_gets_what_was_sent_to_it` war genau daran wackelig).
+  Die Peer-ID ist ein Ed25519-Schlüssel (`chat/crypto.rs`): jedes Event ist signiert, private
+  Bodies sind versiegelt (`Body::Sealed`); der Zustand faltet die geöffnete Form, gespeichert und
+  weitergegeben wird nur die Wire-Form. Ein `Hello` ist unsigniert und darf einen online
+  gemeldeten Peer weder umadressieren noch umbenennen. Spitznamen sind nicht eindeutig — nur die
+  ID dahinter ist fälschungssicher; nirgends anders behaupten. Der Verlauf ist auf 5000 Events
+  begrenzt (`trim`, `floor`, `Hello.since`), sonst sprengt die ID-Liste eines `Hello` die
+  Rahmengrenze. Tests laufen mit mehreren Chats auf 127.0.0.1 und direkten Beacon-Zielen
+  (`ChatConfig::beacon_targets`), nicht über Broadcast.
 - **Clippy:** In `resilio.rs` müssen alle Items vor `mod tests` stehen (`items_after_test_module`).
 - **Fehlertexte:** Tauri-Commands und Fix-Aktionen geben keine deutschen Sätze zurück, sondern Codes
   (`err.<name>` bzw. `msg.<name>`, optional mit `|detail`). Das Frontend übersetzt sie mit
@@ -452,7 +471,8 @@ dieselben.
 ## Was hier nicht geprüft werden kann
 
 Echter Resilio-Betrieb gegen einen Sync-Server, Windows-Installer mit Resilio-Sidecar,
-PowerShell-/netsh-Fixes sowie die Startprofile unter Wine/CrossOver. Änderungen an diesen Stellen
+PowerShell-/netsh-Fixes, die Startprofile unter Wine/CrossOver sowie der LAN-Chat zwischen
+mehreren echten Rechnern (Broadcasts über Switches/WLAN, Windows-Firewall). Änderungen an diesen Stellen
 im Commit als „ungetestet, auf der LAN prüfen“ kennzeichnen und in `README.md` unter
 „Offene Punkte“ nachhalten.
 

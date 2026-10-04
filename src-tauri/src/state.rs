@@ -55,6 +55,13 @@ pub struct AppState {
     /// engine may take its whole API timeout to come up); `catalog()` falls
     /// back to it so the library shows up right away.
     pub startup_catalog: RwLock<Option<Catalog>>,
+    /// The LAN chat while it is switched on (`crate::chat`).
+    pub chat: RwLock<Option<lanlauncher_core::chat::Chat>>,
+    /// Serialises starting and stopping the chat: two at once would both
+    /// bind its port.
+    pub chat_lifecycle: tokio::sync::Mutex<()>,
+    /// Why the chat did not start although it is switched on (`err.chat_start|…`).
+    pub chat_error: RwLock<Option<String>>,
 }
 
 /// See [`AppState::prefix_use`].

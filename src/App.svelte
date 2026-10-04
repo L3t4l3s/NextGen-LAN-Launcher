@@ -8,6 +8,7 @@
   import DiagnosticsView from "$lib/components/DiagnosticsView.svelte";
   import SettingsView from "$lib/components/SettingsView.svelte";
   import SetupWizard from "$lib/components/SetupWizard.svelte";
+  import ChatPanel from "$lib/components/ChatPanel.svelte";
 </script>
 
 <div id="bg_layer"></div>
@@ -26,17 +27,20 @@
 {:else}
   <div class="shell">
     <TopBar />
-    <main>
-      {#if app.view === "library"}
-        <LibraryView />
-      {:else if app.view === "downloads"}
-        <DownloadsView />
-      {:else if app.view === "diagnostics"}
-        <DiagnosticsView />
-      {:else}
-        <SettingsView />
-      {/if}
-    </main>
+    <div class="body">
+      <main>
+        {#if app.view === "library"}
+          <LibraryView />
+        {:else if app.view === "downloads"}
+          <DownloadsView />
+        {:else if app.view === "diagnostics"}
+          <DiagnosticsView />
+        {:else}
+          <SettingsView />
+        {/if}
+      </main>
+      <ChatPanel />
+    </div>
     <StatusBar />
   </div>
   {#if app.showWizard}
@@ -51,7 +55,13 @@
     display: grid;
     grid-template-rows: var(--topbar-h) 1fr var(--statusbar-h);
   }
+  .body {
+    display: flex;
+    min-height: 0;
+  }
   main {
+    flex: 1;
+    min-width: 0;
     min-height: 0;
     overflow: hidden;
   }
