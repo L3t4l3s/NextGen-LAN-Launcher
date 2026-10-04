@@ -676,7 +676,10 @@ pub async fn run(job: &Job, log: &Path, limit: std::time::Duration) -> std::io::
     })
 }
 
-#[cfg(test)]
+// Components are installed on Linux and macOS only (`sh`, `:`-joined
+// lists, process groups), and so are their tests: on Windows a path joins
+// with a backslash and none of it runs.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
@@ -912,7 +915,6 @@ mod tests {
         assert_eq!(job.wine, PathBuf::from("/p/files/bin/wine"));
     }
 
-    #[cfg(unix)]
     #[test]
     fn the_bundled_winetricks_is_copied_out_runnable_and_the_path_is_the_fallback() {
         use std::os::unix::fs::PermissionsExt;
@@ -977,7 +979,6 @@ mod tests {
 
     /// Each verb is its own call, and its exit status is its outcome — also
     /// after one failed, and whatever the prefix's record says.
-    #[cfg(unix)]
     #[tokio::test]
     async fn each_verb_is_judged_by_its_own_call() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1102,7 +1103,6 @@ mod tests {
 
     /// The stand-in starts Proton's binary of its own name with Proton's
     /// libraries, and winetricks around it keeps the host's.
-    #[cfg(unix)]
     #[test]
     fn a_proton_stand_in_gives_only_wine_protons_libraries() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1186,7 +1186,6 @@ mod tests {
     /// holding the real `wine64` and `wineserver` (Debian: `/usr/lib/wine`,
     /// with `wineserver64`). The loader keeps its own name — Wine starts
     /// itself again by it.
-    #[cfg(unix)]
     #[tokio::test]
     #[ignore = "needs wine, xvfb-run, NLL_TEST_WINETRICKS and NLL_TEST_WINE_BIN"]
     async fn a_real_winetricks_run_through_the_proton_stand_ins() {
@@ -1246,7 +1245,6 @@ mod tests {
 
     /// A run past its limit ends with everything it started: `sleep` stands
     /// in for an installer waiting for a click.
-    #[cfg(unix)]
     #[tokio::test]
     async fn a_run_past_its_limit_ends_its_whole_process_group() {
         let tmp = tempfile::tempdir().unwrap();
