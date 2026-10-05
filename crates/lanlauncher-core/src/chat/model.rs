@@ -48,6 +48,8 @@ pub const ERR_UNKNOWN_TARGET: ChatError = ChatError("err.chat_unknown_target");
 pub const ERR_NOT_ALLOWED: ChatError = ChatError("err.chat_not_allowed");
 pub const ERR_POLL_CLOSED: ChatError = ChatError("err.chat_poll_closed");
 pub const ERR_DISABLED: ChatError = ChatError("err.chat_disabled");
+/// Too many messages in a short time; see `Flood` in the chat module.
+pub const ERR_TOO_FAST: ChatError = ChatError("err.chat_too_fast");
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {

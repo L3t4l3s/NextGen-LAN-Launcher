@@ -29,7 +29,10 @@ pub struct AppState {
     /// Covers shipped with the app (`assets/covers` in the repository,
     /// `covers/` in the bundle); consulted after the cover cache.
     pub bundled_covers: Option<PathBuf>,
-    /// Games currently running (game_id → pid), for the stats beacon.
+    /// Games currently running (game_id → pid), newest first: what the
+    /// stats beacon reports to the LANPage and the chat shows the others.
+    /// Pruned once nothing runs from a game's folder any more
+    /// (`crate::chat::prune_running`).
     pub running: RwLock<Vec<(String, u32)>>,
     /// The last thing the launcher tried to start, for the diagnostics page.
     /// "A cmd window opens and nothing happens" is only answerable when the

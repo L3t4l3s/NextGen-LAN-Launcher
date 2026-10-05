@@ -18,8 +18,6 @@
   let list = $state<HTMLDivElement | null>(null);
   let input = $state<HTMLTextAreaElement | null>(null);
 
-  const osIcon: Record<string, string> = { windows: "🪟", linux: "🐧", macos: "🍎" };
-
   const items = $derived(chat.list(chat.active));
   const dayFormat = $derived(new Intl.DateTimeFormat(currentLanguage(), { weekday: "long", day: "numeric", month: "long" }));
   const today = $derived(dayFormat.format(new Date()));
@@ -29,6 +27,20 @@
   const unreadElsewhere = $derived(chat.conversations.filter((c) => c.id !== chat.active).reduce((n, c) => n + c.unread, 0));
 
   const unreadHere = $derived(chat.unread(chat.active));
+
+  // Seconds left of a flood pause, counted down while it lasts.
+  let now = $state(Date.now());
+  $effect(() => {
+    const until = chat.pausedUntil;
+    now = Date.now();
+    if (until <= now) return;
+    const timer = setInterval(() => {
+      now = Date.now();
+      if (now >= until) clearInterval(timer);
+    }, 250);
+    return () => clearInterval(timer);
+  });
+  const pausedFor = $derived(Math.max(0, Math.ceil((chat.pausedUntil - now) / 1000)));
 
   // A conversation (or the panel) was opened: start at "new messages" when
   // there are any, like the big messengers, otherwise at the end.
@@ -138,7 +150,7 @@
       await tick();
       autosize();
     } catch (e) {
-      app.toast("error", userText(e));
+      if (!chat.notePause(e)) app.toast("error", userText(e));
     } finally {
       sending = false;
       input?.focus();
@@ -178,7 +190,6 @@
   }
 
   function openPrivate(id: string) {
-    chat.showPeople = false;
     chat.show(id);
   }
 
@@ -192,7 +203,7 @@
       await chat.createTopic(name);
       newTopic = null;
     } catch (e) {
-      app.toast("error", userText(e));
+      if (!chat.notePause(e)) app.toast("error", userText(e));
     }
   }
 
@@ -203,11 +214,6 @@
 
 {#if chat.open}
   <aside class="panel">
-    <header>
-      <strong class="grow">💬 {t("chat.title")}</strong>
-      {#if chat.relayOnline}<span class="relay" title={t("chat.relay")}>🗄</span>{/if}
-    </header>
-
     {#if !chat.loaded}
       <div class="empty"><span class="muted">…</span></div>
     {:else if !chat.enabled}
@@ -227,9 +233,20 @@
               {:else}
                 # {c.nick}
               {/if}
-              {#if c.muted}<span class="muted-icon" title={t("chat.muted")}>🔕</span>{/if}
+              {#if c.muted && chat.active !== c.id}<span class="muted-icon" title={t("chat.muted")}>🔕</span>{/if}
               {#if c.unread > 0}<span class="badge-count" class:quiet={c.muted}>{c.unread}</span>{/if}
             </button>
+            <!-- The open conversation's bell sits in its tab. -->
+            {#if chat.active === c.id}
+              <button
+                class="bell"
+                class:off={c.muted}
+                title={c.muted ? t("chat.unmute_conversation") : t("chat.mute_conversation")}
+                onclick={() => chat.toggleMute(c.id)}
+              >
+                {c.muted ? "🔕" : "🔔"}
+              </button>
+            {/if}
             {#if c.id !== null}
               <button class="close" title={t("chat.hide")} onclick={() => c.id && chat.hide(c.id)}>✕</button>
             {/if}
@@ -251,44 +268,6 @@
         {/if}
       </nav>
 
-      {#if chat.showPeople}
-        <div class="people">
-          <div class="people-head">{t("chat.online", { count: chat.online.length })}</div>
-          <div class="person me">
-            <span class="dot ok"></span>
-            <span class="grow">{chat.nick} <small class="muted">({t("chat.you")})</small></span>
-          </div>
-          {#each chat.people as p (p.id)}
-            <button class="person" class:off={!p.online} title={`${p.address} · ${p.os}`} onclick={() => openPrivate(p.id)}>
-              <span class="dot" class:ok={p.online}></span>
-              <span class="grow" style:color={nickColor(p.id)}>{p.nick}</span>
-              <span class="os">{osIcon[p.os] ?? "💻"}</span>
-              <span class="dm">✉</span>
-            </button>
-          {:else}
-            <p class="hint">{t("chat.nobody")}</p>
-          {/each}
-        </div>
-      {/if}
-
-      <div class="partner">
-        <span class="grow">
-          {#if chat.active && !isTopic(chat.active)}
-            {t("chat.private_with", { nick: activeName })}
-            {#if !partner?.online}<span class="muted"> · {t("chat.offline_hint", { nick: activeName })}</span>{/if}
-          {:else}
-            # {activeName}
-          {/if}
-        </span>
-        <button
-          class="icon small"
-          title={chat.isMuted(chat.active) ? t("chat.unmute_conversation") : t("chat.mute_conversation")}
-          onclick={() => chat.toggleMute(chat.active)}
-        >
-          {chat.isMuted(chat.active) ? "🔕" : "🔔"}
-        </button>
-      </div>
-
       <div class="messages" bind:this={list} onscroll={onScroll}>
         {#each shown as r (r.item.id)}
           {#if r.day}<div class="day"><span>{r.day === today ? t("chat.today") : r.day}</span></div>{/if}
@@ -305,11 +284,17 @@
           ↓{#if unreadHere > 0}<span>{t("chat.jump_unread", { count: unreadHere })}</span>{/if}
         </button>
       {/if}
-      {#if unreadElsewhere > 0 && !chat.showPeople}
+      {#if unreadElsewhere > 0}
         <div class="elsewhere">{t("chat.unread_elsewhere", { count: unreadElsewhere })}</div>
       {/if}
 
       <footer>
+        {#if partner && !partner.online}
+          <div class="note">{t("chat.partner_offline", { nick: activeName })}</div>
+        {/if}
+        {#if pausedFor > 0}
+          <div class="note paused">⏳ {t("chat.paused", { seconds: pausedFor })}</div>
+        {/if}
         {#if chat.editing}
           <div class="replying">
             <div class="grow">
@@ -345,7 +330,7 @@
             oninput={autosize}
             onkeydown={onKey}
           ></textarea>
-          <button class="send primary" title={chat.editing ? t("chat.save_edit") : t("chat.send")} disabled={!text.trim() || sending} onclick={send}>{chat.editing ? "✓" : "➤"}</button>
+          <button class="send primary" title={chat.editing ? t("chat.save_edit") : t("chat.send")} disabled={!text.trim() || sending || pausedFor > 0} onclick={send}>{chat.editing ? "✓" : "➤"}</button>
         </div>
       </footer>
     {/if}
@@ -353,6 +338,33 @@
   {#if showPoll}
     <PollDialog onclose={() => (showPoll = false)} />
   {/if}
+{/if}
+
+<!-- Who is online: a pane of its own, as wide as the chat. -->
+{#if chat.showPeople && chat.enabled}
+  <aside class="pane people">
+    <div class="people-head">{t("chat.online", { count: chat.online.length })}</div>
+    <div class="people-list">
+      <div class="person me">
+        <span class="dot ok"></span>
+        <span class="who">
+          <span>{chat.nick} <small class="muted">({t("chat.you")})</small></span>
+        </span>
+      </div>
+      {#each chat.people as p (p.id)}
+        <div class="person" class:off={!p.online}>
+          <span class="dot" class:ok={p.online}></span>
+          <span class="who">
+            <span class="name" style:color={nickColor(p.id)}>{p.nick}</span>
+            {#if p.playing}<small class="playing" title={p.playing}>🎮 {p.playing}</small>{/if}
+          </span>
+          <button class="dm" title={t("chat.write_private", { nick: p.nick })} onclick={() => openPrivate(p.id)}>✉</button>
+        </div>
+      {:else}
+        <p class="hint">{t("chat.nobody")}</p>
+      {/each}
+    </div>
+  </aside>
 {/if}
 
 <!-- Always there, at the window's edge: the bubble opens and closes the chat,
@@ -363,9 +375,10 @@
     {#if chat.totalUnread > 0}<span class="badge-count">{chat.totalUnread > 99 ? "99+" : chat.totalUnread}</span>{/if}
   </button>
   {#if chat.enabled}
-    <button class="toggle people-toggle" class:active={chat.open && chat.showPeople} title={t("chat.people")} onclick={() => chat.togglePeople()}>
+    <button class="toggle people-toggle" class:active={chat.showPeople} title={t("chat.people")} onclick={() => chat.togglePeople()}>
       👥<small>{chat.online.length}</small>
     </button>
+    {#if chat.relayOnline}<span class="relay" title={t("chat.relay")}>🗄</span>{/if}
     <span class="grow"></span>
     <!-- All conversations at once; each conversation has its own bell too. -->
     <button class="toggle sound" title={app.settings?.chatSound ? t("chat.sound.off") : t("chat.sound.on")} onclick={() => chat.setSound(!app.settings?.chatSound).catch((e) => app.toast("error", userText(e)))}>
@@ -430,7 +443,8 @@
     top: -6px;
     right: -4px;
   }
-  .panel {
+  .panel,
+  .pane {
     position: relative;
     width: 360px;
     display: flex;
@@ -438,27 +452,97 @@
   }
   /* A small window keeps the library usable next to the chat. */
   @media (max-width: 1100px) {
-    .panel {
+    .panel,
+    .pane {
       width: 300px;
     }
   }
-  header {
+  .rail .relay {
+    font-size: 0.9rem;
+    opacity: 0.75;
+    cursor: help;
+  }
+  .bell {
+    background: transparent;
+    border: none;
+    padding: 0 0.35em 0 0;
+    font-size: 0.72rem;
+    opacity: 0.85;
+  }
+  .bell.off {
+    opacity: 0.6;
+  }
+  .note {
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    margin-bottom: 0.4rem;
+  }
+  .note.paused {
+    color: var(--color-warning);
+    font-weight: 600;
+  }
+  .people-head {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted);
+    padding: 0.75rem 0.9rem 0.5rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .people-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0.4rem;
+  }
+  .person {
     display: flex;
     align-items: center;
-    gap: 0.25rem;
-    padding: 0.5rem 0.6rem 0.4rem 0.9rem;
-    border-bottom: 1px solid var(--color-border);
+    gap: 0.55rem;
+    padding: 0.35em 0.3em 0.35em 0.5em;
+    border-radius: 8px;
+  }
+  .person:hover {
+    background: var(--color-surface-alt);
+  }
+  .person.off {
+    opacity: 0.55;
+  }
+  .who {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .who .name,
+  .playing {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .playing {
+    font-size: 0.72rem;
+    color: var(--color-text-muted);
+  }
+  .person .dm {
+    background: transparent;
+    border-color: transparent;
+    padding: 0.15em 0.5em;
+    font-size: 0.95rem;
+  }
+  .person .dm:hover {
+    border-color: var(--color-border);
+  }
+  .hint {
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+    padding: 0.5rem;
   }
   .icon {
     background: transparent;
     border-color: transparent;
     padding: 0.25em 0.5em;
     font-size: 0.95rem;
-  }
-  .relay {
-    font-size: 0.85rem;
-    opacity: 0.8;
-    cursor: help;
   }
   .badge-count {
     background: var(--color-primary);
@@ -523,62 +607,6 @@
   }
   .dot.ok {
     box-shadow: none;
-  }
-  .people {
-    position: absolute;
-    top: 46px;
-    left: 0.6rem;
-    right: 0.6rem;
-    z-index: 20;
-    max-height: 60%;
-    overflow-y: auto;
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-    padding: 0.4rem;
-  }
-  .people-head {
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--color-text-muted);
-    padding: 0.2rem 0.5rem 0.4rem;
-  }
-  .person {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    text-align: left;
-    background: transparent;
-    border: none;
-    padding: 0.35em 0.5em;
-    border-radius: 8px;
-  }
-  button.person:hover {
-    background: var(--color-surface-alt);
-  }
-  .person.off {
-    opacity: 0.55;
-  }
-  .person .dm {
-    opacity: 0;
-  }
-  .person:hover .dm {
-    opacity: 0.8;
-  }
-  .partner {
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
-    font-size: 0.78rem;
-    padding: 0.15rem 0.4rem 0.15rem 0.9rem;
-    border-bottom: 1px solid var(--color-border);
-  }
-  .icon.small {
-    font-size: 0.8rem;
-    padding: 0.15em 0.4em;
   }
   .muted-icon {
     font-size: 0.7rem;

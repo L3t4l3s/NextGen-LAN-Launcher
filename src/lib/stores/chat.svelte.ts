@@ -62,6 +62,8 @@ class ChatStore {
   editing = $state<ChatItem | null>(null);
   /** The list of people, opened from the bar at the right. */
   showPeople = $state(false);
+  /** Writing is paused until then (ms) after too many messages; 0: not. */
+  pausedUntil = $state(0);
   /** Private conversations opened in this session, even before a word was said. */
   private opened = $state<string[]>([]);
   /** Conversations closed by hand; a new message brings them back. */
@@ -214,19 +216,23 @@ class ChatStore {
 
   /** The speech bubble in the bar: open or close the chat. */
   toggleOpen() {
-    if (this.open) this.showPeople = false;
     this.setOpen(!this.open);
   }
 
   /** The people icon in the bar: show or hide the list, opening the chat
    *  for it when needed. */
+  /** The list of people is a pane of its own, next to the chat or alone. */
   togglePeople() {
-    if (!this.open) {
-      this.setOpen(true);
-      this.showPeople = true;
-    } else {
-      this.showPeople = !this.showPeople;
-    }
+    this.showPeople = !this.showPeople;
+  }
+
+  /** Take note of a flood pause (`err.chat_too_fast|<seconds>`); true when
+   *  the error was one, so the caller need not show it as well. */
+  notePause(e: unknown): boolean {
+    const m = /^err\.chat_too_fast\|(\d+)/.exec(e instanceof Error ? e.message : String(e));
+    if (!m) return false;
+    this.pausedUntil = Date.now() + Number(m[1]) * 1000;
+    return true;
   }
 
   async createTopic(name: string) {

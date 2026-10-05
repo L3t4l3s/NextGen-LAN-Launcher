@@ -741,6 +741,46 @@ pub fn list_executables(paths: &GamePaths, limit: usize) -> Vec<String> {
     out
 }
 
+/// Whether a game still runs: any process whose program or working folder
+/// lies inside `dir`. Many games start through a script or starter that ends
+/// at once and leaves the game running; under Wine the program is Wine, but
+/// it works in the game's folder. The pid of the start is no help: it is
+/// usually that starter, and Windows hands its number out again soon after.
+/// The launcher's own process never counts.
+pub fn runs_from(dir: &Path) -> bool {
+    let dir = crate::paths::strip_verbatim(
+        std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()),
+    );
+    let sys = crate::transport::resilio::scan_processes_with(
+        sysinfo::ProcessRefreshKind::nothing()
+            .with_exe(sysinfo::UpdateKind::Always)
+            .with_cwd(sysinfo::UpdateKind::Always),
+    );
+    let own = std::process::id();
+    let running = crate::transport::resilio::real_processes(&sys)
+        .filter(|(id, p)| id.as_u32() != own && p.status() != sysinfo::ProcessStatus::Zombie)
+        .any(|(_, p)| {
+            p.exe().is_some_and(|e| is_inside(e, &dir))
+                || p.cwd().is_some_and(|c| is_inside(c, &dir))
+        });
+    running
+}
+
+/// `path` lies in `dir` (or is it); without regard to case on Windows,
+/// whose file names ignore it.
+fn is_inside(path: &Path, dir: &Path) -> bool {
+    let path = crate::paths::strip_verbatim(path.to_path_buf());
+    if cfg!(windows) {
+        let (p, d) = (
+            path.to_string_lossy().to_lowercase(),
+            dir.to_string_lossy().to_lowercase(),
+        );
+        Path::new(&p).starts_with(Path::new(&d))
+    } else {
+        path.starts_with(dir)
+    }
+}
+
 #[cfg(unix)]
 fn is_unix_executable(m: &std::fs::Metadata) -> bool {
     use std::os::unix::fs::PermissionsExt;
@@ -755,6 +795,26 @@ fn is_unix_executable(_m: &std::fs::Metadata) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_game_runs_while_something_works_in_its_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        assert!(!runs_from(dir.path()));
+        // A game that works in its own folder, as under Wine, after its
+        // starter has ended.
+        let mut game = std::process::Command::new("sleep")
+            .arg("30")
+            .current_dir(dir.path())
+            .spawn()
+            .unwrap();
+        assert!(runs_from(dir.path()));
+        assert!(!runs_from(other.path()), "another folder");
+        game.kill().unwrap();
+        game.wait().unwrap();
+        assert!(!runs_from(dir.path()));
+    }
 
     #[test]
     fn creates_the_outer_proton_prefix_before_launch() {

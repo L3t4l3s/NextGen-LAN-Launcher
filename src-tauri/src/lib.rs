@@ -1865,6 +1865,15 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
         }
     });
 
+    // Which games still run, for the stats beacon and the chat.
+    let st = state.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(15)).await;
+            crate::chat::prune_running(&st).await;
+        }
+    });
+
     // Stats beacon (ETI LANPage compatible), every 3 minutes.
     let st = state.clone();
     tauri::async_runtime::spawn(async move {

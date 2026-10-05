@@ -96,6 +96,14 @@ the Tauri asset-protocol scope at runtime so the WebView can load them.
   direct try). So one of two launchers reaching the other is enough to catch up and talk; only
   a launcher that hears no one (no beacon arrives) stays alone. `Chat::heard_from_others` is that
   proof for the diagnostics: the firewall notices appear only while no beacon has arrived.
+* **Presence extras:** the beacon carries `playing`, the title of the newest game in
+  `AppState::running` (the same game the stats beacon reports to the LANPage). A 15 s loop
+  (`chat::prune_running`) drops games from `running` once nothing runs from their folder
+  (`launch::runs_from`: any process whose program or working folder is in it; the started pid is
+  usually a starter that has ended, and Windows reuses its number), so both stop naming a game that has ended.
+* **Flood limit:** `Flood` in the sender's launcher: more than 5 messages within 10 s and writing
+  pauses for 30 s (`err.chat_too_fast|<s>`). Reactions, votes, closing and deleting do not
+  count. A modified launcher can skip it.
 * **Identity:** the peer id is an Ed25519 public key (`chat/crypto.rs`). Every event is signed;
   the body of a private event is sealed with a NaCl box (Curve25519 keys derived from the two
   ids), so only the two participants can read it, whoever else receives it. The envelope (who,

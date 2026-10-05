@@ -2,7 +2,9 @@
 //! changes passed on to the interface (`lanlauncher_core::chat` does the work).
 
 use crate::state::AppState;
-use lanlauncher_core::chat::model::{ItemView, PollChoice, PollKind, ERR_DISABLED};
+use lanlauncher_core::chat::model::{
+    ChatError, ItemView, PollChoice, PollKind, ERR_DISABLED, ERR_TOO_FAST,
+};
 use lanlauncher_core::chat::{Chat, ChatConfig, ChatSnapshot};
 use std::sync::Arc;
 use tauri::{Emitter, State};
@@ -36,6 +38,7 @@ pub(crate) async fn apply_settings(app: &tauri::AppHandle, state: &Arc<AppState>
                     *state.chat.write().await = Some(chat);
                     *state.chat_error.write().await = None;
                     trust_relays(state).await;
+                    publish_playing(state).await;
                     let _ = app.emit(CHAT_RESET_EVENT, ());
                 }
                 Err(e) => {
@@ -54,6 +57,72 @@ pub(crate) async fn apply_settings(app: &tauri::AppHandle, state: &Arc<AppState>
         }
         (false, None) => *state.chat_error.write().await = None,
     }
+}
+
+/// Tell the others in the chat which game runs here: the same one the stats
+/// beacon reports to the LANPage (the newest in `running`), by its title.
+pub(crate) async fn publish_playing(state: &AppState) {
+    let Some(chat) = state.chat.read().await.clone() else {
+        return;
+    };
+    let current = state.running.read().await.first().map(|(g, _)| g.clone());
+    let title = match current {
+        Some(id) => Some(
+            state
+                .catalog()
+                .await
+                .game(&id)
+                .map(|g| g.title.clone())
+                .unwrap_or(id),
+        ),
+        None => None,
+    };
+    chat.set_playing(title.as_deref()).await;
+}
+
+/// Forget games of `running` that have ended: nothing works in the game's
+/// folder any more (`launch::runs_from`; many games start through a script
+/// that ends at once, so the started pid says little). Without this the
+/// LANPage and the chat would name the last game until the launcher quits.
+pub(crate) async fn prune_running(state: &AppState) {
+    let running = state.running.read().await.clone();
+    if running.is_empty() {
+        return;
+    }
+    let dirs: Vec<(String, u32, Option<std::path::PathBuf>)> = {
+        let settings = state.settings.read().await;
+        running
+            .into_iter()
+            .map(|(g, pid)| {
+                let dir = settings.library.game_paths(&g).map(|p| p.share_dir);
+                (g, pid, dir)
+            })
+            .collect()
+    };
+    let ended: Vec<(String, u32)> = tauri::async_runtime::spawn_blocking(move || {
+        dirs.into_iter()
+            .filter(|(_, _, dir)| match dir {
+                Some(dir) => !lanlauncher_core::launch::runs_from(dir),
+                // No folder to look at: the game was removed meanwhile.
+                None => true,
+            })
+            .map(|(g, pid, _)| (g, pid))
+            .collect()
+    })
+    .await
+    .unwrap_or_default();
+    if ended.is_empty() {
+        return;
+    }
+    let names: Vec<&str> = ended.iter().map(|(g, _)| g.as_str()).collect();
+    log::info!("game(s) ended: {}", names.join(", "));
+    // By game and pid: one started again during the scan stays.
+    state
+        .running
+        .write()
+        .await
+        .retain(|entry| !ended.contains(entry));
+    publish_playing(state).await;
 }
 
 /// Pass the relays the LANPage names (`chat_relay` in `launcher.ini`) on to
@@ -90,6 +159,15 @@ fn forward_updates(app: tauri::AppHandle, chat: &Chat) {
             }
         }
     });
+}
+
+/// The error code for the interface; a flood pause says how many seconds
+/// are left (`err.chat_too_fast|<s>`).
+fn code(chat: &Chat, e: ChatError) -> String {
+    match chat.paused_for() {
+        Some(left) if e == ERR_TOO_FAST => format!("{e}|{}", left.as_secs() + 1),
+        _ => e.to_string(),
+    }
 }
 
 async fn running(state: &AppState) -> Cmd<Chat> {
@@ -133,10 +211,9 @@ pub async fn chat_send(
     text: String,
     reply_to: Option<String>,
 ) -> Cmd<ItemView> {
-    running(&state)
-        .await?
-        .send_text(conversation, &text, reply_to)
-        .map_err(|e| e.to_string())
+    let chat = running(&state).await?;
+    chat.send_text(conversation, &text, reply_to)
+        .map_err(|e| code(&chat, e))
 }
 
 #[tauri::command]
@@ -156,10 +233,9 @@ pub async fn chat_create_poll(
     kind: PollKind,
     open: bool,
 ) -> Cmd<ItemView> {
-    running(&state)
-        .await?
-        .create_poll(conversation, &question, options, kind, open)
-        .map_err(|e| e.to_string())
+    let chat = running(&state).await?;
+    chat.create_poll(conversation, &question, options, kind, open)
+        .map_err(|e| code(&chat, e))
 }
 
 #[tauri::command]
@@ -181,10 +257,9 @@ pub async fn chat_add_poll_option(
     text: String,
     game: Option<String>,
 ) -> Cmd<()> {
-    running(&state)
-        .await?
-        .add_poll_option(&poll, PollChoice { text, game })
-        .map_err(|e| e.to_string())
+    let chat = running(&state).await?;
+    chat.add_poll_option(&poll, PollChoice { text, game })
+        .map_err(|e| code(&chat, e))
 }
 
 #[tauri::command]
@@ -197,18 +272,14 @@ pub async fn chat_close_poll(state: State<'_, Arc<AppState>>, poll: String) -> C
 
 #[tauri::command]
 pub async fn chat_edit(state: State<'_, Arc<AppState>>, target: String, text: String) -> Cmd<()> {
-    running(&state)
-        .await?
-        .edit(&target, &text)
-        .map_err(|e| e.to_string())
+    let chat = running(&state).await?;
+    chat.edit(&target, &text).map_err(|e| code(&chat, e))
 }
 
 #[tauri::command]
 pub async fn chat_create_topic(state: State<'_, Arc<AppState>>, name: String) -> Cmd<ItemView> {
-    running(&state)
-        .await?
-        .create_topic(&name)
-        .map_err(|e| e.to_string())
+    let chat = running(&state).await?;
+    chat.create_topic(&name).map_err(|e| code(&chat, e))
 }
 
 #[tauri::command]

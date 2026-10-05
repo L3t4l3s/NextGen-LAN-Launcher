@@ -36,6 +36,17 @@
   wurde, und wer den anderen nicht erreicht, schreibt über dessen Verbindung. Bisher brauchte
   das Nachholen beide Richtungen, Live-Nachrichten aber nur eine. Ungetestet mit einer echten
   Firewall, auf der LAN prüfen.
+- Chat: Die Kopfzeile „Chat“ und die zweite Zeile mit dem Namen der Unterhaltung sind weg; die
+  Glocke der offenen Unterhaltung sitzt jetzt in ihrem Tab. Die Personenliste ist ein eigener
+  Bereich, so breit wie der Chat, und lässt sich unabhängig vom Chat öffnen. Statt Symbol für
+  Betriebssystem und IP steht dort immer der Brief für eine private Nachricht – und darunter das
+  Spiel, das die Person gerade spielt. Das ist dieselbe Angabe, die der Launcher an die LANPage
+  meldet; die meldete bisher das zuletzt gestartete Spiel, bis der Launcher beendet wurde. Jetzt
+  fällt ein Spiel heraus, sobald nichts mehr aus seinem Ordner läuft (alle 15 s geprüft).
+- Chat: Spamschutz. Wer mehr als fünf Nachrichten in zehn Sekunden schreibt, muss 30 Sekunden
+  pausieren (Nachrichten, Umfragen, Themen, Antworten, Bearbeitungen; Reaktionen und Stimmen
+  nicht). Die Sperre sitzt im Launcher des Schreibenden – ein veränderter Launcher kann sie
+  umgehen.
 - Diagnose: Der Hinweis zur Windows-Firewall (und zu firewalld) erscheint nur noch, solange kein
   anderer Launcher angekommen ist. Eine fehlende eigene Regel heißt nicht, dass der Chat
   blockiert ist: Die Windows-Abfrage beim ersten Start legt eine Regel für das Programm an.

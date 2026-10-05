@@ -499,3 +499,61 @@ async fn topics_and_edits_travel() {
     a.stop().await;
     b.stop().await;
 }
+
+#[test]
+fn a_flood_pauses_writing_for_a_while() {
+    let mut flood = Flood::default();
+    let start = Instant::now();
+    for i in 0..FLOOD_COUNT {
+        assert!(flood.check(start + Duration::from_secs(i as u64)).is_ok());
+    }
+    let at = start + Duration::from_secs(FLOOD_COUNT as u64);
+    assert_eq!(flood.check(at), Err(FLOOD_PAUSE), "one too many");
+    assert!(flood.check(at + FLOOD_PAUSE / 2).is_err(), "still paused");
+    assert_eq!(flood.left(at + FLOOD_PAUSE / 2), Some(FLOOD_PAUSE / 2));
+    assert!(flood.check(at + FLOOD_PAUSE).is_ok(), "over");
+    // Writing at a normal pace never pauses.
+    let mut calm = Flood::default();
+    for i in 0..50u64 {
+        assert!(calm.check(start + FLOOD_WINDOW / 4 * i as u32).is_ok());
+    }
+}
+
+#[tokio::test]
+async fn a_flood_is_refused_but_reactions_still_go() {
+    let lan = Lan::new(2);
+    let a = lan.start(0, "Alice").await;
+    for i in 0..FLOOD_COUNT {
+        a.send_text(None, &format!("{i}"), None).unwrap();
+    }
+    assert_eq!(a.send_text(None, "spam", None).err(), Some(ERR_TOO_FAST));
+    // A refused message is no flood.
+    let b = lan.start(1, "Bob").await;
+    for _ in 0..FLOOD_COUNT * 2 {
+        assert_eq!(b.send_text(None, "   ", None).err(), Some(ERR_INVALID));
+    }
+    assert!(b.send_text(None, "hi", None).is_ok());
+    b.stop().await;
+    assert!(a.paused_for().is_some());
+    let first = a.snapshot().items[0].id.clone();
+    assert!(a.react(&first, "👍").is_ok());
+    a.stop().await;
+}
+
+#[tokio::test]
+async fn others_see_which_game_is_running() {
+    let lan = Lan::new(2);
+    let a = lan.start(0, "Alice").await;
+    let b = lan.start(1, "Bob").await;
+    until("discovery", || online(&b) == ["Alice"]).await;
+    a.set_playing(Some("  Quake III Arena\n")).await;
+    let playing = |c: &Chat| c.snapshot().peers.first().and_then(|p| p.playing.clone());
+    until("playing", || {
+        playing(&b).as_deref() == Some("Quake III Arena")
+    })
+    .await;
+    a.set_playing(None).await;
+    until("stopped", || playing(&b).is_none()).await;
+    a.stop().await;
+    b.stop().await;
+}

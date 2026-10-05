@@ -26,7 +26,8 @@ pub mod store;
 
 use model::{
     clean_nick, valid_peer_id, Body, ChatError, ChatState, Event, ItemView, PollChoice, PollKind,
-    Stored, ERR_DISABLED, ERR_INVALID, ERR_NOT_ALLOWED, ERR_POLL_CLOSED, ERR_UNKNOWN_TARGET,
+    Stored, ERR_DISABLED, ERR_INVALID, ERR_NOT_ALLOWED, ERR_POLL_CLOSED, ERR_TOO_FAST,
+    ERR_UNKNOWN_TARGET,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -61,6 +62,13 @@ const RESYNC_EVERY: Duration = Duration::from_secs(120);
 /// A peer that could not be reached is tried directly again after this;
 /// until then frames go over the connection it opened, if there is one.
 const RETRY_DIRECT_AFTER: Duration = Duration::from_secs(30);
+/// Flood limit: more than [`FLOOD_COUNT`] messages within [`FLOOD_WINDOW`]
+/// and the sender has to pause for [`FLOOD_PAUSE`].
+const FLOOD_COUNT: usize = 5;
+const FLOOD_WINDOW: Duration = Duration::from_secs(10);
+const FLOOD_PAUSE: Duration = Duration::from_secs(30);
+/// Longest game title a beacon carries.
+const MAX_PLAYING: usize = 60;
 
 #[derive(Debug, Clone)]
 pub struct ChatConfig {
@@ -115,6 +123,16 @@ pub fn relays_from_launcher_ini(extra: &std::collections::BTreeMap<String, Strin
         .unwrap_or_default()
 }
 
+/// A game title as a beacon carries it: one line, not too long.
+fn clean_playing(title: &str) -> String {
+    title
+        .trim()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(MAX_PLAYING)
+        .collect()
+}
+
 /// The computer's name, for a launcher whose player has not given a name.
 pub fn host_nick() -> String {
     let host = clean_nick(&gethostname::gethostname().to_string_lossy());
@@ -139,6 +157,9 @@ struct Beacon {
     /// A relay, not a person ([`ChatConfig::relay`]).
     #[serde(default)]
     relay: bool,
+    /// The game the player has running, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    playing: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -190,6 +211,8 @@ pub struct PeerView {
     pub address: String,
     /// A relay keeping the history, not a person to write to.
     pub relay: bool,
+    /// The game the player has running, as their launcher reports it.
+    pub playing: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -228,6 +251,47 @@ struct Peer {
     online: bool,
     last_hello: Instant,
     relay: bool,
+    playing: Option<String>,
+}
+
+/// Counts what this launcher writes, so nobody floods the chat: past
+/// [`FLOOD_COUNT`] messages in [`FLOOD_WINDOW`], writing pauses for
+/// [`FLOOD_PAUSE`]. Kept by the sender: a modified launcher could skip it,
+/// which at a private LAN is not the problem this solves.
+#[derive(Default)]
+struct Flood {
+    sent: std::collections::VecDeque<Instant>,
+    until: Option<Instant>,
+}
+
+impl Flood {
+    /// Note one message at `now`; `Err` with the time left while paused.
+    fn check(&mut self, now: Instant) -> Result<(), Duration> {
+        if let Some(until) = self.until {
+            if now < until {
+                return Err(until - now);
+            }
+            self.until = None;
+        }
+        while self
+            .sent
+            .front()
+            .is_some_and(|t| now.duration_since(*t) >= FLOOD_WINDOW)
+        {
+            self.sent.pop_front();
+        }
+        if self.sent.len() >= FLOOD_COUNT {
+            self.sent.clear();
+            self.until = Some(now + FLOOD_PAUSE);
+            return Err(FLOOD_PAUSE);
+        }
+        self.sent.push_back(now);
+        Ok(())
+    }
+
+    fn left(&self, now: Instant) -> Option<Duration> {
+        self.until.filter(|u| now < *u).map(|u| u - now)
+    }
 }
 
 struct Inner {
@@ -241,6 +305,8 @@ struct Inner {
     me: String,
     os: String,
     nick: Mutex<String>,
+    playing: Mutex<Option<String>>,
+    flood: Mutex<Flood>,
     state: Mutex<ChatState>,
     history: Mutex<store::History>,
     peers: Mutex<HashMap<String, Peer>>,
@@ -374,6 +440,8 @@ impl Chat {
             me,
             os: std::env::consts::OS.to_string(),
             nick: Mutex::new(nick),
+            playing: Mutex::new(None),
+            flood: Mutex::new(Flood::default()),
             state: Mutex::new(state),
             history: Mutex::new(history),
             peers: Mutex::new(HashMap::new()),
@@ -484,6 +552,22 @@ impl Chat {
         }
         *lock(&self.inner.nick) = nick;
         self.inner.send_beacon(false).await;
+    }
+
+    /// The game this player has running (its title), or `None`; the others
+    /// see it next to the name.
+    pub async fn set_playing(&self, game: Option<&str>) {
+        let game = game.map(clean_playing).filter(|g| !g.is_empty());
+        if *lock(&self.inner.playing) == game {
+            return;
+        }
+        *lock(&self.inner.playing) = game;
+        self.inner.send_beacon(false).await;
+    }
+
+    /// How long writing is paused after too many messages, if it is.
+    pub fn paused_for(&self) -> Option<Duration> {
+        lock(&self.inner.flood).left(Instant::now())
     }
 
     fn running(&self) -> Result<(), ChatError> {
@@ -737,6 +821,16 @@ impl Inner {
                 return Err(ERR_UNKNOWN_TARGET);
             }
         }
+        // What others read counts against the flood limit; reactions,
+        // votes, closing a poll and deleting do not.
+        let counts = matches!(
+            body,
+            Body::Text { .. }
+                | Body::Poll { .. }
+                | Body::PollOption { .. }
+                | Body::Topic { .. }
+                | Body::Edit { .. }
+        );
         let seq = self.next_seq();
         let event = Event {
             id: format!("{}:{seq}", self.me),
@@ -751,6 +845,10 @@ impl Inner {
         };
         if !event.is_valid() {
             return Err(ERR_INVALID);
+        }
+        // Counted once it would go out: a refused message is no flood.
+        if counts && lock(&self.flood).check(Instant::now()).is_err() {
+            return Err(ERR_TOO_FAST);
         }
         let wire = self.keys.seal(&event).ok_or(ERR_INVALID)?;
         let id = event.id.clone();
@@ -869,6 +967,7 @@ impl Inner {
                 online: p.online,
                 address: p.addr.ip().to_string(),
                 relay: p.relay,
+                playing: p.playing.clone().filter(|_| p.online),
             })
             .collect();
         out.sort_by(|a, b| {
@@ -895,6 +994,7 @@ impl Inner {
             os: self.os.clone(),
             bye,
             relay: self.relay,
+            playing: lock(&self.playing).clone(),
         })
         .unwrap_or_default()
     }
@@ -1017,6 +1117,16 @@ impl Inner {
         let addr = SocketAddr::new(from.ip(), b.port);
         let (came_online, changed) =
             self.saw_peer(&b.id, &b.nick, &b.os, b.relay, addr, Some(from));
+        let playing = b
+            .playing
+            .as_deref()
+            .map(clean_playing)
+            .filter(|g| !g.is_empty());
+        // Always taken over, also from the beacon that brings the peer in.
+        let game_changed = lock(&self.peers)
+            .get_mut(&b.id)
+            .is_some_and(|p| std::mem::replace(&mut p.playing, playing.clone()) != playing);
+        let changed = changed || game_changed;
         if came_online {
             // Answer directly, so the other side need not wait for our next
             // broadcast — or ever receive one, where broadcasts do not pass.
@@ -1094,6 +1204,7 @@ impl Inner {
                         online: true,
                         last_hello: now,
                         relay,
+                        playing: None,
                     },
                 );
                 (true, true, false)

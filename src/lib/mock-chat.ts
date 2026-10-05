@@ -8,11 +8,11 @@ type Emit = (event: string, payload: unknown) => void;
 
 const ME = "me0000000000demo";
 const peers: ChatPeer[] = [
-  { id: "a1b2c3d4e5f60001", nick: "Gandalf", os: "linux", online: true, address: "192.168.1.21", relay: false },
-  { id: "a1b2c3d4e5f60002", nick: "Tinkerbell", os: "windows", online: true, address: "192.168.1.34", relay: false },
-  { id: "a1b2c3d4e5f60003", nick: "xX_Sniper_Xx", os: "windows", online: true, address: "192.168.1.57", relay: false },
-  { id: "a1b2c3d4e5f60004", nick: "MacGyver", os: "macos", online: false, address: "192.168.1.80", relay: false },
-  { id: "a1b2c3d4e5f600ff", nick: "Chat-Archiv", os: "linux", online: true, address: "192.168.1.10", relay: true },
+  { id: "a1b2c3d4e5f60001", nick: "Gandalf", os: "linux", online: true, address: "192.168.1.21", relay: false, playing: "Quake III Arena" },
+  { id: "a1b2c3d4e5f60002", nick: "Tinkerbell", os: "windows", online: true, address: "192.168.1.34", relay: false, playing: null },
+  { id: "a1b2c3d4e5f60003", nick: "xX_Sniper_Xx", os: "windows", online: true, address: "192.168.1.57", relay: false, playing: "Counter-Strike 1.6 (GoldSrc)" },
+  { id: "a1b2c3d4e5f60004", nick: "MacGyver", os: "macos", online: false, address: "192.168.1.80", relay: false, playing: null },
+  { id: "a1b2c3d4e5f600ff", nick: "Chat-Archiv", os: "linux", online: true, address: "192.168.1.10", relay: true, playing: null },
 ];
 const [gandalf, tink, sniper] = peers;
 
@@ -134,6 +134,22 @@ export function createChatMock(emit: Emit, nick: () => string) {
     push(add(who, text, Date.now()));
   }, 45_000);
 
+  // The flood limit of the real chat: past five messages in ten seconds,
+  // thirty seconds of pause.
+  let sent: number[] = [];
+  let pausedUntil = 0;
+  const flood = () => {
+    const now = Date.now();
+    if (now < pausedUntil) throw new Error(`err.chat_too_fast|${Math.ceil((pausedUntil - now) / 1000)}`);
+    sent = sent.filter((t) => now - t < 10_000);
+    if (sent.length >= 5) {
+      sent = [];
+      pausedUntil = now + 30_000;
+      throw new Error("err.chat_too_fast|30");
+    }
+    sent.push(now);
+  };
+
   const invoke = (cmd: string, args: Record<string, unknown>): unknown => {
     if (cmd === "set_chat_sound") return;
     if (cmd === "chat_snapshot") {
@@ -143,6 +159,7 @@ export function createChatMock(emit: Emit, nick: () => string) {
     if (!enabled) throw new Error("err.chat_disabled");
     switch (cmd) {
       case "chat_send": {
+        flood();
         const replyTo = args.replyTo as string | null;
         const target = replyTo ? items.get(replyTo) : null;
         const item = add(null, args.text as string, Date.now(), {

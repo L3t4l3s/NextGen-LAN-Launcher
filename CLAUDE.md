@@ -418,6 +418,9 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   einen geschlossenen Port). Die Firewall-Hinweise der Diagnose gelten nur, solange
   `Chat::heard_from_others` falsch ist: Eine fehlende eigene Regel beweist nichts, die
   Windows-Abfrage beim ersten Start legt eine Programmregel unter anderem Namen an.
+  „Spielt gerade“ in der Personenliste ist dieselbe Angabe wie `current_game` an die LANPage
+  (`AppState::running`, Beacon-Feld `playing`); nichts Eigenes erfinden. `chat::prune_running`
+  trägt beendete Spiele aus (`launch::runs_from`). Spamschutz: `Flood`, nur beim Sender.
   Die Peer-ID ist ein Ed25519-Schlüssel (`chat/crypto.rs`): jedes Event ist signiert, private
   Bodies sind versiegelt (`Body::Sealed`); der Zustand faltet die geöffnete Form, gespeichert und
   weitergegeben wird nur die Wire-Form. Ein `Hello` ist unsigniert und darf einen online

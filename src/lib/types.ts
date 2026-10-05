@@ -437,6 +437,8 @@ export interface ChatPeer {
   address: string;
   /** A chat relay (nll-chat-relay) keeping the history, not a person. */
   relay: boolean;
+  /** Title of the game running there, as that launcher reports it. */
+  playing: string | null;
 }
 
 export interface ChatSnapshot {

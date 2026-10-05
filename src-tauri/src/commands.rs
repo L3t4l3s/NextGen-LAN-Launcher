@@ -745,9 +745,12 @@ pub async fn play_game(
         })
         .await;
     }
-    let mut running = state.running.write().await;
-    running.retain(|(g, _)| g != &game_id);
-    running.insert(0, (game_id, pid));
+    {
+        let mut running = state.running.write().await;
+        running.retain(|(g, _)| g != &game_id);
+        running.insert(0, (game_id, pid));
+    }
+    crate::chat::publish_playing(&state).await;
     Ok(pid)
 }
 
