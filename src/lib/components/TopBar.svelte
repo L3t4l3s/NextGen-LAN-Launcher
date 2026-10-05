@@ -3,11 +3,14 @@
   import { app, type View } from "$lib/stores/app.svelte";
   import { t } from "$lib/i18n";
 
-  const tabs: { id: View; label: string; count?: () => number }[] = [
+  const allTabs: { id: View; label: string; count?: () => number }[] = [
     { id: "library", label: "nav.library" },
     { id: "downloads", label: "nav.downloads", count: () => app.activeGames.length },
     { id: "diagnostics", label: "nav.diagnostics" },
+    { id: "lanpage", label: "nav.lanpage" },
   ];
+  // The LANPage tab exists only while a LANPage answers.
+  const tabs = $derived(allTabs.filter((tab) => tab.id !== "lanpage" || app.lanPage));
 
 </script>
 

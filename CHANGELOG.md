@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **LANPage als Reiter:** Antwortet im Netz eine LANPage (`launcher.lan` liefert eine gültige
+  `launcher.ini`), erscheint oben ein Reiter „LANPage“, der die Seite im Launcher zeigt. Sie
+  bleibt geladen, während man in die Bibliothek wechselt (Formulare und Logins gehen nicht
+  verloren, auch nicht bei einem kurz ausbleibenden Abruf); „Neu laden“ und „Im Browser öffnen“
+  stehen darüber. Die Seite darf den Launcher weder wegnavigieren noch eigene Fenster öffnen und
+  hat keinen Zugriff auf seine Befehle; Links, die einen neuen Tab öffnen wollen, gehen dort
+  nicht – dafür ist „Im Browser öffnen“ da. Unter Linux (WebKitGTK) geprüft, unter Windows und
+  macOS ungetestet.
 - macOS/Linux: Windows-Komponenten wie DirectPlay, Visual-C++-Laufzeiten oder d3dx9 lassen sich
   pro Spiel eintragen (winetricks-Verben, im Profil `winetricks = [...]` oder in der
   Startkonfiguration) und per Knopf in den Prefix des Spiels installieren – mit Wine und Proton,

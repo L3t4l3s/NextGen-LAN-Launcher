@@ -9,6 +9,14 @@
   import SettingsView from "$lib/components/SettingsView.svelte";
   import SetupWizard from "$lib/components/SetupWizard.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
+  import LanPageView from "$lib/components/LanPageView.svelte";
+
+  // Once opened the LANPage stays loaded behind the other tabs, so a look at
+  // the library does not throw away a half-filled form or a login.
+  let lanPageOpened = $state(false);
+  $effect(() => {
+    if (app.view === "lanpage") lanPageOpened = true;
+  });
 </script>
 
 <div id="bg_layer"></div>
@@ -35,8 +43,11 @@
           <DownloadsView />
         {:else if app.view === "diagnostics"}
           <DiagnosticsView />
-        {:else}
+        {:else if app.view === "settings"}
           <SettingsView />
+        {/if}
+        {#if lanPageOpened}
+          <div class="keep" class:hidden={app.view !== "lanpage"}><LanPageView /></div>
         {/if}
       </main>
       <ChatPanel />
@@ -64,6 +75,12 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+  }
+  .keep {
+    height: 100%;
+  }
+  .keep.hidden {
+    display: none;
   }
   .loading {
     height: 100vh;

@@ -5,7 +5,12 @@ export const de: Messages = {
   "nav.library": "Bibliothek",
   "nav.downloads": "Downloads",
   "nav.diagnostics": "Diagnose",
+  "nav.lanpage": "LANPage",
   "nav.settings": "Einstellungen",
+
+  "lanpage.reload": "Neu laden",
+  "lanpage.open_browser": "Im Browser öffnen",
+  "lanpage.title": "LANPage der Veranstaltung",
 
   "library.search": "Spiele suchen …",
   "library.filter.all": "Alle Spiele",

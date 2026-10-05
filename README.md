@@ -178,6 +178,12 @@ again.
 
 ## Open items
 
+- **LANPage tab on Windows and macOS — untested, check at the LAN:** the page runs in an iframe
+  of the main window. Checked here under WebKitGTK (Xvfb, dev LANPage at `launcher.lan`): it
+  loads from `tauri://localhost`, links navigate inside the frame, it stays loaded across tabs,
+  and `window.__TAURI_INTERNALS__` is absent in the frame. Not checked: WebView2 and WKWebView
+  (on macOS an `http:` frame inside the `tauri://` page could count as mixed content), and a real
+  ETI LANPage (if it sends `X-Frame-Options`, the tab stays empty).
 - **LAN chat on a real LAN — untested, check at the LAN:** the chat runs between launchers with
   UDP beacons and TCP on port 41950 (see `docs/ARCHITECTURE.md`). Tested here with several chats
   on one machine (`chat::tests`) and with two real launcher processes under Xvfb (message and

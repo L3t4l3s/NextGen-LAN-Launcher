@@ -6,7 +6,10 @@ import { setLanguage } from "$lib/i18n";
 import { applyTheme, defaultTheme, builtinThemes } from "$lib/theme";
 import type { BootstrapInfo, EventBundle, GameStatus, GameView, Settings, TransportHealth, Theme } from "$lib/types";
 
-export type View = "library" | "downloads" | "diagnostics" | "settings";
+export type View = "library" | "downloads" | "diagnostics" | "lanpage" | "settings";
+
+/** Event refreshes without a LANPage before its tab goes away. */
+const LANPAGE_MISSES_TO_DROP = 3;
 
 /** Rate samples kept per game: one per status event (2 s), about two minutes. */
 const SPEED_SAMPLES = 60;
@@ -75,6 +78,23 @@ class AppStore {
     });
   }
 
+  /** The LANPage to show as a tab; null while none was found. */
+  lanPage = $state<string | null>(null);
+  /** Refreshes in a row without the page (one every 5 minutes). */
+  private lanPageMisses = 0;
+
+  /** One missed refresh (4 s timeout, a busy PHP host) must not throw away
+   *  a loaded page with a half-filled form; three in a row mean it is gone. */
+  private noteLanPage(event: EventBundle | null) {
+    if (event?.page) {
+      this.lanPage = event.page;
+      this.lanPageMisses = 0;
+    } else if (++this.lanPageMisses >= LANPAGE_MISSES_TO_DROP || !this.lanPage) {
+      this.lanPage = null;
+      if (this.view === "lanpage") this.view = "library";
+    }
+  }
+
   get eventTitle(): string {
     return this.event?.config?.title ?? "";
   }
@@ -85,6 +105,7 @@ class AppStore {
       this.bootstrap = b;
       this.settings = b.settings;
       this.event = b.event;
+      this.noteLanPage(b.event);
       setLanguage(b.settings.language);
       setByteUnits(b.platform);
       this.applyThemeFor(b.settings, b.event);
@@ -117,6 +138,7 @@ class AppStore {
       });
       await listen("event-updated", (payload) => {
         this.event = payload as EventBundle;
+        this.noteLanPage(this.event);
         if (this.settings) this.applyThemeFor(this.settings, this.event);
       });
       await this.reloadGames();

@@ -215,6 +215,11 @@ export function createMock() {
       legacy_css: null,
       logo: null,
       theme: null,
+      // `?nolanpage` shows the launcher on a LAN without one (no tab).
+      page: new URLSearchParams(location.search).has("nolanpage")
+        ? null
+        : "data:text/html;charset=utf-8," +
+          encodeURIComponent("<body style='font-family:sans-serif;padding:2rem'><h1>Beispiel-LAN 2026</h1><p>Hier stünde die LANPage der Veranstaltung.</p></body>"),
       fetched: ["launcher.ini"],
       errors: [],
       server_time: new Date().toISOString(),
