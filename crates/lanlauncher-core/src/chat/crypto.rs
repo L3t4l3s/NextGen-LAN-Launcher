@@ -24,9 +24,16 @@ fn verifying_key(id: &str) -> Option<VerifyingKey> {
     VerifyingKey::from_bytes(&bytes).ok()
 }
 
-/// The bytes a signature covers: everything but the signature.
+/// The bytes a signature covers: everything but the signature. The topic
+/// joins only where there is one, so events from before topics still verify.
 fn signed_bytes(e: &Event) -> Vec<u8> {
-    serde_json::to_vec(&(&e.id, &e.from, &e.nick, e.seq, e.ts, &e.to, &e.body)).unwrap_or_default()
+    match &e.topic {
+        None => serde_json::to_vec(&(&e.id, &e.from, &e.nick, e.seq, e.ts, &e.to, &e.body)),
+        Some(topic) => {
+            serde_json::to_vec(&(&e.id, &e.from, &e.nick, e.seq, e.ts, &e.to, topic, &e.body))
+        }
+    }
+    .unwrap_or_default()
 }
 
 /// The author's signature is valid for this exact event.
@@ -153,6 +160,7 @@ mod tests {
                 text: text.into(),
                 reply_to: None,
             },
+            topic: None,
             sig: String::new(),
         }
     }
@@ -169,6 +177,10 @@ mod tests {
         let mut changed = wire.clone();
         changed.nick = "Mallory".into();
         assert!(bob.open(&changed).is_none());
+        // Nor can a message be moved into a topic.
+        let mut moved = wire.clone();
+        moved.topic = Some(format!("{}:9", alice.id()));
+        assert!(bob.open(&moved).is_none());
         // Bob cannot write under Alice's id.
         let mut forged = event(&alice, 2, None, "delete everything");
         forged.sig = bob.seal(&forged).unwrap().sig;

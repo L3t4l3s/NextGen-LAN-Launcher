@@ -415,11 +415,15 @@ export interface ChatItem {
   ts: number;
   /** When this launcher got it, by its own clock. */
   received: number;
-  /** null: the public room; otherwise the other person's peer id. */
+  /** null: the public room; "#<id>" a topic; otherwise the other person's peer id. */
   conversation: string | null;
   mine: boolean;
   deleted: boolean;
   text: string | null;
+  /** The text was changed after sending. */
+  edited: boolean;
+  /** Set on the item that opened a topic: its name. */
+  topicName: string | null;
   reply: { id: string; nick: string | null; text: string | null; deleted: boolean } | null;
   reactions: ChatReaction[];
   poll: ChatPoll | null;

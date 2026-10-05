@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api } from "$lib/api";
-  import { nickColor, rows } from "$lib/chat";
+  import { isTopic, nickColor, rows } from "$lib/chat";
   import { currentLanguage, t, userText } from "$lib/i18n";
   import { app } from "$lib/stores/app.svelte";
   import { chat } from "$lib/stores/chat.svelte";
@@ -11,7 +11,8 @@
 
   let text = $state("");
   let sending = $state(false);
-  let showPeople = $state(false);
+  /** The name of a topic being opened, while the "+" field is shown. */
+  let newTopic = $state<string | null>(null);
   let showEmoji = $state(false);
   let showPoll = $state(false);
   let list = $state<HTMLDivElement | null>(null);
@@ -23,7 +24,8 @@
   const dayFormat = $derived(new Intl.DateTimeFormat(currentLanguage(), { weekday: "long", day: "numeric", month: "long" }));
   const today = $derived(dayFormat.format(new Date()));
   const shown = $derived(rows(items, (ts) => dayFormat.format(new Date(ts))));
-  const partner = $derived(chat.active ? chat.peers.find((p) => p.id === chat.active) : null);
+  const partner = $derived(chat.active && !isTopic(chat.active) ? chat.peers.find((p) => p.id === chat.active) : null);
+  const activeName = $derived(chat.conversationName(chat.active));
   const unreadElsewhere = $derived(chat.conversations.filter((c) => c.id !== chat.active).reduce((n, c) => n + c.unread, 0));
 
   const unreadHere = $derived(chat.unread(chat.active));
@@ -91,15 +93,48 @@
     setTimeout(() => el.classList.remove("flash"), 1300);
   }
 
+  // Editing one's own message: its text goes into the input, and leaves it
+  // again however the editing ends (switching conversations, replying).
+  let editedId: string | null = null;
+  $effect(() => {
+    const item = chat.editing;
+    if (!item) {
+      if (editedId !== null) {
+        editedId = null;
+        text = "";
+        void tick().then(autosize);
+      }
+      return;
+    }
+    editedId = item.id;
+    text = item.text ?? "";
+    chat.replyTo = null;
+    void tick().then(() => {
+      autosize();
+      input?.focus();
+    });
+  });
+
+  function stopEditing() {
+    chat.editing = null;
+    text = "";
+    void tick().then(autosize);
+  }
+
   async function send() {
     const body = text.trim();
     if (!body || sending) return;
     sending = true;
     try {
-      await api.chat.send(chat.active, body, chat.replyTo?.id ?? null);
+      if (chat.editing) {
+        if (body !== chat.editing.text) await api.chat.edit(chat.editing.id, body);
+        chat.editing = null;
+      } else {
+        await api.chat.send(chat.active, body, chat.replyTo?.id ?? null);
+        chat.atBottom = true;
+      }
       text = "";
       chat.replyTo = null;
-      chat.atBottom = true;
       await tick();
       autosize();
     } catch (e) {
@@ -114,6 +149,8 @@
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       void send();
+    } else if (e.key === "Escape" && chat.editing) {
+      stopEditing();
     } else if (e.key === "Escape" && chat.replyTo) {
       chat.replyTo = null;
     }
@@ -141,31 +178,34 @@
   }
 
   function openPrivate(id: string) {
-    showPeople = false;
+    chat.showPeople = false;
     chat.show(id);
+  }
+
+  async function createTopic() {
+    const name = newTopic?.trim();
+    if (!name) {
+      newTopic = null;
+      return;
+    }
+    try {
+      await chat.createTopic(name);
+      newTopic = null;
+    } catch (e) {
+      app.toast("error", userText(e));
+    }
+  }
+
+  function focusOnMount(el: HTMLElement) {
+    el.focus();
   }
 </script>
 
-{#if !chat.open}
-  <aside class="rail">
-    <button class="toggle" title={t("chat.open")} onclick={() => chat.setOpen(true)}>
-      💬
-      {#if chat.totalUnread > 0}<span class="badge-count">{chat.totalUnread > 99 ? "99+" : chat.totalUnread}</span>{/if}
-    </button>
-    {#if chat.enabled}<span class="online-count" title={t("chat.online", { count: chat.online.length })}><span>👥</span>{chat.online.length}</span>{/if}
-  </aside>
-{:else}
+{#if chat.open}
   <aside class="panel">
     <header>
       <strong class="grow">💬 {t("chat.title")}</strong>
       {#if chat.relayOnline}<span class="relay" title={t("chat.relay")}>🗄</span>{/if}
-      {#if chat.enabled}
-        <button class="icon" class:active={showPeople} title={t("chat.people")} onclick={() => (showPeople = !showPeople)}>👥 {chat.online.length}</button>
-        <button class="icon" title={app.settings?.chatSound ? t("chat.sound.off") : t("chat.sound.on")} onclick={() => chat.setSound(!app.settings?.chatSound).catch((e) => app.toast("error", userText(e)))}>
-          {app.settings?.chatSound ? "🔔" : "🔕"}
-        </button>
-      {/if}
-      <button class="icon" title={t("chat.close")} onclick={() => chat.setOpen(false)}>›</button>
     </header>
 
     {#if !chat.loaded}
@@ -182,10 +222,10 @@
         {#each chat.conversations as c (c.id ?? "")}
           <div class="tab-wrap" class:active={chat.active === c.id}>
             <button class="tab" onclick={() => chat.show(c.id)}>
-              {#if c.id === null}
-                # {t("chat.public")}
-              {:else}
+              {#if c.kind === "private"}
                 <span class="dot" class:ok={c.online}></span>{c.nick}
+              {:else}
+                # {c.nick}
               {/if}
               {#if c.muted}<span class="muted-icon" title={t("chat.muted")}>🔕</span>{/if}
               {#if c.unread > 0}<span class="badge-count" class:quiet={c.muted}>{c.unread}</span>{/if}
@@ -195,9 +235,23 @@
             {/if}
           </div>
         {/each}
+        {#if newTopic === null}
+          <button class="tab-add" title={t("chat.topic.new")} onclick={() => (newTopic = "")}>＋</button>
+        {:else}
+          <form class="topic-form" onsubmit={(e) => { e.preventDefault(); void createTopic(); }}>
+            <input
+              use:focusOnMount
+              bind:value={newTopic}
+              maxlength="40"
+              placeholder={t("chat.topic.placeholder")}
+              onkeydown={(e) => e.key === "Escape" && (newTopic = null)}
+              onblur={() => { if (!newTopic?.trim()) newTopic = null; }}
+            />
+          </form>
+        {/if}
       </nav>
 
-      {#if showPeople}
+      {#if chat.showPeople}
         <div class="people">
           <div class="people-head">{t("chat.online", { count: chat.online.length })}</div>
           <div class="person me">
@@ -219,11 +273,11 @@
 
       <div class="partner">
         <span class="grow">
-          {#if chat.active}
-            {t("chat.private_with", { nick: chat.nickOf(chat.active) })}
-            {#if !partner?.online}<span class="muted"> · {t("chat.offline_hint", { nick: chat.nickOf(chat.active) })}</span>{/if}
+          {#if chat.active && !isTopic(chat.active)}
+            {t("chat.private_with", { nick: activeName })}
+            {#if !partner?.online}<span class="muted"> · {t("chat.offline_hint", { nick: activeName })}</span>{/if}
           {:else}
-            # {t("chat.public")}
+            # {activeName}
           {/if}
         </span>
         <button
@@ -242,7 +296,7 @@
           <ChatMessage item={r.item} head={r.head} onjump={jump} />
         {:else}
           <div class="empty">
-            <p class="muted">{chat.active ? t("chat.empty.private") : t("chat.empty.public")}</p>
+            <p class="muted">{chat.active === null ? t("chat.empty.public") : isTopic(chat.active) ? t("chat.empty.topic") : t("chat.empty.private")}</p>
           </div>
         {/each}
       </div>
@@ -251,12 +305,20 @@
           ↓{#if unreadHere > 0}<span>{t("chat.jump_unread", { count: unreadHere })}</span>{/if}
         </button>
       {/if}
-      {#if unreadElsewhere > 0 && !showPeople}
+      {#if unreadElsewhere > 0 && !chat.showPeople}
         <div class="elsewhere">{t("chat.unread_elsewhere", { count: unreadElsewhere })}</div>
       {/if}
 
       <footer>
-        {#if chat.replyTo}
+        {#if chat.editing}
+          <div class="replying">
+            <div class="grow">
+              <strong>✎ {t("chat.editing")}</strong>
+              <span>{chat.editing.text ?? ""}</span>
+            </div>
+            <button class="icon" title={t("action.cancel")} onclick={stopEditing}>✕</button>
+          </div>
+        {:else if chat.replyTo}
           <div class="replying">
             <div class="grow">
               <strong>{t("chat.replying_to", { nick: chat.replyTo.nick })}</strong>
@@ -279,11 +341,11 @@
             bind:value={text}
             rows="1"
             maxlength="2000"
-            placeholder={chat.active ? t("chat.placeholder.private", { nick: chat.nickOf(chat.active) }) : t("chat.placeholder")}
+            placeholder={chat.active === null ? t("chat.placeholder") : isTopic(chat.active) ? t("chat.placeholder.topic", { name: activeName }) : t("chat.placeholder.private", { nick: activeName })}
             oninput={autosize}
             onkeydown={onKey}
           ></textarea>
-          <button class="send primary" title={t("chat.send")} disabled={!text.trim() || sending} onclick={send}>➤</button>
+          <button class="send primary" title={chat.editing ? t("chat.save_edit") : t("chat.send")} disabled={!text.trim() || sending} onclick={send}>{chat.editing ? "✓" : "➤"}</button>
         </div>
       </footer>
     {/if}
@@ -292,6 +354,25 @@
     <PollDialog onclose={() => (showPoll = false)} />
   {/if}
 {/if}
+
+<!-- Always there, at the window's edge: the bubble opens and closes the chat,
+     the people icon the list of who is online. -->
+<aside class="rail">
+  <button class="toggle" class:active={chat.open} title={chat.open ? t("chat.close") : t("chat.open")} onclick={() => chat.toggleOpen()}>
+    💬
+    {#if chat.totalUnread > 0}<span class="badge-count">{chat.totalUnread > 99 ? "99+" : chat.totalUnread}</span>{/if}
+  </button>
+  {#if chat.enabled}
+    <button class="toggle people-toggle" class:active={chat.open && chat.showPeople} title={t("chat.people")} onclick={() => chat.togglePeople()}>
+      👥<small>{chat.online.length}</small>
+    </button>
+    <span class="grow"></span>
+    <!-- All conversations at once; each conversation has its own bell too. -->
+    <button class="toggle sound" title={app.settings?.chatSound ? t("chat.sound.off") : t("chat.sound.on")} onclick={() => chat.setSound(!app.settings?.chatSound).catch((e) => app.toast("error", userText(e)))}>
+      {app.settings?.chatSound ? "🔔" : "🔕"}
+    </button>
+  {/if}
+</aside>
 
 <style>
   aside {
@@ -305,25 +386,49 @@
     flex-direction: column;
     align-items: center;
     gap: 0.6rem;
-    padding-top: 0.7rem;
+    padding: 0.7rem 0;
+  }
+  .rail .sound {
+    font-size: 1rem;
   }
   .rail .toggle {
     position: relative;
     font-size: 1.3rem;
     padding: 0.35em 0.45em;
     background: transparent;
+    border-color: transparent;
+  }
+  .rail .toggle.active {
+    background: var(--color-surface-alt);
+    border-color: var(--color-border);
+  }
+  .people-toggle {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1.1;
+  }
+  .people-toggle small {
+    font-size: 0.7rem;
+    color: var(--color-text-muted);
+  }
+  .tab-add {
+    flex-shrink: 0;
+    border-radius: 999px;
+    padding: 0.1em 0.6em;
+    font-size: 0.85rem;
+    background: transparent;
+  }
+  .topic-form input {
+    width: 150px;
+    padding: 0.2em 0.6em;
+    font-size: 0.82rem;
+    border-radius: 999px;
   }
   .rail .badge-count {
     position: absolute;
     top: -6px;
     right: -4px;
-  }
-  .online-count {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    font-size: 0.75rem;
-    color: var(--color-text-muted);
   }
   .panel {
     position: relative;
@@ -350,9 +455,6 @@
     padding: 0.25em 0.5em;
     font-size: 0.95rem;
   }
-  .icon.active {
-    background: var(--color-surface-alt);
-  }
   .relay {
     font-size: 0.85rem;
     opacity: 0.8;
@@ -373,11 +475,14 @@
     padding: 0.4rem 0.9rem;
     border-bottom: 1px solid var(--color-border);
   }
+  /* Wrapping rather than scrolling, so "+" and every tab stay in sight. */
   .tabs {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.25rem;
     padding: 0.4rem 0.6rem;
-    overflow-x: auto;
+    max-height: 7.5rem;
+    overflow-y: auto;
     border-bottom: 1px solid var(--color-border);
     flex-shrink: 0;
   }
@@ -421,7 +526,7 @@
   }
   .people {
     position: absolute;
-    top: 88px;
+    top: 46px;
     left: 0.6rem;
     right: 0.6rem;
     z-index: 20;

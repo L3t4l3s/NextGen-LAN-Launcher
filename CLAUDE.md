@@ -406,9 +406,18 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   Ankunftsreihenfolge. Private Events gehen nur an Beteiligte (`Event::visible_to`), auch beim
   Abgleich; ein Event, das auf eine private Nachricht zeigt, muss in deren Unterhaltung bleiben.
   Eine TCP-Verbindung, die die Gegenseite beim Neustart geschlossen hat, nimmt den ersten Schreib-
-  vorgang noch „erfolgreich“ an — deshalb prüft `link_writer` vor dem Schreiben per `try_read`, und
+  vorgang noch „erfolgreich“ an — deshalb liest `link_writer` seine Verbindung mit (der Leser setzt
+  `closed`, wenn die Gegenseite schließt; vor jedem Schreiben geprüft), und
   ein wieder auftauchender Peer bekommt eine frische Verbindung (der Test
   `a_late_arrival_reads_the_history_and_gets_what_was_sent_to_it` war genau daran wackelig).
+  Verbindungen tragen Rahmen in beide Richtungen: Ein `Hello` mit `duplex` wird über die
+  Verbindung beantwortet, auf der es kam (`answer` verhindert Ping-Pong), und wer einen Peer nicht
+  erreicht, schreibt über dessen Verbindung (`back_links`). Vorher brauchte das Nachholen beide
+  Richtungen, Live-Nachrichten nur eine — genau das Bild „live geht, Verlauf fehlt“ beim
+  Test mit zwei PCs. Test `one_launcher_reaching_the_other_is_enough` (`advertise_port` nennt
+  einen geschlossenen Port). Die Firewall-Hinweise der Diagnose gelten nur, solange
+  `Chat::heard_from_others` falsch ist: Eine fehlende eigene Regel beweist nichts, die
+  Windows-Abfrage beim ersten Start legt eine Programmregel unter anderem Namen an.
   Die Peer-ID ist ein Ed25519-Schlüssel (`chat/crypto.rs`): jedes Event ist signiert, private
   Bodies sind versiegelt (`Body::Sealed`); der Zustand faltet die geöffnete Form, gespeichert und
   weitergegeben wird nur die Wire-Form. Ein `Hello` ist unsigniert und darf einen online
@@ -421,6 +430,11 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   eine Dauer, also uhrunabhängig), sonst startet ein spät nachgeholter Beitrag seine fünf Tage neu
   und taucht auf der nächsten LAN wieder auf. Die IDs merkt sich `expired.json`
   (`ChatState::gone`).
+  Themen: `Body::Topic` eröffnet eins, öffentliche Events tragen `Event::topic`; die Signatur
+  nimmt das Feld nur auf, wenn es gesetzt ist (`crypto::signed_bytes`), sonst verlören ältere
+  Events ihre Gültigkeit. Unterhaltungen heißen im Frontend `null`, `#<id>` oder Peer-ID, genau so
+  nimmt sie `Chat::send_text`. Das Browser-Kontextmenü unterdrückt `main.ts` (außer im Dev-Build
+  und in Eingabefeldern); Nachrichten öffnen ihr eigenes.
   `nll-chat-relay` (`src/bin/`) ist derselbe Code mit `ChatConfig::relay`: keine
   Person, bekommt private Events (versiegelt, `insert_opaque`) nur, wenn `launcher.ini` seine ID
   nennt (`chat_relay`, `Chat::set_trusted_relays`) — das `relay`-Flag im Beacon beweist nichts —,

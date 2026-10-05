@@ -11,6 +11,10 @@
 //!   plus their private conversation. A late arrival thus reads what was said
 //!   before, and a private message to someone offline arrives when they are
 //!   back. [`model`] explains why merging that way is safe.
+//! * **Connections** carry frames both ways: the answer to a `Hello` comes
+//!   back on the connection it came in on, and a launcher that cannot reach
+//!   a peer writes to it over a connection the peer opened. A firewall that
+//!   lets only one of the two in thus still lets them catch up and talk.
 //!
 //! Nothing here is authenticated: anyone on the LAN can claim any nickname.
 //! That is the trust model of a LAN party, and the interface does not claim
@@ -28,9 +32,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::AbortHandle;
@@ -52,6 +58,9 @@ const EXPIRE_EVERY: Duration = Duration::from_secs(60);
 /// Every so often the history is compared again, in case a message was lost
 /// to a connection that broke while it was on its way.
 const RESYNC_EVERY: Duration = Duration::from_secs(120);
+/// A peer that could not be reached is tried directly again after this;
+/// until then frames go over the connection it opened, if there is one.
+const RETRY_DIRECT_AFTER: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct ChatConfig {
@@ -69,6 +78,10 @@ pub struct ChatConfig {
     /// every event — private ones sealed, as it cannot open them — and hands
     /// them to whoever starts later.
     pub relay: bool,
+    /// Tests: name this TCP port to others instead of the real one, to play
+    /// a launcher whose firewall lets nobody connect.
+    #[doc(hidden)]
+    pub advertise_port: Option<u16>,
 }
 
 impl ChatConfig {
@@ -81,6 +94,7 @@ impl ChatConfig {
             data_dir,
             nick: nick.to_string(),
             relay: false,
+            advertise_port: None,
         }
     }
 }
@@ -143,6 +157,14 @@ enum Frame {
         since: i64,
         #[serde(default)]
         relay: bool,
+        /// The sender reads what comes back on connections it opened, so
+        /// the answer may take this one. Launchers before this only wrote.
+        #[serde(default)]
+        duplex: bool,
+        /// This `Hello` answers one: it gets the missing events back, not
+        /// another `Hello`.
+        #[serde(default)]
+        answer: bool,
     },
     /// Parsed one by one: an event of a newer version must not take the
     /// others in the frame down with it.
@@ -223,6 +245,13 @@ struct Inner {
     history: Mutex<store::History>,
     peers: Mutex<HashMap<String, Peer>>,
     links: Mutex<HashMap<String, mpsc::UnboundedSender<Arc<str>>>>,
+    /// Connections peers opened to us, by peer: the way to them when they
+    /// cannot be reached directly. Weak, so a closed one is gone.
+    back_links: Mutex<HashMap<String, mpsc::WeakUnboundedSender<Arc<str>>>>,
+    /// A beacon of another launcher arrived: the firewall lets the chat in.
+    heard_beacon: AtomicBool,
+    /// This, for the tasks a connection starts.
+    this: Weak<Inner>,
     updates: broadcast::Sender<ChatUpdate>,
     seq: Mutex<u64>,
     tcp_port: u16,
@@ -337,7 +366,7 @@ impl Chat {
             n => n,
         };
         let (updates, _) = broadcast::channel(256);
-        let inner = Arc::new(Inner {
+        let inner = Arc::new_cyclic(|this| Inner {
             relay: config.relay,
             data_dir: config.data_dir.clone(),
             trusted_relays: Mutex::new(HashSet::new()),
@@ -349,9 +378,12 @@ impl Chat {
             history: Mutex::new(history),
             peers: Mutex::new(HashMap::new()),
             links: Mutex::new(HashMap::new()),
+            back_links: Mutex::new(HashMap::new()),
+            heard_beacon: AtomicBool::new(false),
+            this: this.clone(),
             updates,
             seq: Mutex::new(seq),
-            tcp_port,
+            tcp_port: config.advertise_port.unwrap_or(tcp_port),
             udp,
             udp_port: config.port,
             targets: config.beacon_targets.clone(),
@@ -384,6 +416,13 @@ impl Chat {
             t.abort();
         }
         lock(&self.inner.links).clear();
+        lock(&self.inner.back_links).clear();
+    }
+
+    /// Whether a beacon of another launcher has arrived since the start:
+    /// proof that the firewall lets the chat in, whatever its rules say.
+    pub fn heard_from_others(&self) -> bool {
+        self.inner.heard_beacon.load(Ordering::Relaxed)
     }
 
     /// The relays the LANPage names ([`relays_from_launcher_ini`]). One that
@@ -462,20 +501,22 @@ impl Chat {
             .ok_or(ERR_UNKNOWN_TARGET)
     }
 
+    /// Write into `conversation`: `None` is the public room, `#<id>` a
+    /// topic, anything else a person (private).
     pub fn send_text(
         &self,
-        to: Option<String>,
+        conversation: Option<String>,
         text: &str,
         reply_to: Option<String>,
     ) -> Result<ItemView, ChatError> {
         self.running()?;
         if let Some(r) = &reply_to {
-            if self.conversation_of(r)? != to {
+            if self.conversation_of(r)? != conversation {
                 return Err(ERR_NOT_ALLOWED);
             }
         }
         let id = self.inner.publish(
-            to,
+            conversation,
             Body::Text {
                 text: text.trim_end().to_string(),
                 reply_to,
@@ -487,9 +528,9 @@ impl Chat {
     /// React with `emoji`; an empty one takes the reaction back.
     pub fn react(&self, target: &str, emoji: &str) -> Result<(), ChatError> {
         self.running()?;
-        let to = self.conversation_of(target)?;
+        let conversation = self.conversation_of(target)?;
         self.inner.publish(
-            to,
+            conversation,
             Body::React {
                 target: target.to_string(),
                 emoji: emoji.to_string(),
@@ -500,7 +541,7 @@ impl Chat {
 
     pub fn create_poll(
         &self,
-        to: Option<String>,
+        conversation: Option<String>,
         question: &str,
         options: Vec<PollChoice>,
         kind: PollKind,
@@ -516,7 +557,7 @@ impl Chat {
             .filter(|c| !c.text.is_empty())
             .collect();
         let id = self.inner.publish(
-            to,
+            conversation,
             Body::Poll {
                 question: question.trim().to_string(),
                 options,
@@ -548,9 +589,9 @@ impl Chat {
         if kind == PollKind::Single && unique.len() > 1 {
             return Err(ERR_INVALID);
         }
-        let to = self.conversation_of(poll)?;
+        let conversation = self.conversation_of(poll)?;
         self.inner.publish(
-            to,
+            conversation,
             Body::Vote {
                 poll: poll.to_string(),
                 choices: unique,
@@ -571,9 +612,9 @@ impl Chat {
         if (!open && !author) || ids.len() >= model::MAX_POLL_OPTIONS_TOTAL {
             return Err(ERR_NOT_ALLOWED);
         }
-        let to = self.conversation_of(poll)?;
+        let conversation = self.conversation_of(poll)?;
         self.inner.publish(
-            to,
+            conversation,
             Body::PollOption {
                 poll: poll.to_string(),
                 choice: PollChoice {
@@ -591,14 +632,40 @@ impl Chat {
         lock(&self.inner.state)
             .poll_info(poll)
             .ok_or(ERR_UNKNOWN_TARGET)?;
-        let to = self.conversation_of(poll)?;
+        let conversation = self.conversation_of(poll)?;
         self.inner.publish(
-            to,
+            conversation,
             Body::ClosePoll {
                 poll: poll.to_string(),
             },
         )?;
         Ok(())
+    }
+
+    /// Change the text of one's own message; the newest edit counts.
+    pub fn edit(&self, target: &str, text: &str) -> Result<(), ChatError> {
+        self.running()?;
+        self.own(target)?;
+        if !lock(&self.inner.state).is_text(target) {
+            return Err(ERR_NOT_ALLOWED);
+        }
+        let conversation = self.conversation_of(target)?;
+        self.inner.publish(
+            conversation,
+            Body::Edit {
+                target: target.to_string(),
+                text: text.trim_end().to_string(),
+            },
+        )?;
+        Ok(())
+    }
+
+    /// Open a topic: a public room of its own, for everyone.
+    pub fn create_topic(&self, name: &str) -> Result<ItemView, ChatError> {
+        self.running()?;
+        let name: String = name.split_whitespace().collect::<Vec<_>>().join(" ");
+        let id = self.inner.publish(None, Body::Topic { name })?;
+        self.view(&id)
     }
 
     pub fn delete(&self, target: &str) -> Result<(), ChatError> {
@@ -607,9 +674,9 @@ impl Chat {
         if lock(&self.inner.state).is_deleted(target) {
             return Ok(());
         }
-        let to = self.conversation_of(target)?;
+        let conversation = self.conversation_of(target)?;
         self.inner.publish(
-            to,
+            conversation,
             Body::Delete {
                 target: target.to_string(),
             },
@@ -650,11 +717,24 @@ impl Inner {
         *seq
     }
 
-    /// Write an event of our own, show it and send it to whom it concerns.
-    fn publish(&self, to: Option<String>, body: Body) -> Result<String, ChatError> {
+    /// Write an event of our own into `conversation` (see
+    /// [`Chat::send_text`]), show it and send it to whom it concerns.
+    fn publish(&self, conversation: Option<String>, body: Body) -> Result<String, ChatError> {
+        let (to, topic) = match conversation {
+            None => (None, None),
+            Some(c) => match c.strip_prefix('#') {
+                Some(topic) => (None, Some(topic.to_string())),
+                None => (Some(c), None),
+            },
+        };
         if let Some(t) = &to {
             if !valid_peer_id(t) || *t == self.me {
                 return Err(ERR_INVALID);
+            }
+        }
+        if let Some(t) = &topic {
+            if !lock(&self.state).is_topic(t) {
+                return Err(ERR_UNKNOWN_TARGET);
             }
         }
         let seq = self.next_seq();
@@ -666,6 +746,7 @@ impl Inner {
             ts: now_ms(),
             to,
             body,
+            topic,
             sig: String::new(),
         };
         if !event.is_valid() {
@@ -932,6 +1013,7 @@ impl Inner {
             }
             return;
         }
+        self.heard_beacon.store(true, Ordering::Relaxed);
         let addr = SocketAddr::new(from.ip(), b.port);
         let (came_online, changed) =
             self.saw_peer(&b.id, &b.nick, &b.os, b.relay, addr, Some(from));
@@ -1039,6 +1121,13 @@ impl Inner {
     }
 
     fn send_hello(&self, peer: &str) {
+        if let Some(line) = self.hello(peer, false) {
+            self.send_to(peer, line);
+        }
+    }
+
+    /// Our `Hello` for `peer`: what we have of what it may see.
+    fn hello(&self, peer: &str, answer: bool) -> Option<Arc<str>> {
         let all = self.is_relay(peer);
         let (have, since) = {
             let state = lock(&self.state);
@@ -1052,11 +1141,14 @@ impl Inner {
             have,
             since,
             relay: self.relay,
+            duplex: true,
+            answer,
         };
-        match frame_line(&frame) {
-            Some(line) => self.send_to(peer, line),
-            None => log::warn!("chat: history comparison with {peer} too large to send"),
+        let line = frame_line(&frame);
+        if line.is_none() {
+            log::warn!("chat: history comparison with {peer} too large to send");
         }
+        line
     }
 
     /// Queue a frame for a peer; one connection and one writer per peer keep
@@ -1071,19 +1163,129 @@ impl Inner {
         let Some(addr) = lock(&self.peers).get(peer).map(|p| p.addr) else {
             return;
         };
+        let Some(this) = self.this.upgrade() else {
+            return;
+        };
         let (tx, rx) = mpsc::unbounded_channel();
         let _ = tx.send(line);
+        let own = tx.downgrade();
         links.insert(peer.to_string(), tx);
         drop(links);
-        spawn(self, link_writer(addr, rx));
+        spawn(self, this.link_writer(peer.to_string(), addr, rx, own));
+    }
+
+    /// Writes queued frames to one peer, connecting (again) when needed, and
+    /// reads what comes back on that connection. A frame that cannot be
+    /// delivered after one reconnect goes over a connection the peer opened
+    /// to us, if there is one, or else is dropped: the next history
+    /// comparison brings it across.
+    async fn link_writer(
+        self: Arc<Self>,
+        peer: String,
+        addr: SocketAddr,
+        mut rx: mpsc::UnboundedReceiver<Arc<str>>,
+        own: mpsc::WeakUnboundedSender<Arc<str>>,
+    ) {
+        let mut conn: Option<(OwnedWriteHalf, Arc<AtomicBool>)> = None;
+        // When the peer could not be reached; while there is a way back,
+        // frames take it for a while rather than wait for a timeout each.
+        let mut unreachable_since: Option<Instant> = None;
+        while let Some(line) = rx.recv().await {
+            let back = || lock(&self.back_links).get(&peer).and_then(|b| b.upgrade());
+            if unreachable_since.is_some_and(|t| t.elapsed() < RETRY_DIRECT_AFTER) {
+                if let Some(back) = back() {
+                    let _ = back.send(line);
+                    continue;
+                }
+            }
+            // The reader saw the other side close: a write would still
+            // "succeed" once and vanish.
+            if conn
+                .as_ref()
+                .is_some_and(|(_, closed)| closed.load(Ordering::Acquire))
+            {
+                conn = None;
+            }
+            let mut sent = false;
+            for _ in 0..2 {
+                if conn.is_none() {
+                    let stream =
+                        tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(addr))
+                            .await
+                            .ok()
+                            .and_then(Result::ok);
+                    let Some(stream) = stream else {
+                        break;
+                    };
+                    unreachable_since = None;
+                    let (read, write) = stream.into_split();
+                    let closed = Arc::new(AtomicBool::new(false));
+                    let (this, done, back) = (self.clone(), closed.clone(), own.clone());
+                    spawn(&self, async move {
+                        this.read_frames(read, addr, Back::Ours(back)).await;
+                        done.store(true, Ordering::Release);
+                    });
+                    conn = Some((write, closed));
+                }
+                let Some((write, _)) = conn.as_mut() else {
+                    break;
+                };
+                let written =
+                    tokio::time::timeout(Duration::from_secs(5), write.write_all(line.as_bytes()))
+                        .await;
+                if matches!(written, Ok(Ok(()))) {
+                    sent = true;
+                    break;
+                }
+                conn = None;
+            }
+            if sent {
+                continue;
+            }
+            let back = back();
+            if unreachable_since.is_none() {
+                log::info!(
+                    "chat: {peer} not reachable at {addr}{}",
+                    if back.is_some() {
+                        "; writing over the connection it opened"
+                    } else {
+                        ""
+                    }
+                );
+            }
+            unreachable_since = Some(Instant::now());
+            if let Some(back) = back {
+                let _ = back.send(line);
+            }
+        }
+    }
+
+    /// Whether `from` is where we know `peer` to be.
+    fn is_known_at(&self, peer: &str, from: SocketAddr) -> bool {
+        lock(&self.peers)
+            .get(peer)
+            .is_some_and(|p| p.addr.ip() == from.ip())
+    }
+
+    /// Remember a connection `peer` opened to us as the way back to it
+    /// (checked with [`Inner::is_known_at`] by the caller).
+    fn remember_back_link(&self, peer: &str, tx: &mpsc::UnboundedSender<Arc<str>>) {
+        let mut back = lock(&self.back_links);
+        back.retain(|_, b| b.upgrade().is_some());
+        back.insert(peer.to_string(), tx.downgrade());
     }
 
     async fn accept_loop(self: Arc<Self>, listener: TcpListener) {
         loop {
             match listener.accept().await {
                 Ok((stream, from)) => {
+                    let (read, write) = stream.into_split();
+                    let (tx, rx) = mpsc::unbounded_channel();
+                    spawn(&self, back_writer(write, rx));
                     let i = self.clone();
-                    spawn(&self, async move { i.read_frames(stream, from).await });
+                    spawn(&self, async move {
+                        i.read_frames(read, from, Back::Theirs(tx)).await
+                    });
                 }
                 Err(e) => {
                     log::debug!("chat: accept: {e}");
@@ -1093,8 +1295,8 @@ impl Inner {
         }
     }
 
-    async fn read_frames(self: Arc<Self>, stream: TcpStream, from: SocketAddr) {
-        let mut reader = BufReader::new(stream);
+    async fn read_frames(self: Arc<Self>, read: OwnedReadHalf, from: SocketAddr, back: Back) {
+        let mut reader = BufReader::new(read);
         let mut line = Vec::new();
         loop {
             line.clear();
@@ -1113,11 +1315,22 @@ impl Inner {
             let Ok(frame) = serde_json::from_slice::<Frame>(&line) else {
                 continue;
             };
-            self.on_frame(frame, from);
+            match &back {
+                Back::Theirs(tx) => self.on_frame(frame, from, Some(tx), true),
+                Back::Ours(own) => self.on_frame(frame, from, own.upgrade().as_ref(), false),
+            }
         }
     }
 
-    fn on_frame(&self, frame: Frame, from: SocketAddr) {
+    /// `back` writes on the connection the frame came in on; `theirs` says
+    /// the peer opened it.
+    fn on_frame(
+        &self,
+        frame: Frame,
+        from: SocketAddr,
+        back: Option<&mpsc::UnboundedSender<Arc<str>>>,
+        theirs: bool,
+    ) {
         match frame {
             Frame::Hello {
                 from: peer,
@@ -1127,24 +1340,62 @@ impl Inner {
                 have,
                 since,
                 relay,
+                duplex,
+                answer,
             } => {
                 if peer == self.me || !valid_peer_id(&peer) {
                     return;
                 }
-                let addr = SocketAddr::new(from.ip(), port);
+                // On a connection we opened, the address we dialled is the
+                // peer's; `from` would be its outgoing port.
+                let addr = if theirs {
+                    SocketAddr::new(from.ip(), port)
+                } else {
+                    from
+                };
                 let (came_online, changed) = self.saw_peer(&peer, &nick, &os, relay, addr, None);
-                if came_online {
-                    // Its beacons may not reach us; compare the other way too.
-                    self.send_hello(&peer);
-                }
                 if changed {
                     self.emit_peers();
                 }
                 let have: HashSet<String> = have.into_iter().collect();
                 let all = self.is_relay(&peer);
                 let missing = lock(&self.state).missing_for(&peer, &have, since, all);
-                for line in batches(&missing) {
-                    self.send_to(&peer, line);
+                if !missing.is_empty() {
+                    log::info!("chat: {peer} lacks {} events; sending", missing.len());
+                }
+                // A `Hello` is unsigned: on a connection the sender opened,
+                // answer there only if it comes from where the peer is
+                // known to be (`saw_peer` places a new or returning one
+                // there), else anyone could collect a peer's events by
+                // claiming its id.
+                let trusted_way = !theirs || self.is_known_at(&peer, from);
+                match back.filter(|_| duplex && trusted_way) {
+                    // Back the way it came: one of the two reaching the
+                    // other is enough.
+                    Some(back) => {
+                        if theirs {
+                            self.remember_back_link(&peer, back);
+                        }
+                        for line in batches(&missing) {
+                            let _ = back.send(line);
+                        }
+                        if !answer {
+                            if let Some(line) = self.hello(&peer, true) {
+                                let _ = back.send(line);
+                            }
+                        }
+                    }
+                    // A launcher that only writes: answer on our own.
+                    None => {
+                        if came_online {
+                            // Its beacons may not reach us; compare the
+                            // other way too.
+                            self.send_hello(&peer);
+                        }
+                        for line in batches(&missing) {
+                            self.send_to(&peer, line);
+                        }
+                    }
                 }
             }
             Frame::Events { events, ages } => {
@@ -1203,42 +1454,22 @@ fn batches(events: &[Stored]) -> Vec<Arc<str>> {
     out
 }
 
-/// Writes queued frames to one peer, connecting (again) when needed. A frame
-/// that cannot be delivered after one reconnect is dropped; the next history
-/// comparison brings it across.
-async fn link_writer(addr: SocketAddr, mut rx: mpsc::UnboundedReceiver<Arc<str>>) {
-    let mut conn: Option<TcpStream> = None;
+/// Where the answer to a frame goes.
+enum Back {
+    /// The peer opened the connection; this writes on it.
+    Theirs(mpsc::UnboundedSender<Arc<str>>),
+    /// We opened it: our link to the peer, while it is the current one.
+    Ours(mpsc::WeakUnboundedSender<Arc<str>>),
+}
+
+/// Writes answers on a connection a peer opened, until it or the reader
+/// side is done.
+async fn back_writer(mut write: OwnedWriteHalf, mut rx: mpsc::UnboundedReceiver<Arc<str>>) {
     while let Some(line) = rx.recv().await {
-        // The other side never writes on this connection: anything readable
-        // means it was closed, and a write would vanish without an error.
-        if let Some(stream) = &conn {
-            let mut probe = [0u8; 1];
-            match stream.try_read(&mut probe) {
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                _ => conn = None,
-            }
-        }
-        for _ in 0..2 {
-            if conn.is_none() {
-                conn = tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(addr))
-                    .await
-                    .ok()
-                    .and_then(Result::ok);
-                if conn.is_none() {
-                    log::debug!("chat: cannot reach {addr}");
-                    break;
-                }
-            }
-            let Some(stream) = conn.as_mut() else {
-                break;
-            };
-            let written =
-                tokio::time::timeout(Duration::from_secs(5), stream.write_all(line.as_bytes()))
-                    .await;
-            if matches!(written, Ok(Ok(()))) {
-                break;
-            }
-            conn = None;
+        let written =
+            tokio::time::timeout(Duration::from_secs(5), write.write_all(line.as_bytes())).await;
+        if !matches!(written, Ok(Ok(()))) {
+            return;
         }
     }
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, confirmDialog } from "$lib/api";
+  import { api, confirmDialog, copyText } from "$lib/api";
   import { linkTarget, nickColor, onlyEmoji, segments } from "$lib/chat";
   import { quickReactions } from "$lib/emoji";
   import { t, userText } from "$lib/i18n";
@@ -12,11 +12,47 @@
   let { item, head, onjump }: { item: ChatItem; head: boolean; onjump: (id: string) => void } = $props();
   let reacting = $state(false);
   let picker = $state(false);
+  /** The right-click menu, where it opened. */
+  let menu = $state<{ x: number; y: number } | null>(null);
+  let root = $state<HTMLDivElement | null>(null);
 
   const time = $derived(new Date(item.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
   const big = $derived(!item.reply && onlyEmoji(item.text));
   const parts = $derived(item.text ? segments(item.text, chat.nicks, chat.nick) : []);
   const myReaction = $derived(item.reactions.find((r) => r.mine)?.emoji ?? "");
+  /** This item opened a topic: shown as a line, not as a message. */
+  const opensTopic = $derived(item.conversation === `#${item.id}`);
+  const editable = $derived(item.mine && !item.deleted && !item.poll && !opensTopic && item.text !== null);
+
+  function openMenu(e: MouseEvent) {
+    // Nothing to offer on a deleted message, or on someone else's topic.
+    if (opensTopic ? item.deleted || !item.mine : item.deleted) return;
+    e.preventDefault();
+    // Inside the window, whichever corner it was opened in.
+    menu = { x: Math.min(e.clientX, window.innerWidth - 220), y: Math.min(e.clientY, window.innerHeight - 280) };
+  }
+
+  function closeMenu() {
+    menu = null;
+  }
+
+  async function copy() {
+    closeMenu();
+    // What is selected in this message, or else all of it.
+    const selection = window.getSelection();
+    const selected = selection && root?.contains(selection.anchorNode) ? selection.toString() : "";
+    try {
+      await copyText(selected || item.text || item.poll?.question || "");
+      app.toast("info", t("chat.copied"));
+    } catch (e) {
+      app.toast("error", userText(e));
+    }
+  }
+
+  function edit() {
+    closeMenu();
+    chat.editing = item;
+  }
 
   async function react(emoji: string) {
     reacting = false;
@@ -30,7 +66,8 @@
   }
 
   async function remove() {
-    if (!(await confirmDialog(t("chat.delete.confirm")))) return;
+    closeMenu();
+    if (!(await confirmDialog(opensTopic ? t("chat.topic.delete.confirm") : t("chat.delete.confirm")))) return;
     try {
       await api.chat.remove(item.id);
     } catch (e) {
@@ -39,12 +76,49 @@
   }
 
   function reply() {
+    closeMenu();
+    chat.editing = null;
     chat.replyTo = item;
     document.getElementById("chat-input")?.focus();
   }
 </script>
 
-<div class="msg" class:mine={item.mine} class:head id={`msg-${item.id}`} role="group" onmouseleave={() => { reacting = false; }}>
+<svelte:window
+  onclick={() => menu && closeMenu()}
+  onkeydown={(e) => e.key === "Escape" && menu && closeMenu()}
+  onblur={() => menu && closeMenu()}
+  oncontextmenu={(e) => menu && !(e.target instanceof Node && root?.contains(e.target)) && closeMenu()}
+/>
+
+{#if menu}
+  <div class="ctx" role="menu" tabindex="-1" style:left={`${menu.x}px`} style:top={`${menu.y}px`} onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+    {#if !opensTopic}
+      <div class="ctx-react">
+        {#each quickReactions as e (e)}
+          <button class:chosen={e === myReaction} onclick={() => { closeMenu(); void react(e); }}>{e}</button>
+        {/each}
+      </div>
+      <button role="menuitem" onclick={reply}>↩ {t("chat.reply")}</button>
+      <button role="menuitem" onclick={() => { closeMenu(); picker = true; }}>☺ {t("chat.react_more")}</button>
+      <button role="menuitem" onclick={copy}>⧉ {t("chat.copy")}</button>
+      {#if editable}<button role="menuitem" onclick={edit}>✎ {t("chat.edit")}</button>{/if}
+    {/if}
+    {#if item.mine && !item.deleted}
+      <button role="menuitem" class="danger" onclick={remove}>🗑 {opensTopic ? t("chat.topic.delete") : t("chat.delete")}</button>
+    {/if}
+  </div>
+{/if}
+
+{#if opensTopic}
+  <div class="topic-line" id={`msg-${item.id}`} role="note" bind:this={root} oncontextmenu={openMenu}>
+    {#if item.deleted}
+      {t("chat.topic.deleted")}
+    {:else}
+      🏷 {t("chat.topic.created", { nick: item.nick, name: item.topicName ?? "" })}
+    {/if}
+  </div>
+{:else}
+<div class="msg" class:mine={item.mine} class:head id={`msg-${item.id}`} role="group" bind:this={root} oncontextmenu={openMenu} onmouseleave={() => { reacting = false; }}>
   {#if head && !item.mine}
     <div class="nick" style:color={nickColor(item.from)}>{item.nick}</div>
   {/if}
@@ -63,12 +137,13 @@
       {:else}
         <span class="text">{#each parts as p, i (i)}{#if p.kind === "link"}<a href={p.text} onclick={(e) => { e.preventDefault(); void api.openUrl(linkTarget(p.text)).catch((err) => app.toast("error", userText(err))); }}>{p.text}</a>{:else if p.kind === "mention"}<span class="mention" class:me={p.me}>{p.text}</span>{:else}{p.text}{/if}{/each}</span>
       {/if}
-      <span class="time">{time}</span>
+      <span class="time">{#if item.edited}<span class="edited">{t("chat.edited")} · </span>{/if}{time}</span>
     </div>
     {#if !item.deleted}
       <div class="actions">
         <button title={t("chat.reply")} onclick={reply}>↩</button>
         <button title={t("chat.react")} onclick={() => (reacting = !reacting)}>☺</button>
+        {#if editable}<button title={t("chat.edit")} onclick={edit}>✎</button>{/if}
         {#if item.mine}<button title={t("chat.delete")} onclick={remove}>🗑</button>{/if}
       </div>
     {/if}
@@ -96,8 +171,62 @@
     </div>
   {/if}
 </div>
+{/if}
 
 <style>
+  .ctx {
+    position: fixed;
+    z-index: 100;
+    min-width: 200px;
+    display: flex;
+    flex-direction: column;
+    padding: 0.3rem;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: calc(var(--radius) * 0.8);
+    box-shadow: var(--shadow);
+  }
+  .ctx > button {
+    text-align: left;
+    background: transparent;
+    border: none;
+    padding: 0.4em 0.7em;
+    border-radius: 8px;
+    font-size: 0.88rem;
+  }
+  .ctx > button:hover {
+    background: var(--color-surface-alt);
+  }
+  .ctx > button.danger {
+    color: var(--color-danger);
+  }
+  .ctx-react {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.1rem 0.2rem 0.3rem;
+    margin-bottom: 0.2rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .ctx-react button {
+    background: transparent;
+    border: none;
+    padding: 0.15em 0.2em;
+    font-size: 1.1rem;
+    border-radius: 6px;
+  }
+  .ctx-react button:hover,
+  .ctx-react button.chosen {
+    background: var(--color-surface-alt);
+  }
+  .topic-line {
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    margin: 0.6rem 0.8rem 0.2rem;
+  }
+  .edited {
+    font-style: italic;
+  }
   .msg {
     position: relative;
     display: flex;

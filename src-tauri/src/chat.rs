@@ -126,15 +126,16 @@ pub async fn chat_snapshot(state: State<'_, Arc<AppState>>) -> Cmd<Option<ChatSn
 }
 
 #[tauri::command]
+/// `conversation`: `None` the public room, `#<id>` a topic, otherwise a peer id.
 pub async fn chat_send(
     state: State<'_, Arc<AppState>>,
-    to: Option<String>,
+    conversation: Option<String>,
     text: String,
     reply_to: Option<String>,
 ) -> Cmd<ItemView> {
     running(&state)
         .await?
-        .send_text(to, &text, reply_to)
+        .send_text(conversation, &text, reply_to)
         .map_err(|e| e.to_string())
 }
 
@@ -149,7 +150,7 @@ pub async fn chat_react(state: State<'_, Arc<AppState>>, target: String, emoji: 
 #[tauri::command]
 pub async fn chat_create_poll(
     state: State<'_, Arc<AppState>>,
-    to: Option<String>,
+    conversation: Option<String>,
     question: String,
     options: Vec<PollChoice>,
     kind: PollKind,
@@ -157,7 +158,7 @@ pub async fn chat_create_poll(
 ) -> Cmd<ItemView> {
     running(&state)
         .await?
-        .create_poll(to, &question, options, kind, open)
+        .create_poll(conversation, &question, options, kind, open)
         .map_err(|e| e.to_string())
 }
 
@@ -191,6 +192,22 @@ pub async fn chat_close_poll(state: State<'_, Arc<AppState>>, poll: String) -> C
     running(&state)
         .await?
         .close_poll(&poll)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn chat_edit(state: State<'_, Arc<AppState>>, target: String, text: String) -> Cmd<()> {
+    running(&state)
+        .await?
+        .edit(&target, &text)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn chat_create_topic(state: State<'_, Arc<AppState>>, name: String) -> Cmd<ItemView> {
+    running(&state)
+        .await?
+        .create_topic(&name)
         .map_err(|e| e.to_string())
 }
 

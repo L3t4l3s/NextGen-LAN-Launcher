@@ -18,6 +18,8 @@ pub const MAX_TEXT: usize = 2000;
 /// Longest nickname, in characters.
 pub const MAX_NICK: usize = 32;
 pub const MAX_QUESTION: usize = 300;
+/// Longest topic name, in characters.
+pub const MAX_TOPIC: usize = 40;
 pub const MAX_OPTION_TEXT: usize = 120;
 /// Options a poll may start with; open polls may grow to [`MAX_POLL_OPTIONS_TOTAL`].
 pub const MAX_POLL_OPTIONS: usize = 12;
@@ -62,6 +64,9 @@ pub struct Event {
     /// Private message to this peer; `None` is the public room.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
+    /// Public event in a topic: the id of the [`Body::Topic`] event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic: Option<String>,
     pub body: Body,
     /// The author's Ed25519 signature (hex) over everything else
     /// ([`super::crypto`]); empty only before signing.
@@ -125,6 +130,15 @@ pub enum Body {
     Delete {
         target: String,
     },
+    /// Only the author may edit a text message; the newest edit counts.
+    Edit {
+        target: String,
+        text: String,
+    },
+    /// Opens a topic: a public room of its own, for everyone.
+    Topic {
+        name: String,
+    },
     /// The body of a private event as it travels: one of the others,
     /// encrypted for the two participants (hex). Never folded into the state.
     Sealed {
@@ -138,8 +152,12 @@ impl Body {
     /// one itself.
     pub fn target(&self) -> Option<&str> {
         match self {
-            Body::Text { .. } | Body::Poll { .. } | Body::Sealed { .. } => None,
-            Body::React { target, .. } | Body::Delete { target } => Some(target),
+            Body::Text { .. } | Body::Poll { .. } | Body::Topic { .. } | Body::Sealed { .. } => {
+                None
+            }
+            Body::React { target, .. } | Body::Delete { target } | Body::Edit { target, .. } => {
+                Some(target)
+            }
             Body::PollOption { poll, .. } | Body::Vote { poll, .. } | Body::ClosePoll { poll } => {
                 Some(poll)
             }
@@ -210,6 +228,10 @@ impl Event {
                 .to
                 .as_deref()
                 .is_some_and(|t| !valid_peer_id(t) || t == self.from)
+            // Topics are public, and a topic is not inside another one.
+            || self.topic.as_deref().is_some_and(|t| {
+                !valid_event_id(t) || self.to.is_some() || matches!(self.body, Body::Topic { .. })
+            })
         {
             return false;
         }
@@ -237,13 +259,22 @@ impl Event {
             }
             Body::ClosePoll { poll } => valid_event_id(poll),
             Body::Delete { target } => valid_event_id(target),
+            Body::Edit { target, text } => valid_event_id(target) && within(text, MAX_TEXT),
+            Body::Topic { name } => self.to.is_none() && within(name, MAX_TOPIC),
             Body::Sealed { .. } => false,
         }
     }
 
     /// The conversation as seen from `me`: `None` for the public room, the
-    /// other person's id for a private one.
+    /// other person's id for a private one, `#<topic id>` for a topic (the
+    /// event opening a topic belongs to it).
     pub fn conversation(&self, me: &str) -> Option<String> {
+        if let Body::Topic { .. } = self.body {
+            return Some(format!("#{}", self.id));
+        }
+        if let Some(topic) = &self.topic {
+            return Some(format!("#{topic}"));
+        }
         let to = self.to.as_ref()?;
         Some(if self.from == me {
             to.clone()
@@ -337,11 +368,16 @@ pub struct ItemView {
     /// When this launcher first saw it, by its own clock: what "unread" and
     /// "new" are measured with, whatever the author's clock says.
     pub received: i64,
-    /// `None` is the public room, otherwise the other person's id.
+    /// `None` is the public room, `#<id>` a topic, otherwise the other
+    /// person's id.
     pub conversation: Option<String>,
     pub mine: bool,
     pub deleted: bool,
     pub text: Option<String>,
+    /// The text was changed after it was sent.
+    pub edited: bool,
+    /// Set on the event that opened a topic: its name.
+    pub topic_name: Option<String>,
     pub reply: Option<ReplyView>,
     pub reactions: Vec<ReactionView>,
     pub poll: Option<PollView>,
@@ -360,6 +396,18 @@ struct Item {
     reactions: HashMap<String, Reaction>,
     deleted: bool,
     poll: Option<PollState>,
+    /// The newest edit: (seq, text).
+    edit: Option<(u64, String)>,
+}
+
+impl Item {
+    /// The text as it reads now, edits included.
+    fn text(&self) -> Option<&str> {
+        match (&self.edit, &self.event.body) {
+            (Some((_, text)), _) | (None, Body::Text { text, .. }) => Some(text),
+            _ => None,
+        }
+    }
 }
 
 /// An option added to a poll: (event id, choice, nick, author time).
@@ -514,7 +562,9 @@ impl ChatState {
             || wire.id != plain.id
             || !plain.is_valid()
             || !self.concerns_me(&plain)
-            || plain.ts < self.floor
+            // A topic's opener may be older than what is kept; the topic
+            // still needs it (see `keep_topic_openers`).
+            || (plain.ts < self.floor && !matches!(plain.body, Body::Topic { .. }))
         {
             return None;
         }
@@ -540,7 +590,7 @@ impl ChatState {
         if self.ids.contains(&wire.id)
             || self.gone.contains_key(&wire.id)
             || !wire.envelope_is_valid()
-            || wire.ts < self.floor
+            || (wire.ts < self.floor && !matches!(wire.body, Body::Topic { .. }))
         {
             return false;
         }
@@ -568,10 +618,11 @@ impl ChatState {
                 .cmp(&b.plain.ts)
                 .then_with(|| a.plain.id.cmp(&b.plain.id))
         });
-        entries.drain(..entries.len() - limit);
+        let dropped: Vec<Entry> = entries.drain(..entries.len() - limit).collect();
         self.floor = entries
             .first()
             .map_or(self.floor, |e| e.plain.ts.max(self.floor));
+        let (entries, _) = keep_topic_openers(entries, dropped);
         self.refold(entries);
         true
     }
@@ -596,18 +647,27 @@ impl ChatState {
             *at = (*at).min(now);
         }
         self.gone.retain(|_, at| now - *at < keep);
-        if !self.events.iter().any(|e| now - e.born >= keep) {
+        // A topic's opener stays while anything in the topic does (see
+        // `keep_topic_openers`); keeping it is not a change.
+        let used: HashSet<String> = self
+            .events
+            .iter()
+            .filter(|e| now - e.born < keep)
+            .filter_map(|e| e.plain.topic.clone())
+            .collect();
+        let goes = |e: &Entry| {
+            now - e.born >= keep
+                && !(matches!(e.plain.body, Body::Topic { .. }) && used.contains(&e.plain.id))
+        };
+        if !self.events.iter().any(goes) {
             return false;
         }
-        let mut entries = std::mem::take(&mut self.events);
-        entries.retain(|e| {
-            let keep_it = now - e.born < keep;
-            if !keep_it {
-                self.gone.insert(e.plain.id.clone(), now);
-            }
-            keep_it
-        });
-        self.refold(entries);
+        let (dropped, kept): (Vec<Entry>, Vec<Entry>) =
+            std::mem::take(&mut self.events).into_iter().partition(goes);
+        for e in &dropped {
+            self.gone.insert(e.plain.id.clone(), now);
+        }
+        self.refold(kept);
         true
     }
 
@@ -656,6 +716,7 @@ impl ChatState {
                     reactions: HashMap::new(),
                     deleted: false,
                     poll,
+                    edit: None,
                 },
             );
             changed.push(id.clone());
@@ -694,6 +755,16 @@ impl ChatState {
                 item.deleted = true;
                 changed.extend(self.replies.get(&target).cloned().unwrap_or_default());
             }
+            Body::Edit { text, .. } => {
+                let is_text = matches!(item.event.body, Body::Text { .. });
+                let newer = item.edit.as_ref().is_none_or(|(seq, _)| *seq < event.seq);
+                if !author || !is_text || !newer {
+                    return;
+                }
+                item.edit = Some((event.seq, text));
+                // Replies quote it.
+                changed.extend(self.replies.get(&target).cloned().unwrap_or_default());
+            }
             Body::PollOption { choice, .. } => {
                 let open = matches!(item.event.body, Body::Poll { open: true, .. });
                 let Some(poll) = item.poll.as_mut() else {
@@ -727,7 +798,7 @@ impl ChatState {
                 }
                 poll.closed = Some(poll.closed.map_or(event.ts, |t| t.min(event.ts)));
             }
-            Body::Text { .. } | Body::Poll { .. } | Body::Sealed { .. } => {}
+            Body::Text { .. } | Body::Poll { .. } | Body::Topic { .. } | Body::Sealed { .. } => {}
         }
         changed.push(target);
     }
@@ -739,6 +810,20 @@ impl ChatState {
 
     pub fn item_author(&self, id: &str) -> Option<&str> {
         self.items.get(id).map(|i| i.event.from.as_str())
+    }
+
+    /// `id` opened a topic that is still there.
+    pub fn is_topic(&self, id: &str) -> bool {
+        self.items
+            .get(id)
+            .is_some_and(|i| matches!(i.event.body, Body::Topic { .. }) && !i.deleted)
+    }
+
+    /// `id` is a text message (one that can be edited).
+    pub fn is_text(&self, id: &str) -> bool {
+        self.items
+            .get(id)
+            .is_some_and(|i| matches!(i.event.body, Body::Text { .. }) && !i.deleted)
     }
 
     pub fn is_deleted(&self, id: &str) -> bool {
@@ -766,7 +851,7 @@ impl ChatState {
                 Some(target) => ReplyView {
                     id: r.clone(),
                     nick: Some(target.event.nick.clone()),
-                    text: (!target.deleted).then(|| snippet(&target.event.body)),
+                    text: (!target.deleted).then(|| snippet(target)),
                     deleted: target.deleted,
                 },
                 None => ReplyView {
@@ -778,8 +863,13 @@ impl ChatState {
             }),
             _ => None,
         };
-        let text = match &e.body {
-            Body::Text { text, .. } if !item.deleted => Some(text.clone()),
+        let text = if item.deleted {
+            None
+        } else {
+            item.text().map(str::to_string)
+        };
+        let topic_name = match &e.body {
+            Body::Topic { name } if !item.deleted => Some(name.clone()),
             _ => None,
         };
         let poll = match (&e.body, &item.poll) {
@@ -809,6 +899,8 @@ impl ChatState {
             mine: e.from == self.me,
             deleted: item.deleted,
             text,
+            edited: item.edit.is_some() && !item.deleted,
+            topic_name,
             reply,
             reactions,
             poll,
@@ -842,7 +934,8 @@ impl ChatState {
         since: i64,
         all: bool,
     ) -> Vec<Stored> {
-        self.events
+        let sending: Vec<Stored> = self
+            .events
             .iter()
             .filter(|e| {
                 (all || e.plain.visible_to(peer))
@@ -850,8 +943,47 @@ impl ChatState {
                     && !have.contains(&e.plain.id)
             })
             .map(Entry::stored)
-            .collect()
+            .collect();
+        self.with_topic_openers(sending, have)
     }
+
+    /// Put in front the openers of topics these events are in, should the
+    /// peer lack them: they may be older than what it asked for.
+    fn with_topic_openers(&self, mut sending: Vec<Stored>, have: &HashSet<String>) -> Vec<Stored> {
+        let ids: HashSet<&str> = sending.iter().map(|s| s.event.id.as_str()).collect();
+        let topics: HashSet<&str> = sending
+            .iter()
+            .filter_map(|s| s.event.topic.as_deref())
+            .collect();
+        let mut out: Vec<Stored> = self
+            .events
+            .iter()
+            .filter(|e| {
+                topics.contains(e.plain.id.as_str())
+                    && !have.contains(&e.plain.id)
+                    && !ids.contains(e.plain.id.as_str())
+            })
+            .map(Entry::stored)
+            .collect();
+        out.append(&mut sending);
+        out
+    }
+}
+
+/// Keep the event that opened a topic as long as anything in that topic is
+/// kept: without it the topic has no name and cannot be written to.
+/// Returns (kept, really dropped).
+fn keep_topic_openers(mut kept: Vec<Entry>, dropped: Vec<Entry>) -> (Vec<Entry>, Vec<Entry>) {
+    let used: HashSet<String> = kept.iter().filter_map(|e| e.plain.topic.clone()).collect();
+    let mut gone = Vec::new();
+    for e in dropped {
+        if matches!(e.plain.body, Body::Topic { .. }) && used.contains(&e.plain.id) {
+            kept.push(e);
+        } else {
+            gone.push(e);
+        }
+    }
+    (kept, gone)
 }
 
 fn option_ids(item: &Item, poll: &PollState) -> Vec<String> {
@@ -964,11 +1096,11 @@ fn reaction_views(me: &str, reactions: &HashMap<String, Reaction>) -> Vec<Reacti
     out.into_iter().map(|(_, v)| v).collect()
 }
 
-/// A short quote of a message for a reply.
-fn snippet(body: &Body) -> String {
-    let text = match body {
-        Body::Text { text, .. } => text.as_str(),
-        Body::Poll { question, .. } => question.as_str(),
+/// A short quote of a message for a reply, edits included.
+fn snippet(item: &Item) -> String {
+    let text = match (item.text(), &item.event.body) {
+        (Some(text), _) => text,
+        (None, Body::Poll { question, .. }) => question.as_str(),
         _ => "",
     };
     let one_line: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -993,6 +1125,7 @@ mod tests {
             ts: seq as i64,
             to: to.map(String::from),
             body,
+            topic: None,
             sig: String::new(),
         }
     }
@@ -1407,6 +1540,143 @@ mod tests {
         s.expire(200, 60);
         assert!(!s.gone().contains_key("a:1000"));
         assert!(s.gone().contains_key("b:2"), "expired in this round");
+    }
+
+    #[test]
+    fn only_the_author_edits_and_the_newest_edit_counts() {
+        let mut s = ChatState::new("me");
+        s.insert(ev("a", 1, None, text("Pizza um 8")), 1);
+        let reply = Body::Text {
+            text: "ok".into(),
+            reply_to: Some("a:1".into()),
+        };
+        s.insert(ev("b", 2, None, reply), 2);
+        let edit = |from: &str, seq, t: &str| {
+            ev(
+                from,
+                seq,
+                None,
+                Body::Edit {
+                    target: "a:1".into(),
+                    text: t.into(),
+                },
+            )
+        };
+        assert_eq!(
+            s.insert(edit("b", 3, "hacked"), 3),
+            Some(vec![]),
+            "taken in, but it changes nothing"
+        );
+        assert_eq!(s.view("a:1").unwrap().text.as_deref(), Some("Pizza um 8"));
+        let changed = s.insert(edit("a", 5, "Pizza um 9"), 5).unwrap();
+        assert_eq!(
+            changed,
+            vec!["a:1".to_string(), "b:2".to_string()],
+            "the reply quotes it"
+        );
+        s.insert(edit("a", 4, "older edit"), 6);
+        let v = s.view("a:1").unwrap();
+        assert_eq!(v.text.as_deref(), Some("Pizza um 9"));
+        assert!(v.edited);
+        assert_eq!(
+            s.view("b:2").unwrap().reply.unwrap().text.as_deref(),
+            Some("Pizza um 9")
+        );
+    }
+
+    #[test]
+    fn topics_are_public_rooms_of_their_own() {
+        let mut s = ChatState::new("me");
+        s.insert(
+            ev(
+                "a",
+                1,
+                None,
+                Body::Topic {
+                    name: "CS-Turnier".into(),
+                },
+            ),
+            1,
+        );
+        let topic = s.view("a:1").unwrap();
+        assert_eq!(topic.conversation.as_deref(), Some("#a:1"));
+        assert_eq!(topic.topic_name.as_deref(), Some("CS-Turnier"));
+        assert!(s.is_topic("a:1"));
+        let mut msg = ev("b", 2, None, text("wer spielt mit?"));
+        msg.topic = Some("a:1".into());
+        s.insert(msg, 2);
+        assert_eq!(s.view("b:2").unwrap().conversation.as_deref(), Some("#a:1"));
+        // A reaction claiming the public room does not reach it.
+        s.insert(
+            ev(
+                "c",
+                3,
+                None,
+                Body::React {
+                    target: "b:2".into(),
+                    emoji: "👍".into(),
+                },
+            ),
+            3,
+        );
+        assert!(s.view("b:2").unwrap().reactions.is_empty());
+        // Topics are never private, and never nested.
+        let mut private = ev("b", 4, Some("me"), text("x"));
+        private.topic = Some("a:1".into());
+        assert!(!private.is_valid());
+        let mut nested = ev("b", 5, None, Body::Topic { name: "x".into() });
+        nested.topic = Some("a:1".into());
+        assert!(!nested.is_valid());
+        assert!(!ev(
+            "b",
+            6,
+            None,
+            Body::Topic {
+                name: "x".repeat(MAX_TOPIC + 1)
+            }
+        )
+        .is_valid());
+    }
+
+    #[test]
+    fn a_topic_keeps_its_opener_while_anything_in_it_is_kept() {
+        let opener = || ev("a", 1, None, Body::Topic { name: "LAN".into() });
+        let in_topic = |from: &str, seq| {
+            let mut e = ev(from, seq, None, text("x"));
+            e.topic = Some("a:1".into());
+            e
+        };
+        let mut s = ChatState::new("me");
+        s.insert(opener(), 1);
+        s.insert(ev("b", 2, None, text("public")), 2);
+        s.insert(in_topic("c", 3), 3);
+        assert!(s.trim(1));
+        assert!(s.is_topic("a:1"), "trimmed with the old public message");
+        assert!(s.view("b:2").is_none());
+        // A late joiner asking only for the newest gets the opener first.
+        let sent: Vec<String> = s
+            .missing_for("x", &HashSet::new(), 3, false)
+            .into_iter()
+            .map(|e| e.event.id)
+            .collect();
+        assert_eq!(sent, vec!["a:1", "c:3"]);
+        // ... and takes it in although it is older than its own floor.
+        let mut late = ChatState::new("x");
+        late.insert(ev("d", 9, None, text("y")), 9);
+        late.insert(in_topic("e", 10), 10);
+        assert!(late.trim(1));
+        assert!(late.insert(opener(), 11).is_some());
+        assert!(late.is_topic("a:1"));
+        // Expiry keeps it as long as the topic has messages, then lets it go.
+        let mut e = ChatState::new("me");
+        e.insert(opener(), 1);
+        e.insert(in_topic("c", 3), 100);
+        assert!(!e.expire(100, 60), "keeping the opener is no change");
+        assert!(e.is_topic("a:1"));
+        assert!(!e.gone().contains_key("a:1"));
+        assert!(e.expire(200, 60));
+        assert!(!e.is_topic("a:1"));
+        assert!(e.gone().contains_key("a:1"));
     }
 
     #[test]

@@ -3,7 +3,7 @@ import { isUnread, linkTarget, mentions, onlyEmoji, percent, rings, rows, segmen
 import type { ChatItem } from "./types";
 
 function item(id: string, from: string, ts: number, extra: Partial<ChatItem> = {}): ChatItem {
-  return { id, from, nick: from, ts, received: ts, conversation: null, mine: false, deleted: false, text: "x", reply: null, reactions: [], poll: null, ...extra };
+  return { id, from, nick: from, ts, received: ts, conversation: null, mine: false, deleted: false, text: "x", edited: false, topicName: null, reply: null, reactions: [], poll: null, ...extra };
 }
 
 describe("segments", () => {
@@ -44,6 +44,11 @@ describe("segments", () => {
 
 describe("rows", () => {
   const day = (ts: number) => (ts < 1000 ? "day1" : "day2");
+
+  it("names the author again after the line that opened a topic", () => {
+    const r = rows([item("1", "a", 1, { conversation: "#1", topicName: "T" }), item("2", "a", 2, { conversation: "#1" })], () => "d");
+    expect(r[1].head).toBe(true);
+  });
 
   it("groups runs of one person and starts a new group on a new day", () => {
     const r = rows([item("1", "a", 1), item("2", "a", 2), item("3", "b", 3), item("4", "b", 1001)], day);

@@ -1101,7 +1101,11 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
     let managed = transport
         .as_ref()
         .is_some_and(|t| t.kind() == lanlauncher_core::transport::TransportKind::Resilio);
-    let chat_on = state.chat.read().await.is_some();
+    let chat = state.chat.read().await.clone();
+    let chat_on = chat.is_some();
+    // Beacons of other launchers arrive: whatever the rules say, the chat is
+    // let in. A missing rule only matters while nothing has come through.
+    let chat_heard = chat.as_ref().is_some_and(|c| c.heard_from_others());
     // A Python start and a D-Bus round trip; alongside the engine query too.
     let firewalld = (cfg!(target_os = "linux") && (managed || chat_on)).then(|| {
         checks.push("firewalld".into());
@@ -1154,7 +1158,7 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
         let found = handle.await.unwrap_or_default();
         problems.extend(diagnostics::check_network_profiles(&found));
     }
-    if chat_on && cfg!(target_os = "windows") {
+    if chat_on && !chat_heard && cfg!(target_os = "windows") {
         checks.push("chat_firewall".into());
         if crate::fixes::firewall_rule_present(diagnostics::FIREWALL_RULE_CHAT).await == Some(false)
         {
@@ -1163,7 +1167,7 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
     }
     if let Some(handle) = firewalld {
         let zones = handle.await.ok().flatten();
-        if let (true, Some(zones)) = (chat_on, &zones) {
+        if let (true, Some(zones)) = (chat_on && !chat_heard, &zones) {
             problems.extend(diagnostics::check_firewalld_chat(zones));
         }
         if let (true, Some(zones)) = (managed, zones) {

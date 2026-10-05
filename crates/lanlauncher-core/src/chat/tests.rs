@@ -28,8 +28,24 @@ impl Lan {
     }
 
     async fn start_as(&self, i: usize, nick: &str, relay: bool) -> Chat {
+        self.start_with(i, nick, relay, None).await
+    }
+
+    /// One whose firewall lets nobody connect: it names a port where
+    /// nothing listens.
+    async fn start_unreachable(&self, i: usize, nick: &str) -> Chat {
+        let closed = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        self.start_with(i, nick, false, Some(closed)).await
+    }
+
+    async fn start_with(&self, i: usize, nick: &str, relay: bool, advertise: Option<u16>) -> Chat {
         let mut config = ChatConfig::new(self.dirs[i].path().to_path_buf(), nick);
         config.relay = relay;
+        config.advertise_port = advertise;
         config.port = self.ports[i];
         config.bind = IpAddr::V4(Ipv4Addr::LOCALHOST);
         config.beacon_every = Duration::from_millis(100);
@@ -141,6 +157,29 @@ async fn a_late_arrival_reads_the_history_and_gets_what_was_sent_to_it() {
 }
 
 #[tokio::test]
+async fn one_launcher_reaching_the_other_is_enough() {
+    let lan = Lan::new(2);
+    let a = lan.start(0, "Alice").await;
+    a.send_text(None, "before you came", None).unwrap();
+    // Bob's firewall lets nobody in; his beacons still reach Alice.
+    let b = lan.start_unreachable(1, "Bob").await;
+    until("catch-up over Bob's own connection", || {
+        texts(&b) == ["before you came"]
+    })
+    .await;
+    b.send_text(None, "hi", None).unwrap();
+    until("Bob to Alice", || texts(&a).len() == 2).await;
+    a.send_text(Some(b.me()), "psst", None).unwrap();
+    until("Alice to Bob, back the way Bob came", || {
+        texts(&b).len() == 3
+    })
+    .await;
+    assert!(a.heard_from_others() && b.heard_from_others());
+    a.stop().await;
+    b.stop().await;
+}
+
+#[tokio::test]
 async fn reactions_votes_and_new_names_travel() {
     let lan = Lan::new(2);
     let a = lan.start(0, "Alice").await;
@@ -208,6 +247,7 @@ fn large_histories_are_split_into_frames_of_bounded_size() {
                 text: "x".repeat(model::MAX_TEXT),
                 reply_to: None,
             },
+            topic: None,
             sig: String::new(),
         })
         .map(|event| Stored {
@@ -369,6 +409,7 @@ async fn messages_from_the_last_lan_are_gone_at_start() {
                 text: text.into(),
                 reply_to: None,
             },
+            topic: None,
             sig: String::new(),
         };
         Stored {
@@ -423,6 +464,38 @@ async fn caught_up_history_keeps_its_age() {
     );
     let on_disk = store::History::open(lan.dirs[1].path()).1;
     assert_eq!(on_disk[0].born(), born);
+    a.stop().await;
+    b.stop().await;
+}
+
+#[tokio::test]
+async fn topics_and_edits_travel() {
+    let lan = Lan::new(2);
+    let a = lan.start(0, "Alice").await;
+    let b = lan.start(1, "Bob").await;
+    until("discovery", || online(&b) == ["Alice"]).await;
+    let topic = a.create_topic("  CS   Turnier ").unwrap();
+    assert_eq!(topic.topic_name.as_deref(), Some("CS Turnier"));
+    let conversation = topic.conversation.clone().unwrap();
+    let msg = a
+        .send_text(Some(conversation.clone()), "20 Uhr", None)
+        .unwrap();
+    assert_eq!(msg.conversation.as_deref(), Some(conversation.as_str()));
+    a.edit(&msg.id, "21 Uhr").unwrap();
+    until("topic message, edited", || {
+        b.snapshot().items.iter().any(|i| {
+            i.conversation.as_deref() == Some(conversation.as_str())
+                && i.text.as_deref() == Some("21 Uhr")
+                && i.edited
+        })
+    })
+    .await;
+    assert_eq!(b.edit(&msg.id, "nope"), Err(ERR_NOT_ALLOWED));
+    // A topic that does not exist cannot be written to.
+    assert_eq!(
+        a.send_text(Some("#nobody:1".into()), "x", None).map(|_| ()),
+        Err(ERR_UNKNOWN_TARGET)
+    );
     a.stop().await;
     b.stop().await;
 }

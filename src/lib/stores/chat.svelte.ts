@@ -2,9 +2,9 @@
 // this keeps the copy the panel shows, what was read, and plays the sounds.
 
 import { api, listen } from "$lib/api";
-import { byTime, convKey, isUnread, mentions, rings } from "$lib/chat";
+import { byTime, convKey, isTopic, isUnread, mentions, rings } from "$lib/chat";
 import { playSound, unlockAudio } from "$lib/chat-sound";
-import { userText } from "$lib/i18n";
+import { t, userText } from "$lib/i18n";
 import { app } from "$lib/stores/app.svelte";
 import type { ChatItem, ChatPeer, ChatSnapshot, ChatUpdate } from "$lib/types";
 
@@ -31,8 +31,10 @@ function store(key: string, value: unknown) {
 }
 
 export interface Conversation {
-  /** null: the public room. */
+  /** null: the public room; "#<id>" a topic; otherwise a peer id. */
   id: string | null;
+  kind: "public" | "topic" | "private";
+  /** Shown on the tab: a topic's name, a person's nickname. */
   nick: string;
   online: boolean;
   unread: number;
@@ -56,6 +58,10 @@ class ChatStore {
   /** First start of the chat here: history from before it is not "unread". */
   private since = load<number | null>(SINCE_KEY, null) ?? Date.now();
   replyTo = $state<ChatItem | null>(null);
+  /** One's own message being edited in the input. */
+  editing = $state<ChatItem | null>(null);
+  /** The list of people, opened from the bar at the right. */
+  showPeople = $state(false);
   /** Private conversations opened in this session, even before a word was said. */
   private opened = $state<string[]>([]);
   /** Conversations closed by hand; a new message brings them back. */
@@ -108,6 +114,7 @@ class ChatStore {
     const next: Record<string, ChatItem> = {};
     for (const i of snap.items) next[i.id] = i;
     this.items = next;
+    this.leaveDeletedTopic();
     // A first start has read nothing and missed nothing: the history that
     // arrives is the room's past, not a pile of unread messages.
     store(SINCE_KEY, this.since);
@@ -138,12 +145,22 @@ class ChatStore {
       // Only what is new for everyone rings, not history caught up on.
       if (!rings(item, Date.now())) continue;
       if (this.isOnScreen(item.conversation) || this.isMuted(item.conversation)) continue;
-      const direct = item.conversation !== null || mentions(item.text, this.nick);
+      const direct = (item.conversation !== null && !isTopic(item.conversation)) || mentions(item.text, this.nick);
       sound = direct ? "direct" : (sound ?? "message");
     }
     this.items = next;
+    this.leaveDeletedTopic();
     this.markRead();
     if (sound && app.settings?.chatSound) playSound(sound);
+  }
+
+  /** A topic deleted while open leaves nothing to show: back to the room. */
+  private leaveDeletedTopic() {
+    const active = this.active;
+    if (active !== null && isTopic(active) && this.items[active.slice(1)]?.deleted) {
+      this.opened = this.opened.filter((c) => c !== active);
+      this.show(null);
+    }
   }
 
   /** The conversation is visible right now, so its new messages are read. */
@@ -195,11 +212,44 @@ class ChatStore {
     this.markRead();
   }
 
+  /** The speech bubble in the bar: open or close the chat. */
+  toggleOpen() {
+    if (this.open) this.showPeople = false;
+    this.setOpen(!this.open);
+  }
+
+  /** The people icon in the bar: show or hide the list, opening the chat
+   *  for it when needed. */
+  togglePeople() {
+    if (!this.open) {
+      this.setOpen(true);
+      this.showPeople = true;
+    } else {
+      this.showPeople = !this.showPeople;
+    }
+  }
+
+  async createTopic(name: string) {
+    const item = await api.chat.createTopic(name);
+    this.items = { ...this.items, [item.id]: item };
+    this.show(item.conversation);
+  }
+
+  /** What a conversation is called in tabs, headers and placeholders. */
+  conversationName(conversation: string | null): string {
+    if (conversation === null) return t("chat.public");
+    if (isTopic(conversation)) return this.items[conversation.slice(1)]?.topicName ?? "…";
+    return this.nickOf(conversation);
+  }
+
   show(conversation: string | null) {
     if (conversation && !this.opened.includes(conversation)) this.opened = [...this.opened, conversation];
     if (conversation) this.hidden = this.hidden.filter((c) => c !== conversation);
     const switching = this.active !== conversation || !this.open;
-    if (this.active !== conversation) this.replyTo = null;
+    if (this.active !== conversation) {
+      this.replyTo = null;
+      this.editing = null;
+    }
     this.active = conversation;
     if (switching) {
       this.atBottom = true;
@@ -263,24 +313,40 @@ class ChatStore {
     return [...new Set([this.nick, ...this.people.map((p) => p.nick)])];
   }
 
-  /** The public room, then private conversations: opened ones, and those
-   *  with messages unless closed and nothing new arrived since. */
+  /** The public room, then topics, then private conversations: opened
+   *  ones, and those with messages unless closed and nothing new arrived
+   *  since. A deleted topic goes. */
   get conversations(): Conversation[] {
     const ids = new Set<string>(this.opened);
+    const deletedTopics = new Set(
+      Object.values(this.items)
+        .filter((i) => i.deleted && i.conversation === `#${i.id}`)
+        .map((i) => i.conversation),
+    );
     for (const i of Object.values(this.items)) {
-      if (i.conversation === null) continue;
+      if (i.conversation === null || deletedTopics.has(i.conversation)) continue;
       const hiddenAndRead = this.hidden.includes(i.conversation) && i.received <= (this.readUpTo[i.conversation] ?? 0);
       if (!hiddenAndRead) ids.add(i.conversation);
     }
-    const privates = [...ids].map((id) => ({
-      id,
-      nick: this.nickOf(id),
-      online: this.peers.some((p) => p.id === id && p.online),
-      unread: this.unread(id),
-      muted: this.isMuted(id),
-    }));
-    privates.sort((a, b) => a.nick.localeCompare(b.nick));
-    return [{ id: null, nick: "", online: true, unread: this.unread(null), muted: this.isMuted(null) }, ...privates];
+    const others: Conversation[] = [...ids]
+      .filter((id) => !deletedTopics.has(id))
+      .map((id) => ({
+        id,
+        kind: isTopic(id) ? "topic" : "private",
+        nick: this.conversationName(id),
+        online: isTopic(id) || this.peers.some((p) => p.id === id && p.online),
+        unread: this.unread(id),
+        muted: this.isMuted(id),
+      }));
+    // Topics in the order they were opened, people by name.
+    const opened = (c: Conversation) => (c.id ? (this.items[c.id.slice(1)]?.ts ?? 0) : 0);
+    const topics = others.filter((c) => c.kind === "topic").sort((a, b) => opened(a) - opened(b));
+    const privates = others.filter((c) => c.kind === "private").sort((a, b) => a.nick.localeCompare(b.nick));
+    return [
+      { id: null, kind: "public", nick: t("chat.public"), online: true, unread: this.unread(null), muted: this.isMuted(null) },
+      ...topics,
+      ...privates,
+    ];
   }
 }
 

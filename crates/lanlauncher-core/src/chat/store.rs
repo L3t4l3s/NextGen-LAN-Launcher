@@ -146,6 +146,7 @@ mod tests {
                     text: "hi".into(),
                     reply_to: None,
                 },
+                topic: None,
                 sig: "00".into(),
             },
             born: None,

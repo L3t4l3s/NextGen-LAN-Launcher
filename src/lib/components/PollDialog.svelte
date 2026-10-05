@@ -2,6 +2,7 @@
   import { api, coverSrc } from "$lib/api";
   import { t, userText } from "$lib/i18n";
   import { app } from "$lib/stores/app.svelte";
+  import { isTopic } from "$lib/chat";
   import { chat } from "$lib/stores/chat.svelte";
   import type { PollKind } from "$lib/types";
 
@@ -20,6 +21,9 @@
   let question = $state("");
   let options = $state<string[]>(["", ""]);
   let games = $state<string[]>([]);
+  /** Games that are not in the library, typed in by hand. */
+  let extraGames = $state<string[]>([]);
+  let extraGame = $state("");
   let gameFilter = $state("");
   let multiple = $state(false);
   let open = $state(false);
@@ -43,12 +47,22 @@
   }
 
   function toggleGame(id: string) {
-    games = games.includes(id) ? games.filter((g) => g !== id) : games.length < MAX ? [...games, id] : games;
+    games = games.includes(id) ? games.filter((g) => g !== id) : games.length + extraGames.length < MAX ? [...games, id] : games;
+  }
+
+  function addExtraGame() {
+    const name = extraGame.trim();
+    if (!name || games.length + extraGames.length >= MAX) return;
+    if (!extraGames.some((g) => g.toLowerCase() === name.toLowerCase())) extraGames = [...extraGames, name];
+    extraGame = "";
   }
 
   const choices = $derived(
     preset === "games"
-      ? games.map((id) => ({ text: app.games.find((g) => g.id === id)?.title ?? id, game: id }))
+      ? [
+          ...games.map((id): { text: string; game: string | null } => ({ text: app.games.find((g) => g.id === id)?.title ?? id, game: id })),
+          ...extraGames.map((text) => ({ text, game: null })),
+        ]
       : options.map((o) => o.trim()).filter(Boolean).map((text) => ({ text, game: null })),
   );
   const valid = $derived(question.trim().length > 0 && choices.length >= 2 && new Set(choices.map((c) => c.text.toLowerCase())).size === choices.length);
@@ -71,7 +85,13 @@
 <div class="modal-backdrop" role="presentation" onclick={onclose} onkeydown={(e) => e.key === "Escape" && onclose()}>
   <div class="modal card" role="dialog" tabindex="-1" aria-labelledby="poll-title" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
     <h2 id="poll-title">{t("chat.poll.create")}</h2>
-    <p class="hint">{chat.active ? t("chat.poll.private_to", { nick: chat.nickOf(chat.active) }) : t("chat.poll.public")}</p>
+    <p class="hint">
+      {chat.active === null
+        ? t("chat.poll.public")
+        : isTopic(chat.active)
+          ? t("chat.poll.topic", { name: chat.conversationName(chat.active) })
+          : t("chat.poll.private_to", { nick: chat.conversationName(chat.active) })}
+    </p>
 
     <div class="presets">
       {#each presets as p (p.id)}
@@ -88,7 +108,7 @@
 
     {#if preset === "games"}
       <div class="row games-head">
-        <label for="poll-games" class="grow">{t("chat.poll.games", { count: games.length, max: MAX })}</label>
+        <label for="poll-games" class="grow">{t("chat.poll.games", { count: games.length + extraGames.length, max: MAX })}</label>
         <input id="poll-games" class="filter" bind:value={gameFilter} placeholder={t("library.search")} />
       </div>
       <ul class="games">
@@ -105,6 +125,18 @@
           <li class="muted">{t("library.nothing_found")}</li>
         {/each}
       </ul>
+      <span class="label">{t("chat.poll.extra_games")}</span>
+      {#if extraGames.length}
+        <div class="extras">
+          {#each extraGames as g (g)}
+            <span class="extra">🎮 {g}<button class="ghost" title={t("chat.poll.remove_option")} onclick={() => (extraGames = extraGames.filter((x) => x !== g))}>✕</button></span>
+          {/each}
+        </div>
+      {/if}
+      <form class="row extra-form" onsubmit={(e) => { e.preventDefault(); addExtraGame(); }}>
+        <input class="grow" bind:value={extraGame} maxlength="120" placeholder={t("chat.poll.extra_placeholder")} aria-label={t("chat.poll.extra_games")} />
+        <button type="submit" class="ghost" disabled={!extraGame.trim() || games.length + extraGames.length >= MAX}>+ {t("chat.poll.add_option")}</button>
+      </form>
     {:else}
       <span class="label">{t("chat.poll.options")}</span>
       <div class="options">
@@ -224,6 +256,28 @@
   }
   .games li.muted {
     padding: 0.5em 0.7em;
+  }
+  .extras {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-bottom: 0.4rem;
+  }
+  .extra {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    background: var(--color-surface-alt);
+    border-radius: 999px;
+    padding: 0.1em 0.2em 0.1em 0.7em;
+    font-size: 0.85rem;
+  }
+  .extra button {
+    padding: 0.1em 0.4em;
+    font-size: 0.7rem;
+  }
+  .extra-form {
+    flex-wrap: nowrap;
   }
   .check-line {
     display: flex;

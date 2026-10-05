@@ -20,7 +20,7 @@ event and with clear instructions whenever something does not work.
 | Unclear row of icons at the top | Labelled tabs: Library · Downloads · LAN · Diagnostics, plus Settings on the right. |
 | Only one game folder | Several library folders (e.g. different SSDs); a new game goes to the default folder, or to the one with the most free space when the default is too small. |
 | Windows only | Launch profiles (`manifests/*.toml`) plus Wine/CrossOver/Proton on macOS and Linux; Windows keeps running `game_start.cmd`. |
-| Chat only through Discord, TeamSpeak or shouting across the hall | A **LAN chat** on the right of the window, between all launchers on the network whatever the OS, without a server: who is online, private messages, replies, emoji reactions, polls (single/multiple choice, game vote from the library, yes/no/maybe, open polls), sounds that can be muted. `crates/lanlauncher-core/src/chat/` |
+| Chat only through Discord, TeamSpeak or shouting across the hall | A **LAN chat** on the right of the window, between all launchers on the network whatever the OS, without a server: who is online, private messages, topics, replies, edits, emoji reactions, polls (single/multiple choice, game vote from the library, yes/no/maybe, open polls), sounds that can be muted. `crates/lanlauncher-core/src/chat/` |
 | Administrator rights for everything | The launcher runs as a normal user. UAC appears only for a game's one-time setup (which also registers the firewall rules its start script would add), for the few start scripts that write HKLM, for server scripts and for repairs. |
 
 Design decision from our planning: every game has **one** primary button (Install / Downloading… /
@@ -181,8 +181,11 @@ again.
 - **LAN chat on a real LAN — untested, check at the LAN:** the chat runs between launchers with
   UDP beacons and TCP on port 41950 (see `docs/ARCHITECTURE.md`). Tested here with several chats
   on one machine (`chat::tests`) and with two real launcher processes under Xvfb (message and
-  reaction arrived). Not tested: Windows Firewall (the first start may raise Windows' own prompt;
-  diagnostics offers `chat.firewall_missing` with a one-click rule otherwise), Wi-Fi access points
+  reaction arrived). Catching up when only one side lets connections in (answers on the same
+  connection) is tested here with a launcher that names a closed port, not with a real firewall.
+  Not tested: Windows Firewall (the first start may raise Windows' own prompt;
+  diagnostics offers `chat.firewall_missing` with a one-click rule while no other launcher has
+  come through), Wi-Fi access points
   that drop broadcasts between clients, machines with several network cards, and a few dozen
   launchers at once, and `nll-chat-relay` on a real server (tested here only in `chat::tests`).
   The release step that builds it is untested too. Every event is signed with the sender's key (the peer id is the public key)

@@ -5,6 +5,9 @@ import type { ChatItem } from "./types";
 /** Key of a conversation for maps: "" is the public room. */
 export const convKey = (conversation: string | null): string => conversation ?? "";
 
+/** Topics are public rooms of their own, keyed "#<id of the event that opened it>". */
+export const isTopic = (conversation: string | null): boolean => !!conversation?.startsWith("#");
+
 export type Segment = { kind: "text"; text: string } | { kind: "link"; text: string } | { kind: "mention"; text: string; me: boolean };
 
 const LINK = /\bhttps?:\/\/[^\s<>"]+[^\s<>".,;:!?)\]}'»“]/gi;
@@ -106,7 +109,9 @@ export function rows(items: ChatItem[], dayLabel: (ts: number) => string): Row[]
   for (const item of items) {
     const day = dayLabel(item.ts);
     const newDay = !prev || dayLabel(prev.ts) !== day;
-    const head = newDay || !prev || prev.from !== item.from || item.ts - prev.ts > RUN_MS || !!item.poll || !!prev.poll;
+    // A poll, and the line that opens a topic, each stand on their own.
+    const opener = (i: ChatItem) => i.conversation === `#${i.id}`;
+    const head = newDay || !prev || prev.from !== item.from || item.ts - prev.ts > RUN_MS || !!item.poll || !!prev.poll || opener(prev);
     out.push({ item, head, day: newDay ? day : null });
     prev = item;
   }

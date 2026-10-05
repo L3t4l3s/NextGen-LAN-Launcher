@@ -1588,6 +1588,8 @@ pub fn run() {
             chat::chat_add_poll_option,
             chat::chat_close_poll,
             chat::chat_delete,
+            chat::chat_edit,
+            chat::chat_create_topic,
         ])
         .build(tauri::generate_context!())
         .expect("error while running NextGen LAN Launcher")

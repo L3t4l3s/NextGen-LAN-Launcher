@@ -48,6 +48,8 @@ export function createChatMock(emit: Emit, nick: () => string) {
       mine: !from,
       deleted: false,
       text,
+      edited: false,
+      topicName: null,
       reply: null,
       reactions: [],
       poll: null,
@@ -105,6 +107,11 @@ export function createChatMock(emit: Emit, nick: () => string) {
     ],
   };
   const pollItem = add(gandalf, null, ago(12), { poll });
+  // A topic with a little in it.
+  const topic = add(sniper, null, ago(30), { topicName: "CS-Turnier" });
+  topic.conversation = `#${topic.id}`;
+  add(sniper, "Anmeldung bis 19:30, 5v5, Maps: dust2, inferno, nuke", ago(29), { conversation: topic.conversation });
+  add(gandalf, "Team Zauberer ist dabei 🧙", ago(25), { conversation: topic.conversation, edited: true });
   votes.set(pollItem.id, new Map([
     [gandalf.id, { nick: gandalf.nick, choices: ["1"] }],
     [tink.id, { nick: tink.nick, choices: ["2"] }],
@@ -139,7 +146,7 @@ export function createChatMock(emit: Emit, nick: () => string) {
         const replyTo = args.replyTo as string | null;
         const target = replyTo ? items.get(replyTo) : null;
         const item = add(null, args.text as string, Date.now(), {
-          conversation: (args.to as string | null) ?? null,
+          conversation: (args.conversation as string | null) ?? null,
           reply: target ? { id: target.id, nick: target.nick, text: target.text ?? target.poll?.question ?? null, deleted: target.deleted } : null,
         });
         push(item);
@@ -166,7 +173,7 @@ export function createChatMock(emit: Emit, nick: () => string) {
       case "chat_create_poll": {
         const options = (args.options as { text: string; game: string | null }[]).map((o, i) => ({ id: String(i), text: o.text, game: o.game, voters: [], mine: false, addedBy: null }));
         const item = add(null, null, Date.now(), {
-          conversation: (args.to as string | null) ?? null,
+          conversation: (args.conversation as string | null) ?? null,
           poll: { question: args.question as string, kind: args.kind as PollKind, open: args.open as boolean, closed: false, options, participants: 0 },
         });
         push(item);
@@ -193,6 +200,22 @@ export function createChatMock(emit: Emit, nick: () => string) {
         if (p) p.closed = true;
         push(refresh(args.poll as string));
         return;
+      }
+      case "chat_edit": {
+        const item = items.get(args.target as string);
+        if (!item?.mine) throw new Error("err.chat_not_allowed");
+        item.text = args.text as string;
+        item.edited = true;
+        const replies = [...items.values()].filter((i) => i.reply?.id === item.id);
+        for (const r of replies) r.reply = { ...r.reply!, text: item.text };
+        push(item, ...replies);
+        return;
+      }
+      case "chat_create_topic": {
+        const item = add(null, null, Date.now(), { topicName: (args.name as string).trim() });
+        item.conversation = `#${item.id}`;
+        push(item);
+        return structuredClone(item);
       }
       case "chat_delete": {
         const item = items.get(args.target as string);

@@ -109,11 +109,14 @@ export const api = {
     /** null while the chat is switched off. */
     snapshot: () => invoke<ChatSnapshot | null>("chat_snapshot"),
     setSound: (on: boolean) => invoke<void>("set_chat_sound", { on }),
-    send: (to: string | null, text: string, replyTo: string | null) => invoke<ChatItem>("chat_send", { to, text, replyTo }),
+    /** conversation: null the public room, "#<id>" a topic, otherwise a peer id. */
+    send: (conversation: string | null, text: string, replyTo: string | null) => invoke<ChatItem>("chat_send", { conversation, text, replyTo }),
+    edit: (target: string, text: string) => invoke<void>("chat_edit", { target, text }),
+    createTopic: (name: string) => invoke<ChatItem>("chat_create_topic", { name }),
     /** An empty emoji takes the reaction back. */
     react: (target: string, emoji: string) => invoke<void>("chat_react", { target, emoji }),
-    createPoll: (to: string | null, question: string, options: { text: string; game: string | null }[], kind: PollKind, open: boolean) =>
-      invoke<ChatItem>("chat_create_poll", { to, question, options, kind, open }),
+    createPoll: (conversation: string | null, question: string, options: { text: string; game: string | null }[], kind: PollKind, open: boolean) =>
+      invoke<ChatItem>("chat_create_poll", { conversation, question, options, kind, open }),
     /** The complete answer; an empty list withdraws the vote. */
     vote: (poll: string, choices: string[]) => invoke<void>("chat_vote", { poll, choices }),
     addPollOption: (poll: string, text: string, game: string | null) => invoke<void>("chat_add_poll_option", { poll, text, game }),

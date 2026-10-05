@@ -89,11 +89,21 @@ the Tauri asset-protocol scope at runtime so the WebView can load them.
   directly, so one direction of broadcasts is enough.
 * **Messages:** newline-delimited JSON over TCP (41950, or a random port when taken; the beacon
   names it), one writer per peer. Public events go to every online peer, private ones only to
-  their recipient. Nothing is relayed.
+  their recipient. Nothing is relayed. Connections carry frames both ways: a `Hello` with
+  `duplex` is answered on the connection it came in on (the missing events plus a `Hello` with
+  `answer`, which gets events back but no further `Hello`), and a peer that cannot be reached
+  directly is written to over a connection it opened (`back_links`, for 30 s before the next
+  direct try). So one of two launchers reaching the other is enough to catch up and talk; only
+  a launcher that hears no one (no beacon arrives) stays alone. `Chat::heard_from_others` is that
+  proof for the diagnostics: the firewall notices appear only while no beacon has arrived.
 * **Identity:** the peer id is an Ed25519 public key (`chat/crypto.rs`). Every event is signed;
   the body of a private event is sealed with a NaCl box (Curve25519 keys derived from the two
   ids), so only the two participants can read it, whoever else receives it. The envelope (who,
   to whom, when, nickname) stays readable. Events whose signature fails are dropped.
+* **Conversations:** the public room, topics (`Body::Topic` opens one; public events carry its id
+  in `Event::topic`, which the signature covers, so nobody can move a message into another topic)
+  and private ones. The interface keys them `null`, `#<topic id>` and the peer id; `send_text`
+  and friends take that key. Own text messages can be edited (`Body::Edit`, newest `seq` wins).
 * **History:** everything is an immutable `Event` (`Text`, `React`, `Poll`, `PollOption`,
   `Vote`, `ClosePoll`, `Delete`) with id `<peer>:<seq>`. When two launchers meet, and every two
   minutes, each sends `Hello` with the ids it has and receives what it lacks — public events and

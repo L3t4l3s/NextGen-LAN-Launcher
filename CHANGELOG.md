@@ -24,6 +24,21 @@
   fehlende Windows-Firewall-Regel (mit „Jetzt beheben“) und eine firewalld-Zone, die den Port
   sperrt. Alle Nachrichten sind signiert, niemand kann unter fremder Kennung schreiben oder
   löschen; private Nachrichten sind Ende-zu-Ende verschlüsselt. Ungetestet auf einer echten LAN.
+- Chat: Eigene Nachrichten lassen sich bearbeiten (sie tragen dann „bearbeitet“). Ein Rechtsklick
+  auf eine Nachricht öffnet ein Menü mit Antworten, Reagieren, Kopieren, Bearbeiten und Löschen;
+  das Menü des Browsers (Aktualisieren, Speichern, Drucken, Teilen) ist im ganzen Launcher weg,
+  in Eingabefeldern bleibt Kopieren/Einfügen. Mit „+“ neben den Tabs eröffnet man ein Thema, einen
+  öffentlichen Raum für alle. Die Leiste am rechten Rand ist immer da: Die Sprechblase öffnet und
+  schließt den Chat, das Personen-Symbol die Liste, die Glocke schaltet alle Unterhaltungen stumm.
+  In der Spielwahl-Umfrage lassen sich Spiele ergänzen, die nicht in der Bibliothek sind.
+- Chat: Wer später startet, bekommt den Verlauf jetzt auch dann, wenn nur einer der beiden PCs
+  Verbindungen von außen annimmt. Antworten laufen über die Verbindung zurück, über die gefragt
+  wurde, und wer den anderen nicht erreicht, schreibt über dessen Verbindung. Bisher brauchte
+  das Nachholen beide Richtungen, Live-Nachrichten aber nur eine. Ungetestet mit einer echten
+  Firewall, auf der LAN prüfen.
+- Diagnose: Der Hinweis zur Windows-Firewall (und zu firewalld) erscheint nur noch, solange kein
+  anderer Launcher angekommen ist. Eine fehlende eigene Regel heißt nicht, dass der Chat
+  blockiert ist: Die Windows-Abfrage beim ersten Start legt eine Regel für das Programm an.
 - Der Chat behält Nachrichten fünf Tage; ältere verschwinden, auch beim Archiv, und werden beim
   Abgleich nicht wieder hergeholt. Der Chat der letzten LAN ist auf der nächsten also weg.
   Jede Unterhaltung lässt sich einzeln stummschalten (die Glocke oben schaltet weiterhin alle).
