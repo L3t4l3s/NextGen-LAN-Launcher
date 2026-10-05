@@ -1,9 +1,10 @@
 <script lang="ts">
   import type { GameView } from "$lib/types";
   import { app } from "$lib/stores/app.svelte";
-  import { coverSrc } from "$lib/api";
+  import { api, coverSrc } from "$lib/api";
+  import { chat } from "$lib/stores/chat.svelte";
   import { formatPercent, formatSpeed, placeholderGradient, percentWidth } from "$lib/format";
-  import { t } from "$lib/i18n";
+  import { t, userText } from "$lib/i18n";
   import { phaseBadge } from "$lib/phase";
 
   let { game, selected = false, onselect }: { game: GameView; selected?: boolean; onselect: (id: string) => void } = $props();
@@ -25,6 +26,30 @@
         ? { label: "card.stalled", title: "problem.sync.stalled.title" }
         : null,
   );
+  /** The right-click menu, where it opened. */
+  let menu = $state<{ x: number; y: number } | null>(null);
+  let tile = $state<HTMLButtonElement | null>(null);
+
+  function openMenu(e: MouseEvent) {
+    // Linking needs the chat; without it the browser menu stays suppressed.
+    if (!chat.enabled) return;
+    e.preventDefault();
+    menu = { x: Math.min(e.clientX, window.innerWidth - 240), y: Math.min(e.clientY, window.innerHeight - 80) };
+  }
+
+  /** Link the game in the conversation open in the chat, and show it. */
+  async function share() {
+    menu = null;
+    try {
+      await api.chat.shareGame(chat.active, game.id);
+      chat.atBottom = true;
+      chat.show(chat.active);
+    } catch (e) {
+      if (!chat.notePause(e)) app.toast("error", userText(e));
+      chat.show(chat.active);
+    }
+  }
+
   const label = $derived.by(() => {
     if (!status) return "";
     if (trouble) return t(trouble.label);
@@ -33,7 +58,15 @@
   });
 </script>
 
-<button class="tile" class:selected class:dimmed={game.disabledByEvent} onclick={() => onselect(game.id)}>
+<!-- One menu at a time: a right-click on another tile closes this one. -->
+<svelte:window
+  onclick={() => (menu = null)}
+  oncontextmenu={(e) => { if (!tile?.contains(e.target as Node)) menu = null; }}
+  onkeydown={(e) => e.key === "Escape" && (menu = null)}
+  onblur={() => (menu = null)}
+/>
+
+<button class="tile" bind:this={tile} id={`game-${game.id}`} class:selected class:dimmed={game.disabledByEvent} onclick={() => onselect(game.id)} oncontextmenu={openMenu}>
   <div class="cover" style:background={game.cover ? undefined : placeholderGradient(game.id)}>
     {#if game.cover}
       <img src={coverSrc(game.cover)} alt="" loading="lazy" />
@@ -59,7 +92,35 @@
   </div>
 </button>
 
+{#if menu}
+  <div class="ctx" role="menu" style:left={`${menu.x}px`} style:top={`${menu.y}px`}>
+    <button role="menuitem" onclick={share}>
+      🎮 {t("chat.game.share_in", { name: chat.active === null ? t("chat.public") : chat.conversationName(chat.active) })}
+    </button>
+  </div>
+{/if}
+
 <style>
+  .ctx {
+    position: fixed;
+    z-index: 50;
+    padding: 0.3rem;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+  .ctx button {
+    background: transparent;
+    border: none;
+    text-align: left;
+    padding: 0.45em 0.7em;
+    border-radius: 6px;
+    white-space: nowrap;
+  }
+  .ctx button:hover {
+    background: var(--color-surface-alt);
+  }
   /* `.meta small` is more specific than `.label` would be on its own. */
   .meta .label.warn-text {
     color: var(--color-warning);

@@ -43,6 +43,7 @@
     });
   }
 
+  const inLibrary = (game: string | null) => !!game && app.games.some((g) => g.id === game);
   const cover = (game: string | null) => (game ? coverSrc(app.games.find((g) => g.id === game)?.cover ?? null) : null);
 </script>
 
@@ -59,14 +60,17 @@
     {#each poll.options as o (o.id)}
       {@const share = percent(o.voters.length, poll.participants)}
       {@const src = cover(o.game)}
+      {@const opens = poll.closed && inLibrary(o.game)}
       <li>
+        <!-- Once the poll is over, a game in it opens in the library. -->
         <button
           class="option"
           class:mine={o.mine}
+          class:opens
           class:winner={poll.closed && o.voters.length === most && most > 0}
-          disabled={poll.closed || busy}
-          title={o.voters.length ? o.voters.join(", ") : t("chat.poll.no_votes")}
-          onclick={() => choose(o.id)}
+          disabled={(poll.closed && !opens) || busy}
+          title={opens ? t("chat.game.open") : o.voters.length ? o.voters.join(", ") : t("chat.poll.no_votes")}
+          onclick={() => (opens && o.game ? app.openGame(o.game) : choose(o.id))}
         >
           <span class="bar" style:width={`${voted || poll.closed ? share : 0}%`}></span>
           <span class="check">{poll.kind === "single" ? (o.mine ? "◉" : "○") : o.mine ? "☑" : "☐"}</span>
@@ -211,5 +215,8 @@
   }
   .add button {
     padding: 0.3em 0.7em;
+  }
+  .option.opens:hover .text {
+    text-decoration: underline;
   }
 </style>

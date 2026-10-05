@@ -175,7 +175,7 @@ export function createMock() {
     listeners.get(event)?.forEach((cb) => cb(payload));
   }
 
-  const chatMock = createChatMock(emit, () => settings.playerName || "DemoPlayer");
+  const chatMock = createChatMock(emit, () => settings.playerName || "DemoPlayer", (id) => demoGames.find((g) => g.id === id)?.title ?? null);
 
   setInterval(() => {
     emit("install-status", [...sims.keys()].map(status).filter(Boolean));

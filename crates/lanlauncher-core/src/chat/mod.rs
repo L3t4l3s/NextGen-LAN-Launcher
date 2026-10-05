@@ -604,6 +604,27 @@ impl Chat {
             Body::Text {
                 text: text.trim_end().to_string(),
                 reply_to,
+                game: None,
+            },
+        )?;
+        self.view(&id)
+    }
+
+    /// Link a game of the catalog: the others see its cover and title and
+    /// can open it in their library. `title` is the message's text.
+    pub fn share_game(
+        &self,
+        conversation: Option<String>,
+        game: &str,
+        title: &str,
+    ) -> Result<ItemView, ChatError> {
+        self.running()?;
+        let id = self.inner.publish(
+            conversation,
+            Body::Text {
+                text: title.trim().to_string(),
+                reply_to: None,
+                game: Some(game.to_string()),
             },
         )?;
         self.view(&id)

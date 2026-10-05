@@ -424,6 +424,8 @@ export interface ChatItem {
   edited: boolean;
   /** Set on the item that opened a topic: its name. */
   topicName: string | null;
+  /** A linked game's catalog id; `text` is its title. */
+  game: string | null;
   reply: { id: string; nick: string | null; text: string | null; deleted: boolean } | null;
   reactions: ChatReaction[];
   poll: ChatPoll | null;

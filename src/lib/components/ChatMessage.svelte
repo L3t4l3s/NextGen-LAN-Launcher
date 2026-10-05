@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, confirmDialog, copyText } from "$lib/api";
+  import { api, confirmDialog, copyText, coverSrc } from "$lib/api";
+  import { placeholderGradient } from "$lib/format";
   import { linkTarget, nickColor, onlyEmoji, segments } from "$lib/chat";
   import { quickReactions } from "$lib/emoji";
   import { t, userText } from "$lib/i18n";
@@ -22,7 +23,9 @@
   const myReaction = $derived(item.reactions.find((r) => r.mine)?.emoji ?? "");
   /** This item opened a topic: shown as a line, not as a message. */
   const opensTopic = $derived(item.conversation === `#${item.id}`);
-  const editable = $derived(item.mine && !item.deleted && !item.poll && !opensTopic && item.text !== null);
+  const editable = $derived(item.mine && !item.deleted && !item.poll && !item.game && !opensTopic && item.text !== null);
+  /** A linked game as this library knows it; `null` when it is not in it. */
+  const linked = $derived(item.game ? (app.games.find((g) => g.id === item.game) ?? null) : null);
 
   function openMenu(e: MouseEvent) {
     // Nothing to offer on a deleted message, or on someone else's topic.
@@ -134,6 +137,18 @@
         <em>{t("chat.deleted")}</em>
       {:else if item.poll}
         <ChatPoll {item} poll={item.poll} />
+      {:else if item.game}
+        <button
+          class="game-link"
+          disabled={!linked}
+          title={linked ? t("chat.game.open") : t("chat.game.missing")}
+          onclick={() => item.game && app.openGame(item.game)}
+        >
+          <span class="game-cover" style:background={linked?.cover ? undefined : placeholderGradient(item.game)}>
+            {#if linked?.cover}<img src={coverSrc(linked.cover)} alt="" />{:else}🎮{/if}
+          </span>
+          <span class="game-title">{item.text}</span>
+        </button>
       {:else}
         <span class="text">{#each parts as p, i (i)}{#if p.kind === "link"}<a href={p.text} onclick={(e) => { e.preventDefault(); void api.openUrl(linkTarget(p.text)).catch((err) => app.toast("error", userText(err))); }}>{p.text}</a>{:else if p.kind === "mention"}<span class="mention" class:me={p.me}>{p.text}</span>{:else}{p.text}{/if}{/each}</span>
       {/if}
@@ -420,5 +435,41 @@
     100% {
       box-shadow: 0 0 0 0 transparent;
     }
+  }
+  .game-link {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 0;
+    background: transparent;
+    border: none;
+    text-align: left;
+    color: inherit;
+    width: 180px;
+    max-width: 100%;
+  }
+  .game-link:not(:disabled):hover .game-title {
+    text-decoration: underline;
+  }
+  .game-link:disabled {
+    cursor: default;
+    opacity: 0.85;
+  }
+  .game-cover {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: var(--cover-ratio);
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: 1.6rem;
+  }
+  .game-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .game-title {
+    font-weight: 600;
   }
 </style>

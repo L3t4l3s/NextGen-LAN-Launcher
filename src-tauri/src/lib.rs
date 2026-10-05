@@ -1590,6 +1590,7 @@ pub fn run() {
             chat::chat_delete,
             chat::chat_edit,
             chat::chat_create_topic,
+            chat::chat_share_game,
         ])
         .build(tauri::generate_context!())
         .expect("error while running NextGen LAN Launcher")

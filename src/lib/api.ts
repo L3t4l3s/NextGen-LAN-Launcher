@@ -113,6 +113,8 @@ export const api = {
     send: (conversation: string | null, text: string, replyTo: string | null) => invoke<ChatItem>("chat_send", { conversation, text, replyTo }),
     edit: (target: string, text: string) => invoke<void>("chat_edit", { target, text }),
     createTopic: (name: string) => invoke<ChatItem>("chat_create_topic", { name }),
+    /** Link a game of the library; the backend takes its title from the catalog. */
+    shareGame: (conversation: string | null, game: string) => invoke<ChatItem>("chat_share_game", { conversation, game }),
     /** An empty emoji takes the reaction back. */
     react: (target: string, emoji: string) => invoke<void>("chat_react", { target, emoji }),
     createPoll: (conversation: string | null, question: string, options: { text: string; game: string | null }[], kind: PollKind, open: boolean) =>

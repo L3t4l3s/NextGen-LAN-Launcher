@@ -20,7 +20,7 @@ event and with clear instructions whenever something does not work.
 | Unclear row of icons at the top | Labelled tabs: Library · Downloads · LAN · Diagnostics, plus Settings on the right. |
 | Only one game folder | Several library folders (e.g. different SSDs); a new game goes to the default folder, or to the one with the most free space when the default is too small. |
 | Windows only | Launch profiles (`manifests/*.toml`) plus Wine/CrossOver/Proton on macOS and Linux; Windows keeps running `game_start.cmd`. |
-| Chat only through Discord, TeamSpeak or shouting across the hall | A **LAN chat** on the right of the window, between all launchers on the network whatever the OS, without a server: who is online, private messages, topics, replies, edits, emoji reactions, polls (single/multiple choice, game vote from the library, yes/no/maybe, open polls), sounds that can be muted. `crates/lanlauncher-core/src/chat/` |
+| Chat only through Discord, TeamSpeak or shouting across the hall | A **LAN chat** on the right of the window, between all launchers on the network whatever the OS, without a server: who is online, private messages, topics, replies, edits, emoji reactions, game links that open in the library, polls (single/multiple choice, game vote from the library, yes/no/maybe, open polls), sounds that can be muted. `crates/lanlauncher-core/src/chat/` |
 | Administrator rights for everything | The launcher runs as a normal user. UAC appears only for a game's one-time setup (which also registers the firewall rules its start script would add), for the few start scripts that write HKLM, for server scripts and for repairs. |
 
 Design decision from our planning: every game has **one** primary button (Install / Downloading… /

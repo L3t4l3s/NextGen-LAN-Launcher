@@ -145,6 +145,7 @@ mod tests {
                 body: Body::Text {
                     text: "hi".into(),
                     reply_to: None,
+                    game: None,
                 },
                 topic: None,
                 sig: "00".into(),

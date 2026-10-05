@@ -3,7 +3,7 @@ import { isUnread, linkTarget, mentions, onlyEmoji, percent, rings, rows, segmen
 import type { ChatItem } from "./types";
 
 function item(id: string, from: string, ts: number, extra: Partial<ChatItem> = {}): ChatItem {
-  return { id, from, nick: from, ts, received: ts, conversation: null, mine: false, deleted: false, text: "x", edited: false, topicName: null, reply: null, reactions: [], poll: null, ...extra };
+  return { id, from, nick: from, ts, received: ts, conversation: null, mine: false, deleted: false, text: "x", edited: false, topicName: null, game: null, reply: null, reactions: [], poll: null, ...extra };
 }
 
 describe("segments", () => {

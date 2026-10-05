@@ -159,6 +159,7 @@ mod tests {
             body: Body::Text {
                 text: text.into(),
                 reply_to: None,
+                game: None,
             },
             topic: None,
             sig: String::new(),

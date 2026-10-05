@@ -246,6 +246,7 @@ fn large_histories_are_split_into_frames_of_bounded_size() {
             body: Body::Text {
                 text: "x".repeat(model::MAX_TEXT),
                 reply_to: None,
+                game: None,
             },
             topic: None,
             sig: String::new(),
@@ -408,6 +409,7 @@ async fn messages_from_the_last_lan_are_gone_at_start() {
             body: Body::Text {
                 text: text.into(),
                 reply_to: None,
+                game: None,
             },
             topic: None,
             sig: String::new(),

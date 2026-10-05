@@ -96,6 +96,10 @@ the Tauri asset-protocol scope at runtime so the WebView can load them.
   direct try). So one of two launchers reaching the other is enough to catch up and talk; only
   a launcher that hears no one (no beacon arrives) stays alone. `Chat::heard_from_others` is that
   proof for the diagnostics: the firewall notices appear only while no beacon has arrived.
+* **Game links:** a text message with `game` (catalog id); its text is the title, taken from the
+  sender's catalog (`chat_share_game`). Such a message cannot be edited. The interface shows the
+  receiver's cover and opens the game in its library (`app.openGame`); a game the receiver does
+  not have is shown but not clickable.
 * **Presence extras:** the beacon carries `playing`, the title of the newest game in
   `AppState::running` (the same game the stats beacon reports to the LANPage). A 15 s loop
   (`chat::prune_running`) drops games from `running` once nothing runs from their folder

@@ -216,6 +216,25 @@ pub async fn chat_send(
         .map_err(|e| code(&chat, e))
 }
 
+/// Link a game of the catalog; its title comes from this launcher's
+/// catalog, not from the interface.
+#[tauri::command]
+pub async fn chat_share_game(
+    state: State<'_, Arc<AppState>>,
+    conversation: Option<String>,
+    game: String,
+) -> Cmd<ItemView> {
+    let title = state
+        .catalog()
+        .await
+        .game(&game)
+        .map(|g| g.title.clone())
+        .ok_or_else(|| "err.unknown_game".to_string())?;
+    let chat = running(&state).await?;
+    chat.share_game(conversation, &game, &title)
+        .map_err(|e| code(&chat, e))
+}
+
 #[tauri::command]
 pub async fn chat_react(state: State<'_, Arc<AppState>>, target: String, emoji: String) -> Cmd<()> {
     running(&state)

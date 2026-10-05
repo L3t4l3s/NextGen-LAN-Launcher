@@ -26,7 +26,7 @@ const chatter = [
   "Turnier startet um 20 Uhr, Anmeldung auf der LANPage",
 ];
 
-export function createChatMock(emit: Emit, nick: () => string) {
+export function createChatMock(emit: Emit, nick: () => string, gameTitle: (id: string) => string | null = () => null) {
   let enabled = true;
   let seq = 0;
   const items = new Map<string, ChatItem>();
@@ -50,6 +50,7 @@ export function createChatMock(emit: Emit, nick: () => string) {
       text,
       edited: false,
       topicName: null,
+      game: null,
       reply: null,
       reactions: [],
       poll: null,
@@ -94,6 +95,7 @@ export function createChatMock(emit: Emit, nick: () => string) {
   const q = add(tink, "Hat jemand ein Netzwerkkabel übrig? 🙏", ago(40));
   add(sniper, "Liegt bei mir, Tisch 7", ago(38), { reply: { id: q.id, nick: tink.nick, text: q.text, deleted: false } });
   add(null, "Ich bin auch da 👋", ago(20));
+  add(sniper, "Counter-Strike 1.6 (GoldSrc)", ago(15), { game: "goldsrc" });
   const poll: ChatPoll = {
     question: "Was zocken wir als Nächstes?",
     kind: "single",
@@ -227,6 +229,14 @@ export function createChatMock(emit: Emit, nick: () => string) {
         for (const r of replies) r.reply = { ...r.reply!, text: item.text };
         push(item, ...replies);
         return;
+      }
+      case "chat_share_game": {
+        flood();
+        const game = gameTitle(args.game as string);
+        if (!game) throw new Error("err.unknown_game");
+        const item = add(null, game, Date.now(), { conversation: (args.conversation as string | null) ?? null, game: args.game as string });
+        push(item);
+        return structuredClone(item);
       }
       case "chat_create_topic": {
         const item = add(null, null, Date.now(), { topicName: (args.name as string).trim() });

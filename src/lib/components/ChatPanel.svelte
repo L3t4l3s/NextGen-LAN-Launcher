@@ -7,6 +7,7 @@
   import { tick } from "svelte";
   import ChatMessage from "./ChatMessage.svelte";
   import EmojiPicker from "./EmojiPicker.svelte";
+  import GamePicker from "./GamePicker.svelte";
   import PollDialog from "./PollDialog.svelte";
 
   let text = $state("");
@@ -15,6 +16,9 @@
   let newTopic = $state<string | null>(null);
   let showEmoji = $state(false);
   let showPoll = $state(false);
+  let showGame = $state(false);
+  /** The "+" menu next to the input: emoji, poll, game. */
+  let showAdd = $state(false);
   let list = $state<HTMLDivElement | null>(null);
   let input = $state<HTMLTextAreaElement | null>(null);
 
@@ -212,6 +216,8 @@
   }
 </script>
 
+<svelte:window onclick={() => (showAdd = false)} onkeydown={(e) => e.key === "Escape" && (showAdd = false)} />
+
 {#if chat.open}
   <aside class="panel">
     {#if !chat.loaded}
@@ -318,8 +324,16 @@
           </div>
         {/if}
         <div class="compose">
-          <button class="icon" title={t("chat.emoji")} onclick={() => (showEmoji = !showEmoji)}>😊</button>
-          <button class="icon" title={t("chat.poll.create")} onclick={() => (showPoll = true)}>📊</button>
+          <div class="add-wrap">
+            <button class="icon add" class:open={showAdd} title={t("chat.add")} aria-expanded={showAdd} onclick={(e) => { e.stopPropagation(); showAdd = !showAdd; }}>＋</button>
+            {#if showAdd}
+              <div class="add-menu" role="menu">
+                <button role="menuitem" onclick={() => { showAdd = false; showEmoji = !showEmoji; }}>😊 {t("chat.emoji")}</button>
+                <button role="menuitem" onclick={() => { showAdd = false; showPoll = true; }}>📊 {t("chat.poll.create")}</button>
+                <button role="menuitem" onclick={() => { showAdd = false; showGame = true; }}>🎮 {t("chat.game.share")}</button>
+              </div>
+            {/if}
+          </div>
           <textarea
             id="chat-input"
             bind:this={input}
@@ -337,6 +351,9 @@
   </aside>
   {#if showPoll}
     <PollDialog onclose={() => (showPoll = false)} />
+  {/if}
+  {#if showGame}
+    <GamePicker onclose={() => (showGame = false)} />
   {/if}
 {/if}
 
@@ -739,5 +756,45 @@
     height: 2.3rem;
     padding: 0;
     flex-shrink: 0;
+  }
+  .add-wrap {
+    position: relative;
+  }
+  .icon.add {
+    font-size: 1.1rem;
+    font-weight: 700;
+    border-radius: 999px;
+    width: 2.3rem;
+    height: 2.3rem;
+    padding: 0;
+    transition: transform 0.15s;
+  }
+  .icon.add.open {
+    transform: rotate(45deg);
+  }
+  .add-menu {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    min-width: 190px;
+    padding: 0.3rem;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+  .add-menu button {
+    background: transparent;
+    border: none;
+    text-align: left;
+    padding: 0.45em 0.7em;
+    border-radius: 6px;
+    white-space: nowrap;
+  }
+  .add-menu button:hover {
+    background: var(--color-surface-alt);
   }
 </style>

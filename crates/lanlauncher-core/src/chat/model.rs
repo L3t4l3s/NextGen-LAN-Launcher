@@ -101,6 +101,11 @@ pub enum Body {
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reply_to: Option<String>,
+        /// A game of the catalog this message links to (its id); `text` is
+        /// its title. Signed with the body: a launcher from before links
+        /// drops such a message (no release had them; none needs to cope).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        game: Option<String>,
     },
     /// One reaction per person and message; an empty emoji takes it back.
     React {
@@ -184,6 +189,11 @@ fn within(text: &str, max_chars: usize) -> bool {
     !text.trim().is_empty() && text.chars().count() <= max_chars
 }
 
+/// A catalog id: short, one line.
+fn valid_game_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= MAX_ID && !id.chars().any(|c| c.is_control())
+}
+
 fn valid_choice(c: &PollChoice) -> bool {
     within(&c.text, MAX_OPTION_TEXT) && c.game.as_deref().is_none_or(|g| g.len() <= MAX_ID)
 }
@@ -238,8 +248,14 @@ impl Event {
             return false;
         }
         match &self.body {
-            Body::Text { text, reply_to } => {
-                within(text, MAX_TEXT) && reply_to.as_deref().is_none_or(valid_event_id)
+            Body::Text {
+                text,
+                reply_to,
+                game,
+            } => {
+                within(text, MAX_TEXT)
+                    && reply_to.as_deref().is_none_or(valid_event_id)
+                    && game.as_deref().is_none_or(valid_game_id)
             }
             Body::React { target, emoji } => {
                 valid_event_id(target)
@@ -380,6 +396,8 @@ pub struct ItemView {
     pub edited: bool,
     /// Set on the event that opened a topic: its name.
     pub topic_name: Option<String>,
+    /// A linked game's catalog id; `text` is its title.
+    pub game: Option<String>,
     pub reply: Option<ReplyView>,
     pub reactions: Vec<ReactionView>,
     pub poll: Option<PollView>,
@@ -758,7 +776,8 @@ impl ChatState {
                 changed.extend(self.replies.get(&target).cloned().unwrap_or_default());
             }
             Body::Edit { text, .. } => {
-                let is_text = matches!(item.event.body, Body::Text { .. });
+                // A link's text is the game's title: not to be edited.
+                let is_text = matches!(item.event.body, Body::Text { game: None, .. });
                 let newer = item.edit.as_ref().is_none_or(|(seq, _)| *seq < event.seq);
                 if !author || !is_text || !newer {
                     return;
@@ -825,7 +844,7 @@ impl ChatState {
     pub fn is_text(&self, id: &str) -> bool {
         self.items
             .get(id)
-            .is_some_and(|i| matches!(i.event.body, Body::Text { .. }) && !i.deleted)
+            .is_some_and(|i| matches!(i.event.body, Body::Text { game: None, .. }) && !i.deleted)
     }
 
     pub fn is_deleted(&self, id: &str) -> bool {
@@ -870,6 +889,10 @@ impl ChatState {
         } else {
             item.text().map(str::to_string)
         };
+        let game = match &e.body {
+            Body::Text { game, .. } if !item.deleted => game.clone(),
+            _ => None,
+        };
         let topic_name = match &e.body {
             Body::Topic { name } if !item.deleted => Some(name.clone()),
             _ => None,
@@ -903,6 +926,7 @@ impl ChatState {
             text,
             edited: item.edit.is_some() && !item.deleted,
             topic_name,
+            game,
             reply,
             reactions,
             poll,
@@ -1136,6 +1160,7 @@ mod tests {
         Body::Text {
             text: t.into(),
             reply_to: None,
+            game: None,
         }
     }
 
@@ -1257,6 +1282,7 @@ mod tests {
             Body::Text {
                 text: "yes".into(),
                 reply_to: Some("a:1".into()),
+                game: None,
             },
         );
         s.insert(reply, 2);
@@ -1551,6 +1577,7 @@ mod tests {
         let reply = Body::Text {
             text: "ok".into(),
             reply_to: Some("a:1".into()),
+            game: None,
         };
         s.insert(ev("b", 2, None, reply), 2);
         let edit = |from: &str, seq, t: &str| {
@@ -1679,6 +1706,42 @@ mod tests {
         assert!(e.expire(200, 60));
         assert!(!e.is_topic("a:1"));
         assert!(e.gone().contains_key("a:1"));
+    }
+
+    #[test]
+    fn a_linked_game_shows_its_id_and_keeps_its_title() {
+        let mut s = ChatState::new("me");
+        let link = |seq, game: &str| {
+            ev(
+                "a",
+                seq,
+                None,
+                Body::Text {
+                    text: "Quake III Arena".into(),
+                    reply_to: None,
+                    game: Some(game.into()),
+                },
+            )
+        };
+        s.insert(link(1, "quake3"), 1);
+        let v = s.view("a:1").unwrap();
+        assert_eq!(v.game.as_deref(), Some("quake3"));
+        assert_eq!(v.text.as_deref(), Some("Quake III Arena"));
+        assert!(!s.is_text("a:1"), "a link is not edited");
+        let edit = Body::Edit {
+            target: "a:1".into(),
+            text: "something else".into(),
+        };
+        s.insert(ev("a", 2, None, edit), 2);
+        assert_eq!(
+            s.view("a:1").unwrap().text.as_deref(),
+            Some("Quake III Arena")
+        );
+        assert!(!link(3, "").is_valid());
+        assert!(!link(3, "a\nb").is_valid());
+        // A plain message travels as before: no `game` on the wire.
+        let json = serde_json::to_string(&ev("a", 4, None, text("hi"))).unwrap();
+        assert!(!json.contains("game"), "{json}");
     }
 
     #[test]

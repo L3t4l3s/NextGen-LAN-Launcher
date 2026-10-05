@@ -43,6 +43,11 @@
   Spiel, das die Person gerade spielt. Das ist dieselbe Angabe, die der Launcher an die LANPage
   meldet; die meldete bisher das zuletzt gestartete Spiel, bis der Launcher beendet wurde. Jetzt
   fällt ein Spiel heraus, sobald nichts mehr aus seinem Ordner läuft (alle 15 s geprüft).
+- Chat: Spiele verlinken. Das „+“ neben dem Eingabefeld fasst Emoji, Umfrage und neu „Spiel
+  verlinken“ zusammen; dort wählt man ein Spiel aus der Bibliothek. Ein Rechtsklick auf ein Spiel
+  in der Bibliothek verlinkt es in der gerade offenen Unterhaltung. Im Chat erscheinen Cover und
+  Name; ein Klick öffnet das Spiel in der eigenen Bibliothek. In einer beendeten Umfrage führen
+  die Spiele ebenso dorthin.
 - Chat: Spamschutz. Wer mehr als fünf Nachrichten in zehn Sekunden schreibt, muss 30 Sekunden
   pausieren (Nachrichten, Umfragen, Themen, Antworten, Bearbeitungen; Reaktionen und Stimmen
   nicht). Die Sperre sitzt im Launcher des Schreibenden – ein veränderter Launcher kann sie

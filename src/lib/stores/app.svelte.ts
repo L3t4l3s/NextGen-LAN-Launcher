@@ -35,6 +35,14 @@ class AppStore {
   });
   event = $state<EventBundle | null>(null);
   selectedId = $state<string | null>(null);
+
+  /** Show a game in the library (from a link in the chat, say). */
+  openGame(id: string) {
+    this.view = "library";
+    this.selectedId = id;
+    // Its tile, once the library is drawn.
+    setTimeout(() => document.getElementById(`game-${id}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 50);
+  }
   toasts = $state<Toast[]>([]);
   showWizard = $state(false);
   loadError = $state<string | null>(null);
