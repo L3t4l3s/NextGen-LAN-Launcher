@@ -184,11 +184,16 @@ again.
   and `window.__TAURI_INTERNALS__` is absent in the frame. Not checked: WebView2 and WKWebView
   (on macOS an `http:` frame inside the `tauri://` page could count as mixed content), and a real
   ETI LANPage (if it sends `X-Frame-Options`, the tab stays empty).
-- **Tray icon — untested on real Windows/macOS:** closing the window hides it and the launcher
-  keeps running in the notification area (sync engine and chat included); right click > Quit
-  ends it, a second start shows the running window (`tauri-plugin-single-instance`). Built and
-  linted here for Windows with mingw only. Not tried: the icon's behaviour in the overflow area,
-  logging off or shutting down with the window hidden, and the macOS menu bar/Dock.
+- **Tray icon — untested on real Windows, macOS and desktop Linux:** closing the window hides it
+  and the launcher keeps running in the notification area (sync engine and chat included);
+  right click > Quit ends it, a second start shows the running window
+  (`tauri-plugin-single-instance` on Windows/macOS, `lanlauncher_core::instance` on Linux).
+  Windows is built and linted here with mingw only. On Linux the window only hides while a
+  tray host owns `org.kde.StatusNotifierWatcher`, never under gamescope (Game Mode); tested
+  here under Xvfb with a stand-in that owns that name (hide, show on second start) and without
+  one (closing quits), not with a real panel. Not tried: whether the icon really shows in
+  Plasma on the Steam Deck, the overflow area on Windows, logging off with the window hidden,
+  and the macOS menu bar/Dock.
 - **LAN chat on a real LAN — untested, check at the LAN:** the chat runs between launchers with
   UDP beacons and TCP on port 41950 (see `docs/ARCHITECTURE.md`). Tested here with several chats
   on one machine (`chat::tests`) and with two real launcher processes under Xvfb (message and

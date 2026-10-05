@@ -1007,7 +1007,6 @@ pub async fn save_settings(
     let binary_changed = current.resilio_binary != new.resilio_binary
         || current.resilio_api_key != new.resilio_api_key
         || current.player_name != new.player_name;
-    #[cfg(any(windows, target_os = "macos"))]
     if current.language != new.language {
         crate::tray::relabel(&app, &new.language);
     }

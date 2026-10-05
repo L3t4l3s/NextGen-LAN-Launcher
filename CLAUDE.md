@@ -197,15 +197,27 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   wechseln; `local/` und Receipts sperren installierte Spiele gegen automatisches Verschieben.
   Beim Laufwerkswechsel wird zuerst vollständig kopiert und erst dann der neue Ordner
   veröffentlicht. Die Engine muss die alte Freigabe vorher freigeben.
-- **Tray (Windows/macOS):** Schließen versteckt das Fenster (`tray::hide_on_close`), Beenden nur
-  über das Tray-Menü (`app.exit`, dann `RunEvent::Exit` stoppt Chat und Engine). Das Verstecken
-  greift nur, wenn das Symbol gebaut wurde, sonst wäre der Launcher unerreichbar.
-  `tauri-plugin-single-instance` holt beim zweiten Start das laufende Fenster nach vorn und ist
-  als erstes Plugin registriert. Beides gibt es **nicht unter Linux** (Abhängigkeit und Feature
-  `tray-icon` nur für `cfg(any(windows, target_os = "macos"))`): Game Mode und GNOME haben keinen
-  Infobereich, das Plugin bricht ohne D-Bus-Sitzungsbus per `unwrap` ab, und der Neustart der
-  Grafik-Leiter startet den Nachfolger, bevor der Vorgänger seinen Namen freigibt — der
-  Nachfolger würde sich sofort wieder beenden.
+- **Tray:** Schließen versteckt das Fenster (`tray::hide_on_close`), Beenden nur über das
+  Tray-Menü (`app.exit`, dann `RunEvent::Exit` stoppt Chat und Engine). Das Verstecken greift nur,
+  wenn das Symbol gebaut wurde, sonst wäre der Launcher unerreichbar. Unter Linux zusätzlich:
+  kein Symbol unter gamescope (Game Mode: kein Infobereich, Steam hielte den versteckten Launcher
+  für ein laufendes Spiel) und ohne ladbare appindicator-Bibliothek (`libappindicator-sys`
+  *panict* sonst); versteckt wird nur, solange jemand `org.kde.StatusNotifierWatcher` auf dem
+  Sitzungsbus besitzt — beim Schließen gefragt, nicht beim Start. Reines GNOME nimmt das Symbol
+  an und zeigt es nie. Zweiter Start: Windows/macOS über `tauri-plugin-single-instance` (als
+  erstes Plugin), Linux über `lanlauncher_core::instance` (`flock` + Unix-Socket in
+  `$XDG_RUNTIME_DIR/xyz.nextgen-lan.launcher/`, ganz am Anfang von `run`). Das Plugin taugt unter
+  Linux nicht: Es `unwrap`t einen D-Bus-Sitzungsbus, und der Nachfolger der Grafik-Leiter würde
+  sich an den Vorgänger übergeben, der gerade geht. Deshalb wartet der Nachfolger (`RETRY_ENV`)
+  auf die Sperre und fragt erst, wenn der Vorgänger (`NLL_GRAPHICS_PREDECESSOR`, PID) weg ist —
+  nicht über `getppid`, im AppImage ist der Elternprozess die AppImage-Laufzeit. Ein Launcher, der gerade beendet (`tray::QUITTING`),
+  antwortet „busy“; der neue Start wartet dann auf die Sperre und übernimmt. Ein Start mit eigenen
+  Optionen (`--safe-graphics`, `--demo`) bittet den laufenden Launcher zu beenden (`Ask::Replace`)
+  und übernimmt — sonst käme `--safe-graphics` nach einem weißen Fenster nie an, denn das
+  Schließen hat den Launcher nur versteckt. Nachstellen unter
+  Xvfb: `dbus-run-session`, ein kleines Programm, das den Watcher-Namen per `g_bus_own_name`
+  besitzt, ein Fenstermanager (`openbox`) und `wmctrl -c` zum Schließen (`xdotool windowclose`
+  zerstört das Fenster, statt es zu schließen).
 - **NSIS-Hooks:** `NSIS_HOOK_PREINSTALL` läuft *vor* Tauris Frage „Anwendung beenden?“. Wer dort
   die Sync-Engine beendet, während der Launcher noch läuft, startet sie nur neu — deshalb beendet
   `installer-hooks.nsh` erst den Launcher, dann die Engine.

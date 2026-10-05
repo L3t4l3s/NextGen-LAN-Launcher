@@ -22,7 +22,7 @@ tauri-build = { version = "2.6", features = [] }
 
 [dependencies]
 lanlauncher-core = { path = "../crates/lanlauncher-core" }
-tauri = { version = "2.11", features = ["protocol-asset"] }
+tauri = { version = "2.11", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-opener = "2.5"
 tauri-plugin-dialog = "2.7"
 tauri-plugin-log = "2.9"
@@ -35,17 +35,17 @@ log = "0.4"
 async-trait = "0.1"
 rusqlite = { version = "0.40", features = ["bundled"] }
 
-# Closing the window keeps the launcher (and its sync engine) running in the
-# notification area; a second start brings that window back instead of
-# competing for the engine. Not on Linux: Game Mode on the Steam Deck and
-# GNOME have no tray to come back from, and the single-instance plugin
-# needs a D-Bus session bus there and would race the graphics ladder's own
-# restart.
+# A second start brings the running launcher's window back (it may sit in the
+# tray) instead of competing for the sync engine. Linux has its own
+# (`lanlauncher_core::instance`): this plugin unwraps a D-Bus session bus
+# there and would hand the graphics ladder's successor over to the
+# predecessor it replaces.
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
-tauri = { version = "2.11", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-single-instance = "2.4"
 
 # Only for sending this process's standard error to a file: what WebKitGTK
 # says about a renderer it cannot use never reaches the Tauri log.
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
+# Whether the desktop has a tray to come back from (already built for GTK).
+gio = "0.18"

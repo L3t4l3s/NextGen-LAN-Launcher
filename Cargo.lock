@@ -2819,6 +2819,7 @@ name = "nextgen-lan-launcher"
 version = "0.2.0"
 dependencies = [
  "async-trait",
+ "gio",
  "lanlauncher-core",
  "libc",
  "log",

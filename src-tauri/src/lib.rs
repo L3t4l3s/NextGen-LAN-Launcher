@@ -4,7 +4,6 @@ mod chat;
 mod commands;
 mod fixes;
 mod state;
-#[cfg(any(windows, target_os = "macos"))]
 mod tray;
 
 use lanlauncher_core::catalog::Catalog;
@@ -786,6 +785,10 @@ const STEP_ENV: &str = "NLL_GRAPHICS_STEP";
 #[cfg(target_os = "linux")]
 const RETRY_ENV: &str = "NLL_GRAPHICS_RETRY";
 
+/// Process id of the launcher that restarted this one on the ladder.
+#[cfg(target_os = "linux")]
+const PREDECESSOR_ENV: &str = "NLL_GRAPHICS_PREDECESSOR";
+
 /// Whether a value already in the environment is somebody's decision, which
 /// the climb respects, or something that came with the packaging.
 ///
@@ -1169,6 +1172,9 @@ fn restart_on(step: &lanlauncher_core::graphics::RenderStep) -> Option<()> {
     }
     cmd.env(STEP_ENV, step.name);
     cmd.env(RETRY_ENV, "1");
+    // The successor waits for this process to be gone before it lets the
+    // single-instance guard hand it over to anyone (`claim_the_launcher`).
+    cmd.env(PREDECESSOR_ENV, std::process::id().to_string());
     // Without this the successor inherits file descriptor 2 as it stands —
     // this process's pipe — and everything it says would go into a launcher
     // that is about to end instead of to the terminal the user is watching.
@@ -1191,6 +1197,87 @@ fn restart_on(step: &lanlauncher_core::graphics::RenderStep) -> Option<()> {
         Err(e) => {
             log::error!("could not restart {}: {e}", program.display());
             None
+        }
+    }
+}
+
+/// Set in `setup`; until then a second start is told the window is coming.
+#[cfg(target_os = "linux")]
+static LAUNCHER_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
+
+/// Why this launcher runs without the single-instance guard, for the log
+/// (which is not up yet when the guard is claimed).
+#[cfg(target_os = "linux")]
+static INSTANCE_NOTE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Become the one launcher of this user, or have the running one show its
+/// window. False means this process is done.
+///
+/// The ladder's successor does not ask: its predecessor holds the lock for a
+/// moment longer and would answer for a window that is about to go. It waits
+/// for the lock instead, which the predecessor gives up within seconds. A
+/// start with options of its own (`--safe-graphics` after a white window,
+/// `--demo`) replaces the running launcher, which never read them; the
+/// wait covers its sync engine shutting down (up to 10 s).
+#[cfg(target_os = "linux")]
+fn claim_the_launcher() -> bool {
+    use lanlauncher_core::instance::{self, Ask, Start};
+
+    let dir = instance::default_dir("xyz.nextgen-lan.launcher");
+    let ask = if std::env::var_os(RETRY_ENV).is_some() {
+        // Not `getppid`: inside an AppImage the parent is the AppImage
+        // runtime, which outlives nothing.
+        let predecessor = std::env::var(PREDECESSOR_ENV)
+            .ok()
+            .and_then(|pid| pid.parse().ok())
+            // SAFETY: getppid cannot fail.
+            .unwrap_or_else(|| unsafe { libc::getppid() } as u32);
+        Ask::AfterExitOf(predecessor)
+    } else if std::env::args().skip(1).any(|a| {
+        matches!(
+            a.as_str(),
+            "--demo" | "--safe-graphics" | "--no-safe-graphics"
+        )
+    }) {
+        Ask::Replace
+    } else {
+        Ask::Show
+    };
+    match instance::claim(&dir, ask, Duration::from_secs(20)) {
+        Ok(Start::Primary(guard)) => {
+            guard.serve(
+                || match LAUNCHER_HANDLE.get() {
+                    Some(app) => {
+                        log::info!("launcher started again; showing the running one");
+                        tray::show_window(app)
+                    }
+                    // Still starting; its window is on the way.
+                    None => !tray::QUITTING.load(std::sync::atomic::Ordering::SeqCst),
+                },
+                || {
+                    // Flag first, handle second, and `setup` the other way
+                    // round: a request that arrives while this launcher is
+                    // still starting is seen by one of the two.
+                    tray::QUITTING.store(true, std::sync::atomic::Ordering::SeqCst);
+                    if let Some(app) = LAUNCHER_HANDLE.get() {
+                        log::info!("launcher started again with new options; quitting for it");
+                        app.exit(0);
+                    }
+                },
+            );
+            true
+        }
+        Ok(Start::Handed) => {
+            eprintln!("NextGen LAN Launcher is already running; its window was brought up.");
+            false
+        }
+        Ok(Start::Unguarded(why)) => {
+            let _ = INSTANCE_NOTE.set(why);
+            true
+        }
+        Err(e) => {
+            let _ = INSTANCE_NOTE.set(format!("cannot use {}: {e}", dir.display()));
+            true
         }
     }
 }
@@ -1376,6 +1463,11 @@ fn warn_about_a_blank_window(app: &tauri::AppHandle) {
 pub fn run() {
     #[cfg(target_os = "linux")]
     {
+        // Before the graphics ladder writes its notes and the webview log
+        // gets its header: a second start only shows the running window.
+        if !claim_the_launcher() {
+            return;
+        }
         prefer_a_renderer_that_draws();
         // Only once the step is decided: the file gets a header naming it,
         // and everything WebKitGTK says from here on lands underneath.
@@ -1384,14 +1476,14 @@ pub fn run() {
     let builder = tauri::Builder::default();
     // First, so a second start hands over before it touches the sync engine:
     // the first launcher may be sitting in the tray with its window hidden.
+    // Linux does the same before anything else in `run`.
     #[cfg(any(windows, target_os = "macos"))]
-    let builder = builder
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            log::info!("launcher started again; showing the running one");
-            tray::show_window(app);
-        }))
-        .on_window_event(tray::hide_on_close);
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        log::info!("launcher started again; showing the running one");
+        tray::show_window(app);
+    }));
     builder
+        .on_window_event(tray::hide_on_close)
         .on_page_load(|window, payload| {
             // Which URL the webview actually loaded — a production build
             // serves `tauri://localhost`, a dev build the vite server; the
@@ -1413,6 +1505,21 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            #[cfg(target_os = "linux")]
+            {
+                let _ = LAUNCHER_HANDLE.set(app.handle().clone());
+                // Only a later start with new options sets it this early.
+                // Leaving before any state or service exists: the sync
+                // engine is not started just to be stopped again.
+                if tray::QUITTING.load(std::sync::atomic::Ordering::SeqCst) {
+                    log::info!("launcher started again with new options; quitting for it");
+                    // Leaving on purpose, not a renderer that took the run
+                    // down: the next start must not skip this step.
+                    mark_the_window_came_up();
+                    app.handle().exit(0);
+                    return Ok(());
+                }
+            }
             let demo = is_demo();
             let dirs = AppDirs {
                 config: app.path().app_config_dir()?,
@@ -1520,7 +1627,6 @@ pub fn run() {
             }
             let library = Arc::new(std::sync::RwLock::new(settings.library.clone()));
             update_media_scope(app.handle(), &[], &settings.library);
-            #[cfg(any(windows, target_os = "macos"))]
             let language = settings.language.clone();
             let state = Arc::new(AppState {
                 library,
@@ -1549,9 +1655,14 @@ pub fn run() {
             });
             // Without an icon to come back from, closing the window has to
             // quit as before (`hide_on_close` checks for the icon).
-            #[cfg(any(windows, target_os = "macos"))]
             if let Err(e) = tray::install(app.handle(), &language) {
                 log::warn!("no tray icon, closing the window quits: {e}");
+            }
+            #[cfg(target_os = "linux")]
+            {
+                if let Some(note) = INSTANCE_NOTE.get() {
+                    log::warn!("single instance: {note}");
+                }
             }
             app.manage(state.clone());
             let handle = app.handle().clone();
@@ -1615,6 +1726,9 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while running NextGen LAN Launcher")
         .run(|handle, event| {
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                tray::QUITTING.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
             // The Dock icon of a launcher whose window sits in the menu bar.
             #[cfg(target_os = "macos")]
             if matches!(event, tauri::RunEvent::Reopen { .. }) {
