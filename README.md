@@ -193,7 +193,10 @@ again.
   here under Xvfb with a stand-in that owns that name (hide, show on second start) and without
   one (closing quits), not with a real panel. Not tried: whether the icon really shows in
   Plasma on the Steam Deck, the overflow area on Windows, logging off with the window hidden,
-  and the macOS menu bar/Dock.
+  and the macOS menu bar/Dock. Known gap on Windows/macOS: the plugin ends every second start,
+  so a start during the few seconds a quitting launcher stops its sync engine does nothing,
+  and `--demo` next to a running launcher only shows that one's window (Linux takes over in
+  both cases).
 - **LAN chat on a real LAN — untested, check at the LAN:** the chat runs between launchers with
   UDP beacons and TCP on port 41950 (see `docs/ARCHITECTURE.md`). Tested here with several chats
   on one machine (`chat::tests`) and with two real launcher processes under Xvfb (message and

@@ -1233,12 +1233,11 @@ fn claim_the_launcher() -> bool {
             // SAFETY: getppid cannot fail.
             .unwrap_or_else(|| unsafe { libc::getppid() } as u32);
         Ask::AfterExitOf(predecessor)
-    } else if std::env::args().skip(1).any(|a| {
-        matches!(
-            a.as_str(),
-            "--demo" | "--safe-graphics" | "--no-safe-graphics"
-        )
-    }) {
+    } else if is_demo()
+        || std::env::args()
+            .skip(1)
+            .any(|a| matches!(a.as_str(), "--safe-graphics" | "--no-safe-graphics"))
+    {
         Ask::Replace
     } else {
         Ask::Show
