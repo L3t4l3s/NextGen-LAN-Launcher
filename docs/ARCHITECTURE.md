@@ -105,6 +105,9 @@ the Tauri asset-protocol scope at runtime so the WebView can load them.
   (`chat::prune_running`) drops games from `running` once nothing runs from their folder
   (`launch::runs_from`: any process whose program or working folder is in it; the started pid is
   usually a starter that has ended, and Windows reuses its number), so both stop naming a game that has ended.
+* **Peer info:** a `Hello` carries `PeerInfo` (host, system, CPU, launcher version — the stats
+  report the LANPage gets, without MAC addresses), set once when the chat starts. Taken only from
+  where the peer is known to be; unsigned, a description and not a proof.
 * **Flood limit:** `Flood` in the sender's launcher: more than 5 messages within 10 s and writing
   pauses for 30 s (`err.chat_too_fast|<s>`). Reactions, votes, closing and deleting do not
   count. A modified launcher can skip it.

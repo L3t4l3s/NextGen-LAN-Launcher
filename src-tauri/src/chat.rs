@@ -5,7 +5,7 @@ use crate::state::AppState;
 use lanlauncher_core::chat::model::{
     ChatError, ItemView, PollChoice, PollKind, ERR_DISABLED, ERR_TOO_FAST,
 };
-use lanlauncher_core::chat::{Chat, ChatConfig, ChatSnapshot};
+use lanlauncher_core::chat::{Chat, ChatConfig, ChatSnapshot, PeerInfo};
 use std::sync::Arc;
 use tauri::{Emitter, State};
 use tokio::sync::broadcast::error::RecvError;
@@ -31,7 +31,20 @@ pub(crate) async fn apply_settings(app: &tauri::AppHandle, state: &Arc<AppState>
         (true, Some(chat)) => chat.set_nick(&nick).await,
         // Started or retried: the next settings save tries again.
         (true, None) => {
-            let config = ChatConfig::new(state.dirs.data.join("chat"), &nick);
+            let mut config = ChatConfig::new(state.dirs.data.join("chat"), &nick);
+            // What the stats beacon tells the LANPage, for the others' list
+            // of people. Read before the start, so the first `Hello` has it.
+            let report = tauri::async_runtime::spawn_blocking(|| {
+                lanlauncher_core::lanpage::StatsReport::collect("", None)
+            })
+            .await
+            .unwrap_or_default();
+            config.info = Some(PeerInfo {
+                host: report.hostname,
+                system: report.windows_edition,
+                cpu: report.cpu,
+                version: crate::app_version(),
+            });
             match Chat::start(config).await {
                 Ok(chat) => {
                     forward_updates(app.clone(), &chat);

@@ -48,6 +48,13 @@
   in der Bibliothek verlinkt es in der gerade offenen Unterhaltung. Im Chat erscheinen Cover und
   Name; ein Klick öffnet das Spiel in der eigenen Bibliothek. In einer beendeten Umfrage führen
   die Spiele ebenso dorthin.
+- Chat: Die Personenliste steht links neben dem Chat und ist schmaler, ihr Symbol oben in der
+  Leiste. Ein Mausover über einen Namen zeigt IP, System, Rechnername, CPU, Launcher-Version und
+  das laufende Spiel – dieselben Angaben, die die LANPage per Statusmeldung bekommt. Die
+  Kopfzeilen von Tabs und Personenliste sind gleich hoch. Eine neue Nachricht klingelt jetzt auch
+  in der gerade offenen Unterhaltung (bisher blieb #Alle still, solange es offen war);
+  stummgeschaltete Unterhaltungen bleiben still. Der Rechtsklick auf ein Spiel bietet alle
+  Unterhaltungen zum Verlinken an.
 - Chat: Spamschutz. Wer mehr als fünf Nachrichten in zehn Sekunden schreibt, muss 30 Sekunden
   pausieren (Nachrichten, Umfragen, Themen, Antworten, Bearbeitungen; Reaktionen und Stimmen
   nicht). Die Sperre sitzt im Launcher des Schreibenden – ein veränderter Launcher kann sie

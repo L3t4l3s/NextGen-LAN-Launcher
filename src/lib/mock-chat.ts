@@ -8,11 +8,11 @@ type Emit = (event: string, payload: unknown) => void;
 
 const ME = "me0000000000demo";
 const peers: ChatPeer[] = [
-  { id: "a1b2c3d4e5f60001", nick: "Gandalf", os: "linux", online: true, address: "192.168.1.21", relay: false, playing: "Quake III Arena" },
-  { id: "a1b2c3d4e5f60002", nick: "Tinkerbell", os: "windows", online: true, address: "192.168.1.34", relay: false, playing: null },
-  { id: "a1b2c3d4e5f60003", nick: "xX_Sniper_Xx", os: "windows", online: true, address: "192.168.1.57", relay: false, playing: "Counter-Strike 1.6 (GoldSrc)" },
-  { id: "a1b2c3d4e5f60004", nick: "MacGyver", os: "macos", online: false, address: "192.168.1.80", relay: false, playing: null },
-  { id: "a1b2c3d4e5f600ff", nick: "Chat-Archiv", os: "linux", online: true, address: "192.168.1.10", relay: true, playing: null },
+  { id: "a1b2c3d4e5f60001", nick: "Gandalf", os: "linux", online: true, address: "192.168.1.21", relay: false, playing: "Quake III Arena", info: { host: "MITTELERDE", system: "Arch Linux (rolling)", cpu: "AMD Ryzen 7 5800X3D", version: "0.2.0 (demo)" } },
+  { id: "a1b2c3d4e5f60002", nick: "Tinkerbell", os: "windows", online: true, address: "192.168.1.34", relay: false, playing: null, info: { host: "TINK-PC", system: "Windows 11 (26100)", cpu: "Intel Core i5-12400F", version: "0.2.0 (demo)" } },
+  { id: "a1b2c3d4e5f60003", nick: "xX_Sniper_Xx", os: "windows", online: true, address: "192.168.1.57", relay: false, playing: "Counter-Strike 1.6 (GoldSrc)", info: { host: "DESKTOP-7Q2K", system: "Windows 10 (19045)", cpu: "Intel Core i7-9700K", version: "0.2.0 (demo)" } },
+  { id: "a1b2c3d4e5f60004", nick: "MacGyver", os: "macos", online: false, address: "192.168.1.80", relay: false, playing: null, info: null },
+  { id: "a1b2c3d4e5f600ff", nick: "Chat-Archiv", os: "linux", online: true, address: "192.168.1.10", relay: true, playing: null, info: null },
 ];
 const [gandalf, tink, sniper] = peers;
 

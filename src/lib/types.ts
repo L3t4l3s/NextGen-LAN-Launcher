@@ -441,6 +441,8 @@ export interface ChatPeer {
   relay: boolean;
   /** Title of the game running there, as that launcher reports it. */
   playing: string | null;
+  /** About that computer (what the LANPage gets too), once known. */
+  info: { host: string; system: string; cpu: string; version: string } | null;
 }
 
 export interface ChatSnapshot {

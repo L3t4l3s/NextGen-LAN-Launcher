@@ -67,6 +67,8 @@ const RETRY_DIRECT_AFTER: Duration = Duration::from_secs(30);
 const FLOOD_COUNT: usize = 5;
 const FLOOD_WINDOW: Duration = Duration::from_secs(10);
 const FLOOD_PAUSE: Duration = Duration::from_secs(30);
+/// Longest value of a [`PeerInfo`] field.
+const MAX_INFO: usize = 100;
 /// Longest game title a beacon carries.
 const MAX_PLAYING: usize = 60;
 
@@ -90,6 +92,8 @@ pub struct ChatConfig {
     /// a launcher whose firewall lets nobody connect.
     #[doc(hidden)]
     pub advertise_port: Option<u16>,
+    /// About this computer, from the first `Hello` on ([`Chat::set_info`]).
+    pub info: Option<PeerInfo>,
 }
 
 impl ChatConfig {
@@ -103,6 +107,7 @@ impl ChatConfig {
             nick: nick.to_string(),
             relay: false,
             advertise_port: None,
+            info: None,
         }
     }
 }
@@ -186,6 +191,9 @@ enum Frame {
         /// another `Hello`.
         #[serde(default)]
         answer: bool,
+        /// About the sender's computer, for the list of people.
+        #[serde(default)]
+        info: Option<PeerInfo>,
     },
     /// Parsed one by one: an event of a newer version must not take the
     /// others in the frame down with it.
@@ -213,6 +221,45 @@ pub struct PeerView {
     pub relay: bool,
     /// The game the player has running, as their launcher reports it.
     pub playing: Option<String>,
+    /// About their computer, once a `Hello` brought it.
+    pub info: Option<PeerInfo>,
+}
+
+/// About a launcher's computer: what the stats beacon reports to the
+/// LANPage too (`lanpage::StatsReport`), plus the launcher's version. Shown
+/// when hovering a name in the list of people. Unsigned, like everything in
+/// a `Hello`: a description, not a proof.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeerInfo {
+    #[serde(default)]
+    pub host: String,
+    /// Operating system with version, e.g. "Windows 11 (26100)".
+    #[serde(default)]
+    pub system: String,
+    #[serde(default)]
+    pub cpu: String,
+    #[serde(default)]
+    pub version: String,
+}
+
+impl PeerInfo {
+    /// Each field one line of sane length.
+    fn cleaned(self) -> Self {
+        let clean = |s: String| -> String {
+            s.trim()
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(MAX_INFO)
+                .collect()
+        };
+        Self {
+            host: clean(self.host),
+            system: clean(self.system),
+            cpu: clean(self.cpu),
+            version: clean(self.version),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -252,6 +299,7 @@ struct Peer {
     last_hello: Instant,
     relay: bool,
     playing: Option<String>,
+    info: Option<PeerInfo>,
 }
 
 /// Counts what this launcher writes, so nobody floods the chat: past
@@ -306,6 +354,7 @@ struct Inner {
     os: String,
     nick: Mutex<String>,
     playing: Mutex<Option<String>>,
+    info: Mutex<Option<PeerInfo>>,
     flood: Mutex<Flood>,
     state: Mutex<ChatState>,
     history: Mutex<store::History>,
@@ -441,6 +490,7 @@ impl Chat {
             os: std::env::consts::OS.to_string(),
             nick: Mutex::new(nick),
             playing: Mutex::new(None),
+            info: Mutex::new(config.info.clone().map(PeerInfo::cleaned)),
             flood: Mutex::new(Flood::default()),
             state: Mutex::new(state),
             history: Mutex::new(history),
@@ -563,6 +613,12 @@ impl Chat {
         }
         *lock(&self.inner.playing) = game;
         self.inner.send_beacon(false).await;
+    }
+
+    /// About this computer, for the others' list of people; it travels
+    /// with the next `Hello` (on meeting, and every few minutes).
+    pub fn set_info(&self, info: PeerInfo) {
+        *lock(&self.inner.info) = Some(info.cleaned());
     }
 
     /// How long writing is paused after too many messages, if it is.
@@ -989,6 +1045,7 @@ impl Inner {
                 address: p.addr.ip().to_string(),
                 relay: p.relay,
                 playing: p.playing.clone().filter(|_| p.online),
+                info: p.info.clone(),
             })
             .collect();
         out.sort_by(|a, b| {
@@ -1226,6 +1283,7 @@ impl Inner {
                         last_hello: now,
                         relay,
                         playing: None,
+                        info: None,
                     },
                 );
                 (true, true, false)
@@ -1275,6 +1333,7 @@ impl Inner {
             relay: self.relay,
             duplex: true,
             answer,
+            info: lock(&self.info).clone(),
         };
         let line = frame_line(&frame);
         if line.is_none() {
@@ -1474,6 +1533,7 @@ impl Inner {
                 relay,
                 duplex,
                 answer,
+                info,
             } => {
                 if peer == self.me || !valid_peer_id(&peer) {
                     return;
@@ -1486,7 +1546,15 @@ impl Inner {
                     from
                 };
                 let (came_online, changed) = self.saw_peer(&peer, &nick, &os, relay, addr, None);
-                if changed {
+                // Only from where the peer is known to be: a `Hello` is
+                // unsigned.
+                let info_changed = match info.map(PeerInfo::cleaned) {
+                    Some(info) if !theirs || self.is_known_at(&peer, from) => lock(&self.peers)
+                        .get_mut(&peer)
+                        .is_some_and(|p| p.info.replace(info.clone()).as_ref() != Some(&info)),
+                    _ => false,
+                };
+                if changed || info_changed {
                     self.emit_peers();
                 }
                 let have: HashSet<String> = have.into_iter().collect();

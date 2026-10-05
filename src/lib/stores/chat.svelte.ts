@@ -146,7 +146,9 @@ class ChatStore {
       if (!fresh || item.mine || item.deleted) continue;
       // Only what is new for everyone rings, not history caught up on.
       if (!rings(item, Date.now())) continue;
-      if (this.isOnScreen(item.conversation) || this.isMuted(item.conversation)) continue;
+      // Rings also when the conversation is open: at a LAN the window is
+      // often in view while the player looks elsewhere.
+      if (this.isMuted(item.conversation)) continue;
       const direct = (item.conversation !== null && !isTopic(item.conversation)) || mentions(item.text, this.nick);
       sound = direct ? "direct" : (sound ?? "message");
     }

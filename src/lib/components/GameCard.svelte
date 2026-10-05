@@ -34,19 +34,20 @@
     // Linking needs the chat; without it the browser menu stays suppressed.
     if (!chat.enabled) return;
     e.preventDefault();
-    menu = { x: Math.min(e.clientX, window.innerWidth - 240), y: Math.min(e.clientY, window.innerHeight - 80) };
+    const height = 48 + chat.conversations.length * 34;
+    menu = { x: Math.min(e.clientX, window.innerWidth - 240), y: Math.max(8, Math.min(e.clientY, window.innerHeight - height)) };
   }
 
-  /** Link the game in the conversation open in the chat, and show it. */
-  async function share() {
+  /** Link the game in a conversation, and show it there. */
+  async function share(conversation: string | null) {
     menu = null;
     try {
-      await api.chat.shareGame(chat.active, game.id);
+      await api.chat.shareGame(conversation, game.id);
+      chat.show(conversation);
       chat.atBottom = true;
-      chat.show(chat.active);
     } catch (e) {
       if (!chat.notePause(e)) app.toast("error", userText(e));
-      chat.show(chat.active);
+      chat.show(conversation);
     }
   }
 
@@ -94,9 +95,12 @@
 
 {#if menu}
   <div class="ctx" role="menu" style:left={`${menu.x}px`} style:top={`${menu.y}px`}>
-    <button role="menuitem" onclick={share}>
-      🎮 {t("chat.game.share_in", { name: chat.active === null ? t("chat.public") : chat.conversationName(chat.active) })}
-    </button>
+    <div class="ctx-head">🎮 {t("chat.game.share_in")}</div>
+    {#each chat.conversations as c (c.id ?? "")}
+      <button role="menuitem" onclick={() => share(c.id)}>
+        {c.kind === "private" ? "✉" : "#"} {c.nick}
+      </button>
+    {/each}
   </div>
 {/if}
 
@@ -109,6 +113,18 @@
     border: 1px solid var(--color-border);
     border-radius: var(--radius);
     box-shadow: var(--shadow);
+  }
+  .ctx {
+    display: flex;
+    flex-direction: column;
+    min-width: 200px;
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+  .ctx-head {
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    padding: 0.35em 0.7em 0.25em;
   }
   .ctx button {
     background: transparent;

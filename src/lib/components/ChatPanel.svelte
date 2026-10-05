@@ -5,6 +5,7 @@
   import { app } from "$lib/stores/app.svelte";
   import { chat } from "$lib/stores/chat.svelte";
   import { tick } from "svelte";
+  import type { ChatPeer } from "$lib/types";
   import ChatMessage from "./ChatMessage.svelte";
   import EmojiPicker from "./EmojiPicker.svelte";
   import GamePicker from "./GamePicker.svelte";
@@ -17,6 +18,9 @@
   let showEmoji = $state(false);
   let showPoll = $state(false);
   let showGame = $state(false);
+  /** Height of the tab bar, which the people's heading follows when the
+   *  tabs wrap onto a second line. */
+  let tabsHeight = $state(0);
   /** The "+" menu next to the input: emoji, poll, game. */
   let showAdd = $state(false);
   let list = $state<HTMLDivElement | null>(null);
@@ -193,6 +197,20 @@
     });
   }
 
+  /** The hover text of a person: address, system and what their launcher
+   *  tells about the computer (as the LANPage gets it). */
+  function personInfo(p: ChatPeer): string {
+    const lines = [
+      `${t("chat.info.address")}: ${p.address}`,
+      `${t("chat.info.system")}: ${p.info?.system || p.os}`,
+    ];
+    if (p.info?.host) lines.push(`${t("chat.info.host")}: ${p.info.host}`);
+    if (p.info?.cpu) lines.push(`${t("chat.info.cpu")}: ${p.info.cpu}`);
+    if (p.info?.version) lines.push(`${t("chat.info.version")}: ${p.info.version}`);
+    if (p.playing) lines.push(`${t("chat.info.playing")}: ${p.playing}`);
+    return lines.join("\n");
+  }
+
   function openPrivate(id: string) {
     chat.show(id);
   }
@@ -218,6 +236,33 @@
 
 <svelte:window onclick={() => (showAdd = false)} onkeydown={(e) => e.key === "Escape" && (showAdd = false)} />
 
+<!-- Who is online: a pane of its own, left of the chat. -->
+{#if chat.showPeople && chat.enabled}
+  <aside class="pane people">
+    <div class="people-head" style:height={chat.open && tabsHeight ? `${tabsHeight}px` : undefined}>{t("chat.online", { count: chat.online.length })}</div>
+    <div class="people-list">
+      <div class="person me">
+        <span class="dot ok"></span>
+        <span class="who">
+          <span>{chat.nick} <small class="muted">({t("chat.you")})</small></span>
+        </span>
+      </div>
+      {#each chat.people as p (p.id)}
+        <div class="person" class:off={!p.online} title={personInfo(p)}>
+          <span class="dot" class:ok={p.online}></span>
+          <span class="who">
+            <span class="name" style:color={nickColor(p.id)}>{p.nick}</span>
+            {#if p.playing}<small class="playing" title={p.playing}>🎮 {p.playing}</small>{/if}
+          </span>
+          <button class="dm" title={t("chat.write_private", { nick: p.nick })} onclick={() => openPrivate(p.id)}>✉</button>
+        </div>
+      {:else}
+        <p class="hint">{t("chat.nobody")}</p>
+      {/each}
+    </div>
+  </aside>
+{/if}
+
 {#if chat.open}
   <aside class="panel">
     {#if !chat.loaded}
@@ -230,7 +275,7 @@
     {:else}
       {#if chat.problem}<div class="problem">⚠ {userText(chat.problem)}</div>{/if}
 
-      <nav class="tabs">
+      <nav class="tabs" bind:offsetHeight={tabsHeight}>
         {#each chat.conversations as c (c.id ?? "")}
           <div class="tab-wrap" class:active={chat.active === c.id}>
             <button class="tab" onclick={() => chat.show(c.id)}>
@@ -344,7 +389,7 @@
             oninput={autosize}
             onkeydown={onKey}
           ></textarea>
-          <button class="send primary" title={chat.editing ? t("chat.save_edit") : t("chat.send")} disabled={!text.trim() || sending || pausedFor > 0} onclick={send}>{chat.editing ? "✓" : "➤"}</button>
+          <button class="send primary" title={chat.editing ? t("chat.save_edit") : t("chat.send")} disabled={!text.trim() || sending || pausedFor > 0} onclick={send}>{#if chat.editing}✓{:else}<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 12 20 4l-4 16-4-6.5z" fill="currentColor" /></svg>{/if}</button>
         </div>
       </footer>
     {/if}
@@ -357,44 +402,19 @@
   {/if}
 {/if}
 
-<!-- Who is online: a pane of its own, as wide as the chat. -->
-{#if chat.showPeople && chat.enabled}
-  <aside class="pane people">
-    <div class="people-head">{t("chat.online", { count: chat.online.length })}</div>
-    <div class="people-list">
-      <div class="person me">
-        <span class="dot ok"></span>
-        <span class="who">
-          <span>{chat.nick} <small class="muted">({t("chat.you")})</small></span>
-        </span>
-      </div>
-      {#each chat.people as p (p.id)}
-        <div class="person" class:off={!p.online}>
-          <span class="dot" class:ok={p.online}></span>
-          <span class="who">
-            <span class="name" style:color={nickColor(p.id)}>{p.nick}</span>
-            {#if p.playing}<small class="playing" title={p.playing}>🎮 {p.playing}</small>{/if}
-          </span>
-          <button class="dm" title={t("chat.write_private", { nick: p.nick })} onclick={() => openPrivate(p.id)}>✉</button>
-        </div>
-      {:else}
-        <p class="hint">{t("chat.nobody")}</p>
-      {/each}
-    </div>
-  </aside>
-{/if}
-
 <!-- Always there, at the window's edge: the bubble opens and closes the chat,
      the people icon the list of who is online. -->
 <aside class="rail">
+  {#if chat.enabled}
+    <button class="toggle people-toggle" class:active={chat.showPeople} title={t("chat.people")} onclick={() => chat.togglePeople()}>
+      👥<small>{chat.online.length}</small>
+    </button>
+  {/if}
   <button class="toggle" class:active={chat.open} title={chat.open ? t("chat.close") : t("chat.open")} onclick={() => chat.toggleOpen()}>
     💬
     {#if chat.totalUnread > 0}<span class="badge-count">{chat.totalUnread > 99 ? "99+" : chat.totalUnread}</span>{/if}
   </button>
   {#if chat.enabled}
-    <button class="toggle people-toggle" class:active={chat.showPeople} title={t("chat.people")} onclick={() => chat.togglePeople()}>
-      👥<small>{chat.online.length}</small>
-    </button>
     {#if chat.relayOnline}<span class="relay" title={t("chat.relay")}>🗄</span>{/if}
     <span class="grow"></span>
     <!-- All conversations at once; each conversation has its own bell too. -->
@@ -463,14 +483,20 @@
   .panel,
   .pane {
     position: relative;
-    width: 360px;
     display: flex;
     flex-direction: column;
+    /* Tabs and the people's heading line up. */
+    --head-height: 2.75rem;
+  }
+  .panel {
+    width: 360px;
+  }
+  .pane {
+    width: 190px;
   }
   /* A small window keeps the library usable next to the chat. */
   @media (max-width: 1100px) {
-    .panel,
-    .pane {
+    .panel {
       width: 300px;
     }
   }
@@ -499,11 +525,16 @@
     font-weight: 600;
   }
   .people-head {
+    display: flex;
+    align-items: center;
+    height: var(--head-height);
+    box-sizing: border-box;
+    flex-shrink: 0;
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--color-text-muted);
-    padding: 0.75rem 0.9rem 0.5rem;
+    padding: 0 0.9rem;
     border-bottom: 1px solid var(--color-border);
   }
   .people-list {
@@ -580,6 +611,9 @@
   .tabs {
     display: flex;
     flex-wrap: wrap;
+    align-content: center;
+    min-height: var(--head-height);
+    box-sizing: border-box;
     gap: 0.25rem;
     padding: 0.4rem 0.6rem;
     max-height: 7.5rem;
@@ -756,6 +790,9 @@
     height: 2.3rem;
     padding: 0;
     flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .add-wrap {
     position: relative;

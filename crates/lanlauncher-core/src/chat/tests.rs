@@ -559,3 +559,24 @@ async fn others_see_which_game_is_running() {
     a.stop().await;
     b.stop().await;
 }
+
+#[tokio::test]
+async fn others_learn_about_this_computer() {
+    let lan = Lan::new(2);
+    let a = lan.start(0, "Alice").await;
+    // Set after the start: the next `Hello` carries it.
+    a.set_info(PeerInfo {
+        host: "ALICE-PC".into(),
+        system: "Windows 11 (26100)".into(),
+        cpu: "Ryzen\n7".into(),
+        version: "0.2.0 (abc1234)".into(),
+    });
+    let b = lan.start(1, "Bob").await;
+    let info = |c: &Chat| c.snapshot().peers.first().and_then(|p| p.info.clone());
+    until("info", || info(&b).is_some()).await;
+    let got = info(&b).unwrap();
+    assert_eq!(got.host, "ALICE-PC");
+    assert_eq!(got.cpu, "Ryzen7", "one line");
+    a.stop().await;
+    b.stop().await;
+}
