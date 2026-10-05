@@ -197,6 +197,15 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   wechseln; `local/` und Receipts sperren installierte Spiele gegen automatisches Verschieben.
   Beim Laufwerkswechsel wird zuerst vollständig kopiert und erst dann der neue Ordner
   veröffentlicht. Die Engine muss die alte Freigabe vorher freigeben.
+- **Tray (Windows/macOS):** Schließen versteckt das Fenster (`tray::hide_on_close`), Beenden nur
+  über das Tray-Menü (`app.exit`, dann `RunEvent::Exit` stoppt Chat und Engine). Das Verstecken
+  greift nur, wenn das Symbol gebaut wurde, sonst wäre der Launcher unerreichbar.
+  `tauri-plugin-single-instance` holt beim zweiten Start das laufende Fenster nach vorn und ist
+  als erstes Plugin registriert. Beides gibt es **nicht unter Linux** (Abhängigkeit und Feature
+  `tray-icon` nur für `cfg(any(windows, target_os = "macos"))`): Game Mode und GNOME haben keinen
+  Infobereich, das Plugin bricht ohne D-Bus-Sitzungsbus per `unwrap` ab, und der Neustart der
+  Grafik-Leiter startet den Nachfolger, bevor der Vorgänger seinen Namen freigibt — der
+  Nachfolger würde sich sofort wieder beenden.
 - **NSIS-Hooks:** `NSIS_HOOK_PREINSTALL` läuft *vor* Tauris Frage „Anwendung beenden?“. Wer dort
   die Sync-Engine beendet, während der Launcher noch läuft, startet sie nur neu — deshalb beendet
   `installer-hooks.nsh` erst den Launcher, dann die Engine.

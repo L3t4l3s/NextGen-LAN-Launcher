@@ -10,6 +10,13 @@
   hat keinen Zugriff auf seine Befehle; Links, die einen neuen Tab öffnen wollen, gehen dort
   nicht – dafür ist „Im Browser öffnen“ da. Unter Linux (WebKitGTK) geprüft, unter Windows und
   macOS ungetestet.
+- Windows/macOS: Das Schließen des Fensters beendet den Launcher nicht mehr. Er läuft im
+  Infobereich der Taskleiste (macOS: Menüleiste) weiter, die Sync-Engine lädt und verteilt
+  weiter, der Chat bleibt online. Linksklick auf das Symbol holt das Fenster zurück,
+  Rechtsklick > „Beenden“ beendet Launcher und Sync-Engine. Ein zweiter Start öffnet das
+  laufende Fenster, statt einen zweiten Launcher neben der Engine zu starten. Linux bleibt
+  beim Beenden per Schließen (kein Infobereich im Game Mode des Steam Deck). Ungetestet auf
+  echtem Windows/macOS.
 - macOS/Linux: Windows-Komponenten wie DirectPlay, Visual-C++-Laufzeiten oder d3dx9 lassen sich
   pro Spiel eintragen (winetricks-Verben, im Profil `winetricks = [...]` oder in der
   Startkonfiguration) und per Knopf in den Prefix des Spiels installieren – mit Wine und Proton,

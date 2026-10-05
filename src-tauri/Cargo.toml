@@ -35,6 +35,16 @@ log = "0.4"
 async-trait = "0.1"
 rusqlite = { version = "0.40", features = ["bundled"] }
 
+# Closing the window keeps the launcher (and its sync engine) running in the
+# notification area; a second start brings that window back instead of
+# competing for the engine. Not on Linux: Game Mode on the Steam Deck and
+# GNOME have no tray to come back from, and the single-instance plugin
+# needs a D-Bus session bus there and would race the graphics ladder's own
+# restart.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+tauri = { version = "2.11", features = ["protocol-asset", "tray-icon"] }
+tauri-plugin-single-instance = "2.4"
+
 # Only for sending this process's standard error to a file: what WebKitGTK
 # says about a renderer it cannot use never reaches the Tauri log.
 [target.'cfg(target_os = "linux")'.dependencies]

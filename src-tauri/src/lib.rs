@@ -4,6 +4,8 @@ mod chat;
 mod commands;
 mod fixes;
 mod state;
+#[cfg(any(windows, target_os = "macos"))]
+mod tray;
 
 use lanlauncher_core::catalog::Catalog;
 use lanlauncher_core::install::{InstallManager, ManifestSetupHook, SetupHook};
@@ -1379,7 +1381,17 @@ pub fn run() {
         // and everything WebKitGTK says from here on lands underneath.
         keep_what_the_webview_says();
     }
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // First, so a second start hands over before it touches the sync engine:
+    // the first launcher may be sitting in the tray with its window hidden.
+    #[cfg(any(windows, target_os = "macos"))]
+    let builder = builder
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            log::info!("launcher started again; showing the running one");
+            tray::show_window(app);
+        }))
+        .on_window_event(tray::hide_on_close);
+    builder
         .on_page_load(|window, payload| {
             // Which URL the webview actually loaded — a production build
             // serves `tauri://localhost`, a dev build the vite server; the
@@ -1508,6 +1520,8 @@ pub fn run() {
             }
             let library = Arc::new(std::sync::RwLock::new(settings.library.clone()));
             update_media_scope(app.handle(), &[], &settings.library);
+            #[cfg(any(windows, target_os = "macos"))]
+            let language = settings.language.clone();
             let state = Arc::new(AppState {
                 library,
                 dirs,
@@ -1533,6 +1547,12 @@ pub fn run() {
                 chat_lifecycle: tokio::sync::Mutex::new(()),
                 chat_error: RwLock::new(None),
             });
+            // Without an icon to come back from, closing the window has to
+            // quit as before (`hide_on_close` checks for the icon).
+            #[cfg(any(windows, target_os = "macos"))]
+            if let Err(e) = tray::install(app.handle(), &language) {
+                log::warn!("no tray icon, closing the window quits: {e}");
+            }
             app.manage(state.clone());
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -1595,6 +1615,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while running NextGen LAN Launcher")
         .run(|handle, event| {
+            // The Dock icon of a launcher whose window sits in the menu bar.
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Reopen { .. }) {
+                tray::show_window(handle);
+            }
             // The sync engine is our own child process. Leaving it behind
             // would block the next start (Resilio allows one instance per
             // program file) and keep syncing unnoticed.
