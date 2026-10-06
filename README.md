@@ -188,7 +188,10 @@ again.
   come through), Wi-Fi access points
   that drop broadcasts between clients, machines with several network cards, and a few dozen
   launchers at once, and `nll-chat-relay` on a real server (tested here only in `chat::tests`).
-  The release step that builds it is untested too. Every event is signed with the sender's key (the peer id is the public key)
+  The release step that builds it is untested too. Players without the chat come from the
+  LANPage's `stats.php?online=1` (an extension of the Next Generation LAN's LANPage) and are told
+  apart from chat peers and this PC by IP address — untested with real machines; a PC with two
+  network cards may show up twice. Every event is signed with the sender's key (the peer id is the public key)
   and private messages are end-to-end encrypted; nicknames are not unique, though — anyone can
   pick any name, the id behind it is what cannot be faked.
 - **Wayland libraries in the AppImage:** measured on a built image — `libEGL`, `libGL`, `libgbm`

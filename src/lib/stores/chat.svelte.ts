@@ -6,7 +6,7 @@ import { byTime, convKey, isTopic, isUnread, mentions, rings } from "$lib/chat";
 import { playSound, unlockAudio } from "$lib/chat-sound";
 import { t, userText } from "$lib/i18n";
 import { app } from "$lib/stores/app.svelte";
-import type { ChatItem, ChatPeer, ChatSnapshot, ChatUpdate } from "$lib/types";
+import type { ChatItem, ChatPeer, ChatSnapshot, ChatUpdate, LanPagePlayer } from "$lib/types";
 
 const OPEN_KEY = "nll.chat.open";
 const READ_KEY = "nll.chat.read";
@@ -62,6 +62,8 @@ class ChatStore {
   editing = $state<ChatItem | null>(null);
   /** The list of people, opened from the bar at the right. */
   showPeople = $state(false);
+  /** Players the LANPage shows as online who are not in the chat. */
+  lanPlayers = $state<LanPagePlayer[]>([]);
   /** Writing is paused until then (ms) after too many messages; 0: not. */
   pausedUntil = $state(0);
   /** Private conversations opened in this session, even before a word was said. */
@@ -89,6 +91,10 @@ class ChatStore {
     await listen("chat-update", (payload) => this.apply(payload as ChatUpdate));
     await listen("chat-reset", () => void this.reload());
     await this.reload();
+    // The LANPage hears from every launcher every few minutes; once a minute
+    // is plenty to follow it.
+    void this.loadLanPlayers();
+    setInterval(() => void this.loadLanPlayers(), 60_000);
     // Whatever is on screen counts as read once the window has focus again.
     window.addEventListener("focus", () => this.markRead());
   }
@@ -301,6 +307,35 @@ class ChatStore {
 
   get online(): ChatPeer[] {
     return this.people.filter((p) => p.online);
+  }
+
+  /** The LANPage's players without anyone the chat knows by now: the list
+   *  is fetched once a minute, the chat changes in between. */
+  get lanOthers(): LanPagePlayer[] {
+    const known = new Set(this.peers.map((p) => p.address));
+    return this.lanPlayers.filter((p) => !known.has(p.address));
+  }
+
+  /** Who was in the chat and has gone. */
+  get gone(): ChatPeer[] {
+    return this.people.filter((p) => !p.online);
+  }
+
+  /** Everyone online: in the chat, and by the LANPage without it. */
+  get onlineCount(): number {
+    return this.online.length + this.lanOthers.length;
+  }
+
+  private async loadLanPlayers() {
+    if (!this.enabled) {
+      this.lanPlayers = [];
+      return;
+    }
+    try {
+      this.lanPlayers = await api.chat.lanpagePlayers();
+    } catch {
+      // Keep the last list: one failed request is no reason to empty it.
+    }
   }
 
   /** A relay keeps what is said for those who start later. */

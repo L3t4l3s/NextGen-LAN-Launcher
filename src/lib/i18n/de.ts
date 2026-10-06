@@ -598,6 +598,8 @@ export const de: Messages = {
   "chat.info.cpu": "CPU",
   "chat.info.version": "Launcher",
   "chat.info.playing": "Spielt",
+  "chat.info.gpu": "GPU",
+  "chat.info.no_chat": "ohne Chat (z. B. ETI LAN Launcher)",
   "err.chat_disabled": "Der LAN-Chat ist ausgeschaltet.",
   "err.chat_start": "Der LAN-Chat konnte nicht starten: {detail}. Speichern in den Einstellungen versucht es erneut.",
   "err.chat_port_busy": "Port {detail} ist belegt – andere sehen dich nicht online. Läuft der Launcher doppelt oder ein anderes Programm auf dem Port?",

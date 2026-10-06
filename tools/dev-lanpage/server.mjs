@@ -32,6 +32,12 @@ http
     }
     if (url.pathname === "/stats.php") {
       const params = Object.fromEntries(url.searchParams.entries());
+      // The Next Generation LAN's list of players online (`?online=1`); one
+      // with the ETI launcher, so the list of people has someone without chat.
+      if ("online" in params) {
+        const players = [{ player_name: "Oldschool", hostname: "RETRO-PC", ipv4addr: "10.0.0.66", cpu: "Intel Core i5-4690K", gpu: "GeForce GTX 970", windows_edition: "Windows 10 Pro", current_game: "wc3", game_title: "Warcraft III: The Frozen Throne", timestamp: String(Math.floor(Date.now() / 1000)) }];
+        return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: true, window: 900, players }));
+      }
       console.log(new Date().toISOString(), "stats", params);
       return res.writeHead(200, { "content-type": "text/plain" }).end(params.macaddr1 ? "ok" : "error");
     }

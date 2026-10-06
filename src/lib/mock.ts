@@ -265,6 +265,9 @@ export function createMock() {
       return;
     }
     if (cmd.startsWith("chat_")) return chatMock.invoke(cmd, args);
+    // Someone with the ETI launcher, known only to the LANPage.
+    if (cmd === "lanpage_players")
+      return [{ player: "Oldschool", host: "RETRO-PC", address: "192.168.1.66", system: "Windows 10 Pro", cpu: "Intel Core i5-4690K", gpu: "GeForce GTX 970", game: "wc3", gameTitle: "Warcraft III: The Frozen Throne", seen: Math.floor(Date.now() / 1000) }];
     switch (cmd) {
       case "get_bootstrap":
         return { ...bootstrap, settings };

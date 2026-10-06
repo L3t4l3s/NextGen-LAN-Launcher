@@ -85,6 +85,11 @@ installer of this launcher must provide them at that path (planned in `release.y
   ISO-8859-15 percent-encoded, response `ok`/`error`. Sent every ~3 minutes whenever the LANPage
   names a `stats_url` (the LANPage's player list is the point of the beacon; there is no setting
   for it, as there is none in the ETI launcher).
+* `GET <stats_url>?online=1` – **new**, only on the Next Generation LAN's LANPage: the players whose
+  beacon arrived within `$stats_playerstatus_timespan`, as JSON (`{ok, window, players:[{player_name,
+  hostname, ipv4addr, cpu, gpu, windows_edition, current_game, game_title, timestamp}]}`). The
+  launcher lists those not in the chat; ETI's `stats.php` answers nothing to it, and the list stays
+  empty.
 
 ## Manifests (`manifests/<id>.toml`)
 

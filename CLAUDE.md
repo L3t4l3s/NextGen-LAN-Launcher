@@ -421,6 +421,8 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   „Spielt gerade“ in der Personenliste ist dieselbe Angabe wie `current_game` an die LANPage
   (`AppState::running`, Beacon-Feld `playing`); nichts Eigenes erfinden. `chat::prune_running`
   trägt beendete Spiele aus (`launch::runs_from`). Spamschutz: `Flood`, nur beim Sender.
+  Spieler ohne Chat (ETI-Launcher) kommen aus `stats.php?online=1` der LANPage (eigene Erweiterung im
+  Repo `L3t4l3s/nextgen-lanpage`); „online“ ist deren Maß, nicht unseres.
   Die Peer-ID ist ein Ed25519-Schlüssel (`chat/crypto.rs`): jedes Event ist signiert, private
   Bodies sind versiegelt (`Body::Sealed`); der Zustand faltet die geöffnete Form, gespeichert und
   weitergegeben wird nur die Wire-Form. Ein `Hello` ist unsigniert und darf einen online

@@ -445,6 +445,20 @@ export interface ChatPeer {
   info: { host: string; system: string; cpu: string; version: string } | null;
 }
 
+/** Someone the LANPage shows as online who is not in the chat (the ETI
+ *  launcher, mostly): from its stats beacon, `stats.php?online=1`. */
+export interface LanPagePlayer {
+  player: string;
+  host: string;
+  address: string;
+  system: string;
+  cpu: string;
+  gpu: string;
+  game: string | null;
+  gameTitle: string | null;
+  seen: number;
+}
+
 export interface ChatSnapshot {
   me: string;
   nick: string;

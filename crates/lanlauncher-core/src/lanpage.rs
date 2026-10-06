@@ -525,9 +525,146 @@ impl StatsReport {
     }
 }
 
+/// A player the LANPage counts as online: its stats beacon arrived within the
+/// LANPage's own window (`$stats_playerstatus_timespan`, the green "online"
+/// column). Every launcher sends that beacon, the ETI launcher included, so
+/// this is how players without the chat show up in the list of people.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanPagePlayer {
+    pub player: String,
+    pub host: String,
+    pub address: String,
+    pub system: String,
+    pub cpu: String,
+    pub gpu: String,
+    /// Catalog id of the running game, as the beacon reported it.
+    pub game: Option<String>,
+    /// Its title, where the LANPage's catalog knows it.
+    pub game_title: Option<String>,
+    /// When the LANPage last heard from it (Unix seconds, its clock).
+    pub seen: i64,
+}
+
+/// `stats.php?online=1`: the players the LANPage shows as online. A LANPage
+/// without that query (the original ETI one) answers something else; that is
+/// an error here, and simply means "no list".
+pub async fn online_players(stats_url: &str) -> Result<Vec<LanPagePlayer>> {
+    let sep = if stats_url.contains('?') { '&' } else { '?' };
+    let resp = client()
+        .get(format!("{stats_url}{sep}online=1"))
+        .send()
+        .await?;
+    let text = resp.text().await?;
+    parse_online_players(&text).ok_or_else(|| {
+        Error::Http("the LANPage lists no online players (stats.php?online=1)".into())
+    })
+}
+
+/// `{"ok":true,"players":[{player_name, hostname, ipv4addr, cpu, gpu,
+/// windows_edition, current_game, game_title, timestamp}, …]}`.
+pub fn parse_online_players(body: &str) -> Option<Vec<LanPagePlayer>> {
+    let v: serde_json::Value = serde_json::from_str(body.trim_start_matches('\u{feff}')).ok()?;
+    if v.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
+        return None;
+    }
+    let text = |row: &serde_json::Value, key: &str| -> String {
+        let s = match row.get(key) {
+            Some(serde_json::Value::String(s)) => s.clone(),
+            Some(serde_json::Value::Number(n)) => n.to_string(),
+            _ => String::new(),
+        };
+        s.trim()
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(100)
+            .collect()
+    };
+    let players = v
+        .get("players")?
+        .as_array()?
+        .iter()
+        .map(|row| {
+            let game = text(row, "current_game");
+            let title = text(row, "game_title");
+            LanPagePlayer {
+                player: text(row, "player_name"),
+                host: text(row, "hostname"),
+                address: text(row, "ipv4addr"),
+                system: text(row, "windows_edition"),
+                cpu: text(row, "cpu"),
+                gpu: text(row, "gpu"),
+                game: (!game.is_empty()).then_some(game),
+                game_title: (!title.is_empty()).then_some(title),
+                seen: text(row, "timestamp").parse().unwrap_or(0),
+            }
+        })
+        .filter(|p| !p.player.is_empty() || !p.host.is_empty())
+        .collect();
+    Some(players)
+}
+
+/// This computer's IPv4 addresses: the LANPage knows a computer by the address
+/// its beacon came from. Host names are no use here, a row of Steam Decks all
+/// call themselves `steamdeck`.
+pub fn own_addresses() -> Vec<String> {
+    sysinfo::Networks::new_with_refreshed_list()
+        .values()
+        .flat_map(|n| n.ip_networks().iter().map(|ip| ip.addr))
+        .filter(|ip| ip.is_ipv4() && !ip.is_loopback())
+        .map(|ip| ip.to_string())
+        .collect()
+}
+
+/// The players to list besides the chat: none from `known` — this computer's
+/// addresses and those of everyone the chat knows, online or just gone (the
+/// LANPage still counts them online for a while). The address is how the
+/// LANPage knows a computer too. One computer can have several rows — the
+/// ETI launcher and this one order the MAC addresses differently — so one per
+/// address, the newest; a row without an address cannot be told apart and
+/// is left out.
+pub fn players_without_chat(
+    mut players: Vec<LanPagePlayer>,
+    known: &[String],
+) -> Vec<LanPagePlayer> {
+    players.sort_by_key(|p| std::cmp::Reverse(p.seen));
+    let mut seen_addresses = std::collections::HashSet::new();
+    players
+        .into_iter()
+        .filter(|p| !p.address.is_empty() && !known.contains(&p.address))
+        .filter(|p| seen_addresses.insert(p.address.clone()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn online_players_are_read_and_the_chat_and_this_pc_left_out() {
+        let body = r#"{"ok":true,"players":[
+            {"player_name":"Pyrox","hostname":"KEVINS-PC","ipv4addr":"192.168.178.43","cpu":"Ryzen 9","gpu":"RTX 3080","windows_edition":"Windows 11","current_game":"","timestamp":"1700000100"},
+            {"player_name":"Pyrox","hostname":"Kevins-PC","ipv4addr":"192.168.178.43","current_game":"","timestamp":1700000050},
+            {"player_name":"L3t4l3s","hostname":"Lisas-PC","ipv4addr":"192.168.178.173","current_game":"wc3","game_title":"Warcraft III","timestamp":"1700000000"},
+            {"player_name":"Bazzite","hostname":"bazzite.fritz.box","ipv4addr":"192.168.178.152","current_game":"","timestamp":"1700000090"},
+            {"player_name":"Bazzite","hostname":"bazzite","ipv4addr":"192.168.178.152","current_game":"","timestamp":"1690000000"}
+        ]}"#;
+        let players = parse_online_players(body).unwrap();
+        assert_eq!(players.len(), 5);
+        assert_eq!(players[2].game.as_deref(), Some("wc3"));
+        assert_eq!(players[2].game_title.as_deref(), Some("Warcraft III"));
+        assert_eq!(players[1].seen, 1700000050, "a number is fine too");
+        let known = ["192.168.178.173".to_string(), "192.168.178.43".to_string()];
+        let others = players_without_chat(players, &known);
+        assert_eq!(others.len(), 1, "{others:?}");
+        assert_eq!(
+            others[0].host, "bazzite.fritz.box",
+            "the newest row of that address"
+        );
+        // An ETI LANPage answers its plain text.
+        assert!(parse_online_players("").is_none());
+        assert!(parse_online_players(r#"{"ok":false}"#).is_none());
+    }
 
     /// A LANPage on a throwaway port: `routes` are matched as substrings of
     /// the request line, in order.

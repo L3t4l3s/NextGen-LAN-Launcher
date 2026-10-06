@@ -108,6 +108,10 @@ the Tauri asset-protocol scope at runtime so the WebView can load them.
 * **Peer info:** a `Hello` carries `PeerInfo` (host, system, CPU, launcher version — the stats
   report the LANPage gets, without MAC addresses), set once when the chat starts. Taken only from
   where the peer is known to be; unsigned, a description and not a proof.
+* **Players without the chat:** `chat::lanpage_players` asks the LANPage for
+  `<stats_url>?online=1` (JSON; a query of the Next Generation LAN's LANPage, not of ETI's) once a
+  minute and drops this PC and everyone online in the chat by IP (`lanpage::players_without_chat`).
+  "Online" is the LANPage's own measure (last stats beacon within `$stats_playerstatus_timespan`).
 * **Flood limit:** `Flood` in the sender's launcher: more than 5 messages within 10 s and writing
   pauses for 30 s (`err.chat_too_fast|<s>`). Reactions, votes, closing and deleting do not
   count. A modified launcher can skip it.

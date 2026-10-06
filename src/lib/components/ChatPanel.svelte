@@ -5,7 +5,7 @@
   import { app } from "$lib/stores/app.svelte";
   import { chat } from "$lib/stores/chat.svelte";
   import { tick } from "svelte";
-  import type { ChatPeer } from "$lib/types";
+  import type { ChatPeer, LanPagePlayer } from "$lib/types";
   import ChatMessage from "./ChatMessage.svelte";
   import EmojiPicker from "./EmojiPicker.svelte";
   import GamePicker from "./GamePicker.svelte";
@@ -211,6 +211,18 @@
     return lines.join("\n");
   }
 
+  /** The same for someone the LANPage knows, who has no chat. */
+  function lanPlayerInfo(p: LanPagePlayer): string {
+    const lines = [`${t("chat.info.address")}: ${p.address}`];
+    if (p.system) lines.push(`${t("chat.info.system")}: ${p.system}`);
+    if (p.host) lines.push(`${t("chat.info.host")}: ${p.host}`);
+    if (p.cpu) lines.push(`${t("chat.info.cpu")}: ${p.cpu}`);
+    if (p.gpu) lines.push(`${t("chat.info.gpu")}: ${p.gpu}`);
+    lines.push(`${t("chat.info.version")}: ${t("chat.info.no_chat")}`);
+    if (p.game) lines.push(`${t("chat.info.playing")}: ${p.gameTitle ?? p.game}`);
+    return lines.join("\n");
+  }
+
   function openPrivate(id: string) {
     chat.show(id);
   }
@@ -239,7 +251,7 @@
 <!-- Who is online: a pane of its own, left of the chat. -->
 {#if chat.showPeople && chat.enabled}
   <aside class="pane people">
-    <div class="people-head" style:height={chat.open && tabsHeight ? `${tabsHeight}px` : undefined}>{t("chat.online", { count: chat.online.length })}</div>
+    <div class="people-head" style:height={chat.open && tabsHeight ? `${tabsHeight}px` : undefined}>{t("chat.online", { count: chat.onlineCount })}</div>
     <div class="people-list">
       <div class="person me">
         <span class="dot ok"></span>
@@ -247,7 +259,7 @@
           <span>{chat.nick} <small class="muted">({t("chat.you")})</small></span>
         </span>
       </div>
-      {#each chat.people as p (p.id)}
+      {#snippet person(p: ChatPeer)}
         <div class="person" class:off={!p.online} title={personInfo(p)}>
           <span class="dot" class:ok={p.online}></span>
           <span class="who">
@@ -256,9 +268,23 @@
           </span>
           <button class="dm" title={t("chat.write_private", { nick: p.nick })} onclick={() => openPrivate(p.id)}>✉</button>
         </div>
-      {:else}
-        <p class="hint">{t("chat.nobody")}</p>
+      {/snippet}
+      {#each chat.online as p (p.id)}{@render person(p)}{/each}
+      <!-- Online by the LANPage, without the chat (ETI launcher): no envelope. -->
+      {#each chat.lanOthers as p (p.address)}
+        <div class="person" title={lanPlayerInfo(p)}>
+          <span class="dot ok"></span>
+          <span class="who">
+            <span class="name">{p.player || p.host}</span>
+            {#if p.game}<small class="playing">🎮 {p.gameTitle ?? p.game}</small>{/if}
+          </span>
+        </div>
       {/each}
+      <!-- Who was in the chat and has gone, last. -->
+      {#each chat.gone as p (p.id)}{@render person(p)}{/each}
+      {#if !chat.people.length && !chat.lanOthers.length}
+        <p class="hint">{t("chat.nobody")}</p>
+      {/if}
     </div>
   </aside>
 {/if}
@@ -407,7 +433,7 @@
 <aside class="rail">
   {#if chat.enabled}
     <button class="toggle people-toggle" class:active={chat.showPeople} title={t("chat.people")} onclick={() => chat.togglePeople()}>
-      👥<small>{chat.online.length}</small>
+      👥<small>{chat.onlineCount}</small>
     </button>
   {/if}
   <button class="toggle" class:active={chat.open} title={chat.open ? t("chat.close") : t("chat.open")} onclick={() => chat.toggleOpen()}>

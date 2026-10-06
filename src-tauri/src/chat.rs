@@ -229,6 +229,59 @@ pub async fn chat_send(
         .map_err(|e| code(&chat, e))
 }
 
+/// Players the LANPage shows as online who are not in the chat: those with
+/// the ETI launcher, mostly (`stats.php?online=1`, see
+/// `lanpage::online_players`). Empty without a LANPage, without that query,
+/// or while the chat is off.
+#[tauri::command]
+pub async fn lanpage_players(
+    state: State<'_, Arc<AppState>>,
+) -> Cmd<Vec<lanlauncher_core::lanpage::LanPagePlayer>> {
+    let Some(chat) = state.chat.read().await.clone() else {
+        return Ok(Vec::new());
+    };
+    let url = state
+        .event
+        .read()
+        .await
+        .config
+        .as_ref()
+        .and_then(|c| c.stats_url.clone());
+    let Some(url) = url else {
+        return Ok(Vec::new());
+    };
+    let players = match lanlauncher_core::lanpage::online_players(&url).await {
+        Ok(players) => players,
+        Err(e) => {
+            log::debug!("lanpage players: {e}");
+            return Ok(Vec::new());
+        }
+    };
+    // This PC and everyone the chat knows, online or just gone: the LANPage
+    // still counts someone online for minutes after they left.
+    let mut known: Vec<String> = chat.peers().into_iter().map(|p| p.address).collect();
+    known.extend(lanlauncher_core::lanpage::own_addresses());
+    let mut others = lanlauncher_core::lanpage::players_without_chat(players, &known);
+    if others
+        .iter()
+        .all(|p| p.game.is_none() || p.game_title.is_some())
+    {
+        return Ok(others);
+    }
+    // A title from this launcher's catalog where the LANPage has none.
+    let catalog = state.catalog().await;
+    for p in &mut others {
+        if p.game_title.is_none() {
+            p.game_title = p
+                .game
+                .as_deref()
+                .and_then(|g| catalog.game(g))
+                .map(|g| g.title.clone());
+        }
+    }
+    Ok(others)
+}
+
 /// Link a game of the catalog; its title comes from this launcher's
 /// catalog, not from the interface.
 #[tauri::command]

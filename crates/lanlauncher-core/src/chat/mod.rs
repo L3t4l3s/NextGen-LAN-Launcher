@@ -581,6 +581,11 @@ impl Chat {
         self.inner.me.clone()
     }
 
+    /// Everyone the chat knows, without the messages.
+    pub fn peers(&self) -> Vec<PeerView> {
+        self.inner.peer_views()
+    }
+
     pub fn snapshot(&self) -> ChatSnapshot {
         ChatSnapshot {
             me: self.inner.me.clone(),

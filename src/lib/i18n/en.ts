@@ -596,6 +596,8 @@ export const en: Messages = {
   "chat.info.cpu": "CPU",
   "chat.info.version": "Launcher",
   "chat.info.playing": "Playing",
+  "chat.info.gpu": "GPU",
+  "chat.info.no_chat": "no chat (e.g. ETI LAN Launcher)",
   "err.chat_disabled": "The LAN chat is switched off.",
   "err.chat_start": "The LAN chat could not start: {detail}. Saving the settings tries again.",
   "err.chat_port_busy": "Port {detail} is in use – others do not see you online. Is the launcher running twice, or another program on that port?",

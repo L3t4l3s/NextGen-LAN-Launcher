@@ -55,6 +55,12 @@
   in der gerade offenen Unterhaltung (bisher blieb #Alle still, solange es offen war);
   stummgeschaltete Unterhaltungen bleiben still. Der Rechtsklick auf ein Spiel bietet alle
   Unterhaltungen zum Verlinken an.
+- Chat: In der Personenliste stehen auch Spieler ohne Chat, etwa mit dem ETI LAN Launcher – ohne
+  Brief-Symbol, mit laufendem Spiel und Rechner-Infos im Mausover. Quelle ist die LANPage: Jeder
+  Launcher schickt ihr seine Statusmeldung, und `stats.php?online=1` liefert, wen sie als online
+  führt (Meldung innerhalb von `$stats_playerstatus_timespan`, bei der Next Generation LAN 15
+  Minuten). Wer gleichzeitig im Chat ist, wird über die IP erkannt und nicht doppelt gezeigt. Eine
+  LANPage ohne diese Abfrage (die originale von ETI) liefert keine Liste; dann bleibt es beim Chat.
 - Chat: Spamschutz. Wer mehr als fünf Nachrichten in zehn Sekunden schreibt, muss 30 Sekunden
   pausieren (Nachrichten, Umfragen, Themen, Antworten, Bearbeitungen; Reaktionen und Stimmen
   nicht). Die Sperre sitzt im Launcher des Schreibenden – ein veränderter Launcher kann sie
