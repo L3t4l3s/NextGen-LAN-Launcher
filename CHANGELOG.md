@@ -13,6 +13,8 @@
   Englisch, auch bei deutscher Oberfläche, beim Start wie bei der Einrichtung. Sie ist jetzt
   übersetzt und sagt, was zu installieren ist. Dasselbe gilt für „gewählte
   Kompatibilitätsversion nicht mehr verfügbar“.
+- Warcraft III startete unter macOS/Linux „Reign of Chaos“ statt „The Frozen Throne“: Dem
+  Startprofil fehlte `-frozenthrone`, das ETIs `game_start.cmd` übergibt.
 - **LANPage als Reiter:** Antwortet im Netz eine LANPage (`launcher.lan` liefert eine gültige
   `launcher.ini`), erscheint oben ein Reiter „LANPage“, der die Seite im Launcher zeigt. Sie
   bleibt geladen, während man in die Bibliothek wechselt (Formulare und Logins gehen nicht
