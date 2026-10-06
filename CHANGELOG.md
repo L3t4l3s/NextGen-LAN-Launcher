@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- **Linux mit verlinktem Bibliotheksordner (Fedora Atomic: Silverblue, Kinoite, Bazzite,
+  Bluefin):** Ein fertig heruntergeladenes Spiel wurde nie geprüft und entpackt, aus
+  „Herunterladen“ wurde nie „Spielen“. Dort zeigt `/home` auf `/var/home`; Resilio meldet den
+  Ordner mit dem aufgelösten Pfad zurück, und der Launcher erkannte ihn nicht als den eigenen.
+  Pfade werden jetzt mit aufgelösten Symlinks verglichen (auch für Ordner, die auf ein anderes
+  Laufwerk verlinkt sind). Findet die Engine für ein ladendes Spiel keinen Share, steht das
+  jetzt einmal pro Minute im Log.
+- Die Meldung „kein Wine, CrossOver oder Proton gefunden“ (macOS/Linux) erschien immer auf
+  Englisch, auch bei deutscher Oberfläche, beim Start wie bei der Einrichtung. Sie ist jetzt
+  übersetzt und sagt, was zu installieren ist. Dasselbe gilt für „gewählte
+  Kompatibilitätsversion nicht mehr verfügbar“.
+- Warcraft III startete unter macOS/Linux „Reign of Chaos“ statt „The Frozen Throne“: Dem
+  Startprofil fehlte `-frozenthrone`, das ETIs `game_start.cmd` übergibt.
+- **LANPage als Reiter:** Antwortet im Netz eine LANPage (`launcher.lan` liefert eine gültige
+  `launcher.ini`), erscheint oben ein Reiter „LANPage“, der die Seite im Launcher zeigt. Sie
+  bleibt geladen, während man in die Bibliothek wechselt (Formulare und Logins gehen nicht
+  verloren, auch nicht bei einem kurz ausbleibenden Abruf); „Neu laden“ und „Im Browser öffnen“
+  stehen darüber. Die Seite darf den Launcher weder wegnavigieren noch eigene Fenster öffnen und
+  hat keinen Zugriff auf seine Befehle; Links, die einen neuen Tab öffnen wollen, gehen dort
+  nicht – dafür ist „Im Browser öffnen“ da. Unter Linux (WebKitGTK) geprüft, unter Windows und
+  macOS ungetestet.
+- Das Schließen des Fensters beendet den Launcher nicht mehr. Er läuft im Infobereich der
+  Taskleiste (macOS: Menüleiste) weiter, die Sync-Engine lädt und verteilt weiter, der Chat
+  bleibt online. Ein Klick auf das Symbol holt das Fenster zurück, Rechtsklick > „Beenden“
+  beendet Launcher und Sync-Engine. Ein zweiter Start öffnet das laufende Fenster, statt einen
+  zweiten Launcher neben der Engine zu starten. Unter Linux gilt das nur auf Desktops mit
+  Infobereich (KDE Plasma, auch der Desktop-Modus des Steam Deck, XFCE, Cinnamon, Ubuntu); im
+  Game Mode des Steam Deck und unter GNOME ohne AppIndicator-Erweiterung beendet Schließen den
+  Launcher wie bisher. Ungetestet auf echtem Windows, macOS und Steam Deck.
 - macOS/Linux: Windows-Komponenten wie DirectPlay, Visual-C++-Laufzeiten oder d3dx9 lassen sich
   pro Spiel eintragen (winetricks-Verben, im Profil `winetricks = [...]` oder in der
   Startkonfiguration) und per Knopf in den Prefix des Spiels installieren – mit Wine und Proton,

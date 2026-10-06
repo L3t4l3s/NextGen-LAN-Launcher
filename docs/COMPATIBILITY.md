@@ -80,6 +80,13 @@ installer of this launcher must provide them at that path (planned in `release.y
   shown in the top bar in automatic theme mode.
 * `GET http://launcher.lan/theme.json` – **new**: full theme, version 2 adds the colours of the
   top and status bars, an overlay over the background image and a web font (see THEMING.md).
+* `GET http://launcher.lan/` – the LANPage itself, shown in its own tab once `launcher.ini`
+  parsed (`EventBundle::page`; a host that answers `launcher.ini` with an HTML page gets no tab).
+  It runs in a sandboxed iframe (`allow-scripts allow-forms allow-same-origin`, CSP `frame-src
+  http: https:`): it keeps its own origin, cannot navigate the launcher or open windows, and gets
+  no IPC (none is injected into the frame, and the capability only covers the app's own origin).
+  A page that forbids framing (`X-Frame-Options`, `frame-ancestors`) shows empty; "open in
+  browser" is the way out there and for links that target a new tab.
 * Stats beacon: `GET <stats_url>?hostname&macaddr1&macaddr2&board_manufacturer&baseboard&
   system_product_name&bios_release&cpu&gpu&windows_edition&player_name&current_game`, values
   ISO-8859-15 percent-encoded, response `ok`/`error`. Sent every ~3 minutes whenever the LANPage

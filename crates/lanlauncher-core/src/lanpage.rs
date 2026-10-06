@@ -47,6 +47,11 @@ pub struct EventBundle {
     /// `logo.png` at the LANPage root, the image the ETI client shows next to
     /// the event name (the LANPage's own `$logo` default).
     pub logo: Option<String>,
+    /// The LANPage itself (its root), set once `launcher.ini` parsed: only
+    /// then is the host known to be a LANPage and not some other web server
+    /// that happens to answer. The UI shows it as a tab.
+    #[serde(default)]
+    pub page: Option<String>,
     /// Which URLs answered, for the diagnostics page.
     pub fetched: Vec<String>,
     pub errors: Vec<String>,
@@ -98,6 +103,7 @@ pub async fn fetch_event(host: &str) -> EventBundle {
                     Ok(cfg) => {
                         bundle.fetched.push("launcher.ini".into());
                         bundle.config = Some(cfg);
+                        bundle.page = Some(format!("{base}/"));
                     }
                     Err(e) => bundle.errors.push(format!("launcher.ini: {e}")),
                 },
@@ -719,6 +725,7 @@ mod tests {
             bundle.logo.as_deref(),
             Some(format!("{base}/logo.png").as_str())
         );
+        assert_eq!(bundle.page, Some(format!("{base}/")));
 
         // A page returned for a missing file is not an image, whatever it says.
         let base = lanpage(vec![
@@ -727,6 +734,19 @@ mod tests {
         ])
         .await;
         assert_eq!(fetch_event(&base).await.logo, None);
+    }
+
+    #[tokio::test]
+    async fn a_web_server_that_is_no_lanpage_offers_no_page() {
+        // Many servers answer an unknown path with their index page; that
+        // host is not a LANPage and must not get a tab.
+        let base = lanpage(vec![(
+            "launcher.ini",
+            "text/html",
+            "<!DOCTYPE html><html>404</html>",
+        )])
+        .await;
+        assert_eq!(fetch_event(&base).await.page, None);
     }
 
     #[tokio::test]

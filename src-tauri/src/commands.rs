@@ -1007,6 +1007,9 @@ pub async fn save_settings(
     let binary_changed = current.resilio_binary != new.resilio_binary
         || current.resilio_api_key != new.resilio_api_key
         || current.player_name != new.player_name;
+    if current.language != new.language {
+        crate::tray::relabel(&app, &new.language);
+    }
     *current = new.clone();
     drop(current);
     // Publish library changes before returning from Save: an immediate

@@ -230,6 +230,8 @@ export interface EventBundle {
   legacy_css: string | null;
   theme: Theme | null;
   logo: string | null;
+  /** The LANPage itself, once launcher.ini answered; shown as a tab. */
+  page: string | null;
   fetched: string[];
   errors: string[];
   server_time: string | null;

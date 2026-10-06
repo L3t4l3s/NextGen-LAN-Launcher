@@ -1,6 +1,6 @@
 // Minimal stand-in for an ETI LANPage host, for local development:
 //   node tools/dev-lanpage/server.mjs [port]
-// Serves launcher.ini, launcher.css, logo.png, theme.json and a stats.php-compatible
+// Serves an index page, launcher.ini, launcher.css, logo.png, theme.json and a stats.php-compatible
 // endpoint that prints what the launcher reports. Point the launcher's
 // "LANPage-Adresse" setting at 127.0.0.1:<port>.
 import http from "node:http";
@@ -29,6 +29,15 @@ http
     if (url.pathname === "/theme.json") {
       if (process.env.NO_THEME_JSON) return res.writeHead(200, { "content-type": "text/html" }).end("<!DOCTYPE html><html>404</html>");
       return res.writeHead(200, { "content-type": "application/json" }).end(theme);
+    }
+    // The page itself, for the LANPage tab.
+    if (url.pathname === "/") {
+      return res
+        .writeHead(200, { "content-type": "text/html; charset=utf-8" })
+        .end(`<!DOCTYPE html><title>Dev-LAN</title><body style="font-family:sans-serif;padding:2rem"><h1>Dev-LAN</h1><p>LANPage stand-in, served at ${new Date().toISOString()}.</p><p><a href="/turnier">Turnierplan</a></p></body>`);
+    }
+    if (url.pathname === "/turnier") {
+      return res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(`<!DOCTYPE html><body style="font-family:sans-serif;padding:2rem"><h1>Turnierplan</h1><a href="/">zurück</a></body>`);
     }
     if (url.pathname === "/stats.php") {
       const params = Object.fromEntries(url.searchParams.entries());

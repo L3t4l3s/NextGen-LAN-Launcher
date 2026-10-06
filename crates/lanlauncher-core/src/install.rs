@@ -766,7 +766,9 @@ impl Tracker {
                     .last_engine_log
                     .is_none_or(|at| now.duration_since(at) >= Duration::from_secs(60))
                 {
-                    self.last_engine_log = Some(now);
+                    // The first tick after adding a share may come before the
+                    // engine lists it.
+                    let first = self.last_engine_log.replace(now).is_none();
                     if let Some(t) = obs.transport.as_ref() {
                         log::info!(
                             "{}: engine {:?} {} received, {} finished of {} at {} B/s, {} peers; folder {} bytes, partial {:?}, archive {:?}",
@@ -777,6 +779,17 @@ impl Tracker {
                             t.bytes_total,
                             t.download_bps,
                             t.peers,
+                            obs.share_bytes,
+                            obs.partial_len,
+                            obs.archive_len
+                        );
+                    } else if obs.managed_sync && !first {
+                        // Without the engine's answer a managed download never
+                        // counts as done, so this is the line to look for when
+                        // a finished game is never extracted.
+                        log::warn!(
+                            "{}: the engine lists no share for this game's folder; folder {} bytes, partial {:?}, archive {:?}",
+                            self.game_id,
                             obs.share_bytes,
                             obs.partial_len,
                             obs.archive_len

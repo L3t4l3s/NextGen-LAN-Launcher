@@ -6,16 +6,16 @@ source = "macETI-LAN v0.6.1 docs (MIT) – window/OpenGL mode tested on Apple M2
 
 [launch]
 exe = "Warcraft III.exe"
-# ETI's Windows script uses -nativefullscr; under CrossOver -window -opengl was the stable choice.
-args = ["-nativefullscr"]
+# ETI's Windows script uses -nativefullscr -frozenthrone (without it the game starts Reign of Chaos); under CrossOver -window -opengl was the stable choice.
+args = ["-nativefullscr", "-frozenthrone"]
 required_files = ["Warcraft III.exe"]
 
 [platform.macos]
 runner = "crossover"
-args = ["-window", "-opengl"]
+args = ["-window", "-opengl", "-frozenthrone"]
 
 [platform.linux]
-args = ["-window", "-opengl"]
+args = ["-window", "-opengl", "-frozenthrone"]
 
 [setup]
 notes.de = "Das Windows-Setup (game_setup.cmd) entpackt ein Profil nach Dokumente\\Warcraft III und setzt Registry-Werte. Auf Mac/Linux fehlt dieser Schritt; der LAN-Browser braucht ggf. den Bonjour-Dienst in der Bottle."

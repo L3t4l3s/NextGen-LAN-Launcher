@@ -27,6 +27,8 @@ pub mod extract;
 pub mod game_config;
 pub mod graphics;
 pub mod install;
+#[cfg(unix)]
+pub mod instance;
 pub mod lanpage;
 pub mod launch;
 pub mod launcher_ini;
