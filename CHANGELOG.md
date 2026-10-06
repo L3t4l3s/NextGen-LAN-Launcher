@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Linux mit verlinktem Bibliotheksordner (Fedora Atomic: Silverblue, Kinoite, Bazzite,
+  Bluefin):** Ein fertig heruntergeladenes Spiel wurde nie geprüft und entpackt, aus
+  „Herunterladen“ wurde nie „Spielen“. Dort zeigt `/home` auf `/var/home`; Resilio meldet den
+  Ordner mit dem aufgelösten Pfad zurück, und der Launcher erkannte ihn nicht als den eigenen.
+  Pfade werden jetzt mit aufgelösten Symlinks verglichen (auch für Ordner, die auf ein anderes
+  Laufwerk verlinkt sind). Findet die Engine für ein ladendes Spiel keinen Share, steht das
+  jetzt einmal pro Minute im Log.
 - **LANPage als Reiter:** Antwortet im Netz eine LANPage (`launcher.lan` liefert eine gültige
   `launcher.ini`), erscheint oben ein Reiter „LANPage“, der die Seite im Launcher zeigt. Sie
   bleibt geladen, während man in die Bibliothek wechselt (Formulare und Logins gehen nicht

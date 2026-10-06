@@ -266,15 +266,46 @@ pub fn partial_path(final_path: &Path) -> PathBuf {
 /// Directory key for matching engine-reported paths against our own: the
 /// engine may differ in separators, trailing slashes, the Windows long-path
 /// prefix (Resilio answers `\\?\C:\LAN\…` for a folder we registered as
-/// `C:\LAN\…`) and in case.
+/// `C:\LAN\…`) and in case. On Unix the engine also resolves symlinks: on
+/// Fedora Atomic (Silverblue, Bazzite, …) `/home` links to `/var/home`, and a
+/// folder registered as `/home/kevin/LAN/wc3` comes back as
+/// `/var/home/kevin/LAN/wc3`.
 pub fn normalise_dir(path: &Path) -> String {
     let path = crate::paths::strip_verbatim(path.to_path_buf());
+    let path = if cfg!(target_os = "windows") {
+        path
+    } else {
+        resolve_symlinks(&path)
+    };
     let s = path.to_string_lossy().replace('\\', "/");
     let s = s.trim_end_matches('/');
     if cfg!(target_os = "windows") {
         s.to_ascii_lowercase()
     } else {
         s.to_string()
+    }
+}
+
+/// `path` with the symlinks in its longest existing ancestor resolved; the
+/// rest is kept as written, since a game's folder may not exist yet (or no
+/// longer) while the engine still reports it. Relative paths stay as they are.
+fn resolve_symlinks(path: &Path) -> PathBuf {
+    if !path.is_absolute() {
+        return path.to_path_buf();
+    }
+    let mut missing = Vec::new();
+    let mut existing = path;
+    loop {
+        if let Ok(real) = std::fs::canonicalize(existing) {
+            return missing.iter().rev().fold(real, |p, name| p.join(name));
+        }
+        match (existing.parent(), existing.file_name()) {
+            (Some(parent), Some(name)) => {
+                missing.push(name);
+                existing = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
     }
 }
 
@@ -294,6 +325,24 @@ mod tests {
             normalise_dir(Path::new(r"\\?\UNC\srv\lan\x")),
             normalise_dir(Path::new(r"\\srv\lan\x"))
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_library_matches_what_the_engine_reports() {
+        // Fedora Atomic: the library is /home/…/LAN, /home links to
+        // /var/home, and Resilio answers with the resolved path. Without this
+        // a finished download is never verified or extracted.
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("var-home");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::create_dir(real.join("wc3")).unwrap();
+        let link = dir.path().join("home");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert_eq!(normalise_dir(&link.join("wc3")), normalise_dir(&real.join("wc3")));
+        // A folder that does not exist (yet) matches through its parent.
+        assert_eq!(normalise_dir(&link.join("bf4/")), normalise_dir(&real.join("bf4")));
+        assert_eq!(normalise_dir(Path::new("/no/such/dir/")), "/no/such/dir");
     }
     use super::*;
 
