@@ -339,9 +339,15 @@ mod tests {
         std::fs::create_dir(real.join("wc3")).unwrap();
         let link = dir.path().join("home");
         std::os::unix::fs::symlink(&real, &link).unwrap();
-        assert_eq!(normalise_dir(&link.join("wc3")), normalise_dir(&real.join("wc3")));
+        assert_eq!(
+            normalise_dir(&link.join("wc3")),
+            normalise_dir(&real.join("wc3"))
+        );
         // A folder that does not exist (yet) matches through its parent.
-        assert_eq!(normalise_dir(&link.join("bf4/")), normalise_dir(&real.join("bf4")));
+        assert_eq!(
+            normalise_dir(&link.join("bf4/")),
+            normalise_dir(&real.join("bf4"))
+        );
         assert_eq!(normalise_dir(Path::new("/no/such/dir/")), "/no/such/dir");
     }
     use super::*;
