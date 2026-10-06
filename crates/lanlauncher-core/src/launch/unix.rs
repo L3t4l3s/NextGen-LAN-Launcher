@@ -829,6 +829,7 @@ mod tests {
     /// A pinned version gets a prefix of its own, and the setup's bookkeeping
     /// has to tell the two apart; the same prefix reached through a symlink
     /// is one.
+    #[cfg(unix)]
     #[test]
     fn a_prefix_is_named_by_where_it_is_and_a_bottle_by_its_name() {
         let tmp = tempfile::tempdir().unwrap();
