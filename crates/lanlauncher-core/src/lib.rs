@@ -26,6 +26,7 @@ pub mod error;
 pub mod extract;
 pub mod game_config;
 pub mod graphics;
+pub mod hardware;
 pub mod install;
 #[cfg(unix)]
 pub mod instance;

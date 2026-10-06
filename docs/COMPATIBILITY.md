@@ -89,7 +89,10 @@ installer of this launcher must provide them at that path (planned in `release.y
   browser" is the way out there and for links that target a new tab.
 * Stats beacon: `GET <stats_url>?hostname&macaddr1&macaddr2&board_manufacturer&baseboard&
   system_product_name&bios_release&cpu&gpu&windows_edition&player_name&current_game`, values
-  ISO-8859-15 percent-encoded, response `ok`/`error`. Sent every ~3 minutes whenever the LANPage
+  ISO-8859-15 percent-encoded, response `ok`/`error`. Board and GPU come from `hardware.rs`
+  (Windows: `reg export` of `HARDWARE\DESCRIPTION\System\BIOS` and of the cards that
+  `HARDWARE\DEVICEMAP\VIDEO` lists — the display adapter class would also name cards removed
+  long ago; Linux: DMI and `lspci -mm`), the host name on Windows from `COMPUTERNAME` as the ETI launcher sends it. Sent every ~3 minutes whenever the LANPage
   names a `stats_url` (the LANPage's player list is the point of the beacon; there is no setting
   for it, as there is none in the ETI launcher).
 * `GET <stats_url>?online=1` – **new**, only on the Next Generation LAN's LANPage: the players whose

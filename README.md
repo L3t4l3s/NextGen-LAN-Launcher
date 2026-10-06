@@ -213,6 +213,10 @@ again.
   network cards may show up twice. Every event is signed with the sender's key (the peer id is the public key)
   and private messages are end-to-end encrypted; nicknames are not unique, though — anyone can
   pick any name, the id behind it is what cannot be faked.
+- **Board and GPU in the stats beacon — untested on Windows:** `hardware.rs` reads them with
+  `reg export` (`HARDWARE\DESCRIPTION\System\BIOS`, the cards listed under
+  `HARDWARE\DEVICEMAP\VIDEO`); tested here only on parsed sample exports. Which value the ETI
+  launcher sends as `bios_release` is unknown (the LANPage does not show it).
 - **Wayland libraries in the AppImage:** measured on a built image — `libEGL`, `libGL`, `libgbm`
   and `libdrm` are correctly left to the machine, but all four Wayland libraries are packed, and
   `libwayland-client.so.0` is on the AppImage exclude list (the one entry of the whole list that

@@ -206,6 +206,7 @@
     ];
     if (p.info?.host) lines.push(`${t("chat.info.host")}: ${p.info.host}`);
     if (p.info?.cpu) lines.push(`${t("chat.info.cpu")}: ${p.info.cpu}`);
+    if (p.info?.gpu) lines.push(`${t("chat.info.gpu")}: ${p.info.gpu}`);
     if (p.info?.version) lines.push(`${t("chat.info.version")}: ${p.info.version}`);
     if (p.playing) lines.push(`${t("chat.info.playing")}: ${p.playing}`);
     return lines.join("\n");

@@ -43,6 +43,7 @@ pub(crate) async fn apply_settings(app: &tauri::AppHandle, state: &Arc<AppState>
                 host: report.hostname,
                 system: report.windows_edition,
                 cpu: report.cpu,
+                gpu: report.gpu,
                 version: crate::app_version(),
             });
             match Chat::start(config).await {

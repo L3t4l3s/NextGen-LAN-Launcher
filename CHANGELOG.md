@@ -90,6 +90,12 @@
   führt (Meldung innerhalb von `$stats_playerstatus_timespan`, bei der Next Generation LAN 15
   Minuten). Wer gleichzeitig im Chat ist, wird über die IP erkannt und nicht doppelt gezeigt. Eine
   LANPage ohne diese Abfrage (die originale von ETI) liefert keine Liste; dann bleibt es beim Chat.
+- Statusmeldung an die LANPage: Mainboard (Hersteller, Modell, Systemname, BIOS) und
+  Grafikkarte werden jetzt mitgeschickt wie beim ETI-Launcher, unter Windows aus der Registry,
+  unter Linux aus DMI und `lspci`; bisher blieben die Spalten leer. Der Rechnername kommt unter
+  Windows wie bei ETI aus `COMPUTERNAME` (`KEVINS-PC` statt `Kevins-PC`). Gemeldet wird nur eine
+  Karte, die gerade eingebaut ist, und eine eigene vor der des Prozessors. Die Grafikkarte steht
+  auch im Mausover der Chat-Personenliste. Ungetestet auf echten Windows-Rechnern.
 - Chat: Spamschutz. Wer mehr als fünf Nachrichten in zehn Sekunden schreibt, muss 30 Sekunden
   pausieren (Nachrichten, Umfragen, Themen, Antworten, Bearbeitungen; Reaktionen und Stimmen
   nicht). Die Sperre sitzt im Launcher des Schreibenden – ein veränderter Launcher kann sie

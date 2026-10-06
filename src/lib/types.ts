@@ -444,7 +444,7 @@ export interface ChatPeer {
   /** Title of the game running there, as that launcher reports it. */
   playing: string | null;
   /** About that computer (what the LANPage gets too), once known. */
-  info: { host: string; system: string; cpu: string; version: string } | null;
+  info: { host: string; system: string; cpu: string; gpu: string; version: string } | null;
 }
 
 /** Someone the LANPage shows as online who is not in the chat (the ETI

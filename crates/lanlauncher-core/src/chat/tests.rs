@@ -569,6 +569,7 @@ async fn others_learn_about_this_computer() {
         host: "ALICE-PC".into(),
         system: "Windows 11 (26100)".into(),
         cpu: "Ryzen\n7".into(),
+        gpu: "RTX 3080".into(),
         version: "0.2.0 (abc1234)".into(),
     });
     let b = lan.start(1, "Bob").await;

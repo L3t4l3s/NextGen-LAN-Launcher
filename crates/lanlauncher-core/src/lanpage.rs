@@ -426,6 +426,27 @@ pub struct StatsReport {
     pub current_game: String,
 }
 
+/// The computer's name as the ETI launcher reports it: on Windows the
+/// NetBIOS name (`KEVINS-PC`, what `COMPUTERNAME` holds), elsewhere the host
+/// name. The LANPage shows it next to the player.
+fn stats_host_name() -> String {
+    #[cfg(windows)]
+    if let Some(name) = std::env::var("COMPUTERNAME").ok().filter(|n| !n.is_empty()) {
+        return name;
+    }
+    sysinfo::System::host_name().unwrap_or_default()
+}
+
+/// One line of at most 100 characters: what other launchers and the LANPage
+/// report goes into one table cell or tooltip line.
+pub fn one_line(s: &str) -> String {
+    s.trim()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(100)
+        .collect()
+}
+
 /// Percent-encode a string as ISO-8859-15 bytes (what `stats.php` decodes).
 pub fn encode_latin9(value: &str) -> String {
     let (bytes, _, _) = encoding_rs::ISO_8859_15.encode(value);
@@ -474,6 +495,7 @@ impl StatsReport {
         macs.sort();
         macs.dedup();
         let cpu = cpu_brand_of(&sys);
+        let hw = crate::hardware::this_machine();
         let os = format!(
             "{} {}",
             sysinfo::System::name().unwrap_or_default(),
@@ -482,15 +504,15 @@ impl StatsReport {
         .trim()
         .to_string();
         Self {
-            hostname: sysinfo::System::host_name().unwrap_or_default(),
+            hostname: stats_host_name(),
             macaddr1: macs.first().cloned().unwrap_or_default(),
             macaddr2: macs.get(1).cloned().unwrap_or_default(),
-            board_manufacturer: String::new(),
-            baseboard: String::new(),
-            system_product_name: String::new(),
-            bios_release: String::new(),
+            board_manufacturer: hw.board_manufacturer.clone(),
+            baseboard: hw.baseboard.clone(),
+            system_product_name: hw.system_product_name.clone(),
+            bios_release: hw.bios_release.clone(),
             cpu,
-            gpu: String::new(),
+            gpu: hw.gpu.clone(),
             windows_edition: os,
             player_name: player_name.to_string(),
             current_game: current_game.unwrap_or_default().to_string(),
@@ -580,11 +602,7 @@ pub fn parse_online_players(body: &str) -> Option<Vec<LanPagePlayer>> {
             Some(serde_json::Value::Number(n)) => n.to_string(),
             _ => String::new(),
         };
-        s.trim()
-            .chars()
-            .filter(|c| !c.is_control())
-            .take(100)
-            .collect()
+        one_line(&s)
     };
     let players = v
         .get("players")?

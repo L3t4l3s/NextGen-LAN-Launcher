@@ -67,8 +67,6 @@ const RETRY_DIRECT_AFTER: Duration = Duration::from_secs(30);
 const FLOOD_COUNT: usize = 5;
 const FLOOD_WINDOW: Duration = Duration::from_secs(10);
 const FLOOD_PAUSE: Duration = Duration::from_secs(30);
-/// Longest value of a [`PeerInfo`] field.
-const MAX_INFO: usize = 100;
 /// Longest game title a beacon carries.
 const MAX_PLAYING: usize = 60;
 
@@ -240,23 +238,20 @@ pub struct PeerInfo {
     #[serde(default)]
     pub cpu: String,
     #[serde(default)]
+    pub gpu: String,
+    #[serde(default)]
     pub version: String,
 }
 
 impl PeerInfo {
     /// Each field one line of sane length.
     fn cleaned(self) -> Self {
-        let clean = |s: String| -> String {
-            s.trim()
-                .chars()
-                .filter(|c| !c.is_control())
-                .take(MAX_INFO)
-                .collect()
-        };
+        let clean = |s: String| crate::lanpage::one_line(&s);
         Self {
             host: clean(self.host),
             system: clean(self.system),
             cpu: clean(self.cpu),
+            gpu: clean(self.gpu),
             version: clean(self.version),
         }
     }

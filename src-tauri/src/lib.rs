@@ -2032,8 +2032,19 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
                 .and_then(|c| c.stats_url.clone());
             if let (true, Some(url)) = (enabled, url) {
                 let current = st.running.read().await.first().map(|(g, _)| g.clone());
-                let report =
-                    lanlauncher_core::lanpage::StatsReport::collect(&player, current.as_deref());
+                // The first collection reads the hardware (`reg`, `lspci`).
+                let collected = tauri::async_runtime::spawn_blocking(move || {
+                    lanlauncher_core::lanpage::StatsReport::collect(&player, current.as_deref())
+                })
+                .await;
+                // A blank report would put a nameless player on the LANPage.
+                let report = match collected {
+                    Ok(report) => report,
+                    Err(e) => {
+                        log::warn!("stats beacon skipped: {e}");
+                        continue;
+                    }
+                };
                 if let Err(e) = report.send(&url).await {
                     log::warn!("stats beacon failed: {e}");
                 }
