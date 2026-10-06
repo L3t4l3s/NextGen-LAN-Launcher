@@ -756,7 +756,9 @@ mod tests {
 
     /// The setup script runs in the very prefix the game then starts in,
     /// with the same runner, through Wine's `cmd.exe` and without the
-    /// profile's wrapper; a native game gets no Windows setup at all.
+    /// profile's wrapper; a native game gets no Windows setup at all. Unix
+    /// only, like the setup: a Windows path has no Wine drive to become.
+    #[cfg(unix)]
     #[test]
     fn the_setup_script_runs_in_the_games_own_prefix() {
         let tmp = tempfile::tempdir().unwrap();
