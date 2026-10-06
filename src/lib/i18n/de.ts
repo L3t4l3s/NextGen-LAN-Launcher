@@ -263,6 +263,7 @@ export const de: Messages = {
   "err.unknown_game": "Unbekanntes Spiel.",
   "err.no_library": "Kein Spiele-Ordner konfiguriert.",
   "err.runner_missing": "Die gewählte Kompatibilitätsversion ist nicht mehr verfügbar.",
+  "err.no_runner": "Weder Wine noch CrossOver noch Proton gefunden. Unter Linux: Proton in Steam installieren (Bibliothek → Tools → „Proton“) oder Wine; auf dem Mac: CrossOver. Danach das Spiel erneut starten. Gesucht wurde Proton in: {detail}",
   "err.runner_scan": "Die Suche nach Wine-, Proton- und CrossOver-Versionen ist abgebrochen: {detail}",
   "err.plan_task": "Der Startplan konnte nicht erstellt werden: {detail}",
   "err.demo_no_play": "Im Demo-Modus werden keine Spiele gestartet.",

@@ -9,6 +9,10 @@
   Pfade werden jetzt mit aufgelösten Symlinks verglichen (auch für Ordner, die auf ein anderes
   Laufwerk verlinkt sind). Findet die Engine für ein ladendes Spiel keinen Share, steht das
   jetzt einmal pro Minute im Log.
+- Die Meldung „kein Wine, CrossOver oder Proton gefunden“ (macOS/Linux) erschien immer auf
+  Englisch, auch bei deutscher Oberfläche, beim Start wie bei der Einrichtung. Sie ist jetzt
+  übersetzt und sagt, was zu installieren ist. Dasselbe gilt für „gewählte
+  Kompatibilitätsversion nicht mehr verfügbar“.
 - **LANPage als Reiter:** Antwortet im Netz eine LANPage (`launcher.lan` liefert eine gültige
   `launcher.ini`), erscheint oben ein Reiter „LANPage“, der die Seite im Launcher zeigt. Sie
   bleibt geladen, während man in die Bibliothek wechselt (Formulare und Logins gehen nicht

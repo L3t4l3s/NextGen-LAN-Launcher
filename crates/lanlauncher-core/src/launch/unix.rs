@@ -256,10 +256,11 @@ fn plan_without_wrapper(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
     }
     .ok_or_else(|| {
         if let Some(program) = selected_program {
-            return Error::Launch(format!(
+            log::warn!(
                 "selected compatibility tool is no longer available: {}",
                 program.display()
-            ));
+            );
+            return Error::Code("err.runner_missing".into());
         }
         // Naming the places searched turns an unanswerable report into one
         // line of evidence, as `resilio::locate_binary_detailed` does.
@@ -271,9 +272,7 @@ fn plan_without_wrapper(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
             .collect::<Vec<_>>()
             .join(", ");
         log::warn!("no runner found; looked for Proton in [{probed}] and for wine on PATH");
-        Error::Launch(format!(
-            "no Wine, CrossOver or Proton found (looked for Proton in {probed})"
-        ))
+        Error::Code(format!("err.no_runner|{probed}"))
     })?;
 
     // Automatic mode keeps the original prefix for backwards compatibility.
