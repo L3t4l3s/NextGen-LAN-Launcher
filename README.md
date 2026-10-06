@@ -178,6 +178,19 @@ again.
 
 ## Open items
 
+- **Setup scripts on macOS/Linux — untested on a Mac, check at the LAN:** after extraction a
+  game's `game_setup.cmd` runs in the game's prefix through Wine's own `cmd.exe`, with the
+  runner the game starts with (CD keys, registry paths, the package's own helpers such as
+  `wc3_keys.exe`). Lines a prefix has no use for are left out and logged: `netsh`, `dism`,
+  `taskkill`, `pause`/`timeout`/`choice`, and programs outside the game folder (mostly the old
+  launcher's `unrar.exe`/`fnr.exe`). Against the 32 public ETI setup scripts that leaves out 8
+  lines; the mechanism (paths with spaces and umlauts, the four arguments, `reg add`, exit code)
+  was tried with Proton 11 on Linux. Not tried: CrossOver, plain Wine, and most games' real
+  scripts. Games installed before this version get their setup at their next start.
+  `game_start.cmd` still does not run on macOS/Linux: what it prepares at each start
+  (`fnr.exe` writing the player name, registry values) is missing there. Known gaps: a setup
+  claims its game, not its prefix, so a second game whose profile shares the prefix can start
+  beside it; text inside parentheses of an `echo` that names a refused tool is rewritten too.
 - **LANPage tab on Windows and macOS — untested, check at the LAN:** the page runs in an iframe
   of the main window. Checked here under WebKitGTK (Xvfb, dev LANPage at `launcher.lan`): it
   loads from `tauri://localhost`, links navigate inside the frame, it stays loaded across tabs,
@@ -403,7 +416,8 @@ again.
   from the share (`video/<id>.mp4`).
 - **macOS/Linux launch profiles:** eight games have curated profiles; every other game gets a profile
   derived from `game_start.cmd` (91 of 158 ETI scripts start exactly one executable) or the user
-  picks the executable on first launch.
+  picks the executable on first launch. The one-time `game_setup.cmd` runs in the game's prefix
+  (see [Open items](#open-items)).
 - Roadmap: LANPage inside the launcher, a LAN-Share file-sharing view, TS3/Discord integration.
 
 ## License

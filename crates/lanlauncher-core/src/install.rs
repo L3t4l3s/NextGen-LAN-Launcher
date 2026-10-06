@@ -85,6 +85,17 @@ pub struct Receipt {
     /// "Repair" verifies and re-extracts it.
     #[serde(default)]
     pub adopted: bool,
+    /// macOS/Linux: the prefixes (or CrossOver bottles) the game's
+    /// `game_setup.cmd` has run in, as `launch::unix::prefix_id` names them,
+    /// or where it was found not to be needed. Per prefix, not per install:
+    /// pinning another Proton gives the game a prefix of its own, and the CD
+    /// keys and registry values have to go there too. Set by the launcher's
+    /// setup, never on Windows, whose elevated run sets nothing up in a
+    /// prefix. Empty in receipts from before the script setup (macOS and Linux
+    /// marked `setup_done` without running the script) and in adopted ETI
+    /// installs; the next start catches up.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub script_setup_prefixes: Vec<String>,
 }
 
 impl Receipt {
@@ -1546,6 +1557,7 @@ impl InstallManager {
                                             setup_done: false,
                                             exe_override: None,
                                             adopted: false,
+                                            script_setup_prefixes: Vec::new(),
                                         };
                                         if let Err(e) = receipt.save(&paths.receipt) {
                                             t.fail(
@@ -1603,6 +1615,7 @@ impl InstallManager {
                                     setup_done: true,
                                     exe_override: None,
                                     adopted: true,
+                                    script_setup_prefixes: Vec::new(),
                                 };
                                 let saved = catalog
                                     .game(&game_id)
@@ -1969,6 +1982,7 @@ mod tests {
             setup_done: true,
             exe_override: None,
             adopted: false,
+            script_setup_prefixes: Vec::new(),
         });
         assert_eq!(o.bytes_on_disk(), 0);
         // Once the new package starts arriving, its own file is the figure —
@@ -2213,6 +2227,7 @@ mod tests {
             setup_done: true,
             exe_override: None,
             adopted: false,
+            script_setup_prefixes: Vec::new(),
         });
         assert_eq!(t.step(&o, &policy(), t0), Action::None);
         assert_eq!(
@@ -2587,6 +2602,7 @@ mod tests {
             setup_done: true,
             exe_override: None,
             adopted: false,
+            script_setup_prefixes: Vec::new(),
         });
         o.local_present = true;
         o.required_files_ok = true;
@@ -2914,6 +2930,7 @@ mod tests {
             setup_done: true,
             exe_override: None,
             adopted: false,
+            script_setup_prefixes: Vec::new(),
         }
         .save(&paths.receipt)
         .unwrap();

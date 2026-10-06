@@ -204,7 +204,7 @@ fn plan_without_wrapper(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
         )));
     }
     let args = expand_args(&args, ctx);
-    let mut env: BTreeMap<String, String> = ctx
+    let env: BTreeMap<String, String> = ctx
         .manifest
         .map(|m| {
             m.launch_for(crate::manifest::Manifest::current_platform())
@@ -246,6 +246,21 @@ fn plan_without_wrapper(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
         });
     }
 
+    wine_plan(ctx, exe, args, cwd, wanted, env)
+}
+
+/// What runs a Windows program of this game: the selected or automatic
+/// runner, in the game's prefix (or bottle), with the profile's variables.
+/// The game's own start and its setup script ([`setup_script_plan`]) share
+/// it, so the setup writes into exactly the prefix the game then reads.
+fn wine_plan(
+    ctx: &LaunchContext<'_>,
+    exe: PathBuf,
+    args: Vec<String>,
+    cwd: PathBuf,
+    wanted: Runner,
+    mut env: BTreeMap<String, String>,
+) -> Result<LaunchPlan> {
     let runners = detect_runners(ctx.settings);
     let selected = ctx.settings.game_runner(ctx.game_id);
     let selected_program = selected.map(|runner| runner.program.as_path());
@@ -365,6 +380,74 @@ fn plan_without_wrapper(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
             })
         }
     }
+}
+
+/// `cmd.exe /c .nll-setup-run.cmd` with the game's runner, in the game's
+/// prefix and from the game's folder: how
+/// a setup script runs on macOS and Linux (see [`super::setup_script`]).
+/// `None` for a game that does not run through Wine at all — a native build
+/// in its profile — whose Windows setup script has nothing to set up.
+///
+/// The game's executable is not needed, only what would run it: a package
+/// whose executable the user still has to choose gets its setup all the same.
+pub fn setup_script_plan(ctx: &LaunchContext<'_>) -> Result<Option<LaunchPlan>> {
+    let platform = crate::manifest::Manifest::current_platform();
+    let spec = ctx.manifest.map(|m| m.launch_for(platform));
+    let wanted = spec.as_ref().map(|s| s.runner).unwrap_or(Runner::Auto);
+    let native = match resolve_exe(ctx) {
+        Ok((exe, ..)) => !exe
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("exe")),
+        Err(_) => false,
+    };
+    if wanted == Runner::Native || native {
+        return Ok(None);
+    }
+    let mut env = spec.map(|s| s.env).unwrap_or_default();
+    env.extend(super::setup_script::env(
+        &ctx.paths.share_dir,
+        &ctx.settings.safe_player_name(),
+    ));
+    wine_plan(
+        ctx,
+        PathBuf::from("cmd.exe"),
+        // By its name from the game's folder, not by its path: cmd strips
+        // the quotes around a `/c` path holding `(` or `&` ("Games (LAN)")
+        // and then finds nothing — tried with Proton 11.
+        vec![
+            "/c".to_string(),
+            super::setup_script::WRAPPER_NAME.to_string(),
+        ],
+        ctx.paths.share_dir.clone(),
+        wanted,
+        env,
+    )
+    .map(Some)
+}
+
+/// The prefix a plan runs in, as one string to compare: the CrossOver
+/// bottle by name, else `STEAM_COMPAT_DATA_PATH` or `WINEPREFIX` resolved
+/// (relative to the plan's folder, through symlinks — `/home` is
+/// `/var/home` on Fedora Atomic). `None` for a native start.
+pub fn prefix_id(plan: &LaunchPlan) -> Option<String> {
+    if plan.args.first().is_some_and(|a| a == "--bottle") {
+        return plan.args.get(1).map(|bottle| format!("bottle:{bottle}"));
+    }
+    if plan.runner.starts_with("native") {
+        return None;
+    }
+    ["STEAM_COMPAT_DATA_PATH", "WINEPREFIX"]
+        .iter()
+        .find_map(|name| plan.env.get(*name))
+        .map(|dir| {
+            let dir = Path::new(dir);
+            let dir = if dir.is_absolute() {
+                dir.to_path_buf()
+            } else {
+                plan.cwd.join(dir)
+            };
+            crate::transport::normalise_dir(&dir)
+        })
 }
 
 /// What Automatic runs for a game: the first runner that fits what the
@@ -669,6 +752,136 @@ mod tests {
         );
         assert!(env["STEAM_COMPAT_CLIENT_INSTALL_PATH"].ends_with(".local/share/Steam"));
         assert!(env["STEAM_COMPAT_DATA_PATH"].ends_with(".nll-prefix"));
+    }
+
+    /// The setup script runs in the very prefix the game then starts in,
+    /// with the same runner, through Wine's `cmd.exe` and without the
+    /// profile's wrapper; a native game gets no Windows setup at all.
+    #[test]
+    fn the_setup_script_runs_in_the_games_own_prefix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = GamePaths::new(tmp.path(), "g");
+        std::fs::create_dir_all(&paths.local_dir).unwrap();
+        std::fs::write(paths.local_dir.join("game.exe"), "").unwrap();
+        let proton = tmp.path().join("Proton 11.0/proton");
+        std::fs::create_dir_all(proton.parent().unwrap()).unwrap();
+        std::fs::write(&proton, "").unwrap();
+        let wine = tmp.path().join("wine");
+        std::fs::write(&wine, "").unwrap();
+        let mut settings = Settings::default();
+        settings.runner_paths.proton = Some(proton.clone());
+        settings.runner_paths.wine = Some(wine.clone());
+        let manifest = |runner, exe: &str| Manifest {
+            id: "g".into(),
+            launch: LaunchSpec {
+                exe: exe.into(),
+                runner,
+                wrapper: vec!["gamescope".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let both = |m: &Manifest| {
+            let ctx = LaunchContext {
+                paths: &paths,
+                game_id: "g",
+                settings: &settings,
+                manifest: Some(m),
+                receipt: None,
+                alternative: None,
+            };
+            (plan(&ctx).unwrap(), setup_script_plan(&ctx).unwrap())
+        };
+
+        let (game, setup) = both(&manifest(Runner::Proton, "game.exe"));
+        let setup = setup.expect("a Windows game gets its setup");
+        assert_eq!(setup.program, proton);
+        assert_eq!(
+            setup.args,
+            vec!["run", "cmd.exe", "/c", ".nll-setup-run.cmd"]
+        );
+        assert_eq!(
+            setup.env.get("STEAM_COMPAT_DATA_PATH"),
+            game.env.get("STEAM_COMPAT_DATA_PATH")
+        );
+        assert_eq!(setup.cwd, paths.share_dir);
+        assert!(setup.wrapper.is_empty());
+        assert!(setup.env["NLL_GAME_PATH"].starts_with("Z:\\"));
+
+        let (game, setup) = both(&manifest(Runner::Wine, "game.exe"));
+        let setup = setup.unwrap();
+        assert_eq!(setup.program, wine);
+        assert_eq!(setup.args, vec!["cmd.exe", "/c", ".nll-setup-run.cmd"]);
+        assert_eq!(setup.env.get("WINEPREFIX"), game.env.get("WINEPREFIX"));
+
+        std::fs::write(paths.local_dir.join("game.x86_64"), "").unwrap();
+        let native = LaunchContext {
+            paths: &paths,
+            game_id: "g",
+            settings: &settings,
+            manifest: Some(&manifest(Runner::Auto, "game.x86_64")),
+            receipt: None,
+            alternative: None,
+        };
+        assert_eq!(setup_script_plan(&native).unwrap(), None);
+    }
+
+    /// A pinned version gets a prefix of its own, and the setup's bookkeeping
+    /// has to tell the two apart; the same prefix reached through a symlink
+    /// is one.
+    #[test]
+    fn a_prefix_is_named_by_where_it_is_and_a_bottle_by_its_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("var-home");
+        std::fs::create_dir_all(real.join("g/.nll-prefix")).unwrap();
+        std::fs::create_dir_all(real.join("g/local")).unwrap();
+        let link = tmp.path().join("home");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let plan = |runner: &str, args: &[&str], env: &[(&str, String)]| LaunchPlan {
+            program: PathBuf::from("/x"),
+            args: args.iter().map(|a| a.to_string()).collect(),
+            cwd: link.join("g/local"),
+            env: env
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
+            runner: runner.into(),
+            needs_elevation: false,
+            raw_command_line: None,
+            wrapper: Vec::new(),
+        };
+        let compat = |dir: PathBuf| ("STEAM_COMPAT_DATA_PATH", dir.to_string_lossy().to_string());
+        let through_link = prefix_id(&plan(
+            "Proton",
+            &["run"],
+            &[compat(link.join("g/.nll-prefix"))],
+        ));
+        let direct = prefix_id(&plan(
+            "Proton",
+            &["run"],
+            &[compat(real.join("g/.nll-prefix"))],
+        ));
+        assert!(through_link.is_some());
+        assert_eq!(through_link, direct);
+        let pinned = prefix_id(&plan(
+            "Proton",
+            &["run"],
+            &[compat(real.join("g/.nll-prefix-0123456789abcdef"))],
+        ));
+        assert_ne!(pinned, direct);
+        assert_eq!(
+            prefix_id(&plan(
+                "Wine",
+                &[],
+                &[("WINEPREFIX", "../.nll-prefix".into())]
+            )),
+            direct
+        );
+        assert_eq!(
+            prefix_id(&plan("CrossOver", &["--bottle", "nll-g"], &[])).as_deref(),
+            Some("bottle:nll-g")
+        );
+        assert_eq!(prefix_id(&plan("native", &[], &[])), None);
     }
 
     /// A wrapper goes in front of the start from the user's own or a bundled

@@ -172,6 +172,52 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   alte Sitzungszähler dürfen keinen Anfangsfortschritt erzeugen. `down_speed > 0` gilt im
   Zustand `Downloading` als Lebenszeichen, nicht beim Indizieren. Eine gerundete Prozentzahl
   kann bei großen Paketen länger als zwei Minuten gleich bleiben, obwohl Daten ankommen.
+- **Setup-Skripte unter macOS/Linux:** `game_setup.cmd` läuft nach dem Entpacken im Prefix des
+  Spiels, mit Wines eigener `cmd.exe` und demselben Runner wie der Spielstart
+  (`launch::unix::setup_script_plan`, gemeinsamer Teil `wine_plan`). Kein eigener cmd-Nachbau:
+  Wine kann `set`/`if`/`for`/`%~dp0`/`reg add`. `launch::setup_script::filter` macht aus Zeilen,
+  die ein Prefix nicht braucht oder die hängen würden, `rem`-Zeilen und nennt sie im Log
+  (`netsh`, `dism`, `taskkill`, `pause`/`timeout`/`choice`, Programme außerhalb des Spielordners).
+  Gesperrte Programme und Programme außerhalb des Spielordners zählen dort, wo ein Befehl
+  beginnt: am Zeilenanfang, nach `&`/`|` (ein `^` davor zählt nicht), nach einer Blockklammer,
+  nach `do`/`else` (`for /f … do taskkill`, `)else(pause`) – nicht als Argument (`set choice=1`,
+  `reg add … /v Timeout`, `goto pause`, der Pfad eines `if exist`). Die Klammern von
+  `%ProgramFiles(x86)%` sind keine Blockklammern. Eine Zeile ohne Blockklammern wird ganz zur
+  `rem`-Zeile; in einer Zeile mit ihnen wird nur der gesperrte Einzelbefehl bis zum nächsten
+  `&`/`|` durch `ver>nul` ersetzt (`neutralize`), so bleibt jeder Block heil und ein verketteter
+  `& reg add` erhalten. Ein Versuch
+  mit Platzhalter-`.cmd`-Dateien vorn im `PATH` scheiterte: eine Batchdatei, ohne `call` aus einer
+  anderen gestartet, kehrt nie zurück und beendet das Skript (mit Proton 11 nachgestellt). In den
+  `rem`-Text kommen keine eigenen Klammern (Pfade in Anführungszeichen). Die gefilterte Kopie
+  liegt als `.nll-setup.cmd` im Spielordner, damit `%~dp0` stimmt; `.nll-setup-run.cmd` ruft sie
+  mit ETIs vier Argumenten auf, ohne `call` (`call` expandiert `%` ein zweites Mal und verdoppelt
+  `^`, ein Pfad mit `100%` ging verloren; mit Proton 11 nachgestellt). `cmd.exe /c` bekommt den Wrapper beim Namen, aus dem Spielordner
+  als Arbeitsverzeichnis: ein absoluter Pfad mit `(`/`&` („Games (LAN)“) verliert bei `/c` seine
+  Anführungszeichen und wird nicht gefunden (mit Proton 11 nachgestellt). Pfade und Spielername gehen als Umgebungsvariablen
+  (`NLL_SETUP_SCRIPT`, `NLL_GAME_PATH`, `NLL_PLAYER`) hinein, nicht in die Datei: cmd liest
+  Batchdateien in der Konsolen-Codepage, ein `ä` im Pfad wurde dort zu Mojibake und das Skript
+  lief gar nicht (mit Proton 11 nachgestellt). CD-Keys stehen in den Skripten im Klartext; sie
+  bleiben auf dem Sync-Server und gehören nie in ein Profil oder einen Test. `Receipt::script_setup_prefixes` vermerkt das Setup pro Prefix (`launch::unix::prefix_id`:
+  Bottle-Name bzw. aufgelöster `STEAM_COMPAT_DATA_PATH`/`WINEPREFIX`), nicht pro Installation: eine
+  gepinnte Proton-Version bekommt einen eigenen, leeren Prefix, und auch der braucht die Keys.
+  Leer in Receipts von vor dieser Version (macOS/Linux hatten `setup_done` gesetzt, ohne das Skript
+  auszuführen) und in übernommenen ETI-Installationen; `wine_setup::catch_up` holt das Setup vor
+  dem Start nach, für den Prefix des Startplans. Vermerkt wird in `Started::wait`, bevor die
+  Sperre fällt. Unter Windows wird das Feld nie gesetzt (eine mit Linux
+  geteilte Bibliothek bekäme sonst nie ein Wine-Setup). Ein laufendes Setup belegt das Spiel
+  (`prefix_use.busy` und `setups`: winetricks wartet, Start, Reparatur und Deinstallation melden
+  „Einrichtung läuft noch“, siehe `PrefixUse::mark_busy`), startet nicht in ein laufendes Spiel
+  (`prefix_in_use`) und nicht, solange winetricks im selben Prefix arbeitet. Nach dem Zeitlimit
+  bleibt die Sperre bis zum Prozessende stehen, das Spiel gilt bis dahin nicht als eingerichtet;
+  ebenso, wenn der Installationsjob abgebrochen wird (`Drop` für `wine_setup::Started`). Endet
+  der Prozess dann doch, wird das Setup nachträglich vermerkt. Ein Setup, das nach der Installation gar nicht laufen kann (kein
+  Runner), ist keine Setup-Warnung; der nächste Start holt es nach. Vor dem Start hält nur ein
+  beschäftigter Prefix den Start auf (auch ein wiederholtes Setup); ein
+  Setup, das gar nicht laufen kann (kein Runner, Ordner nicht schreibbar), blockiert ein
+  startbares Spiel nicht. Ein natives Spiel wird nicht markiert und bekommt keine Dateien; wird es
+  später auf Wine umgestellt, läuft sein Setup dann. Die Diagnose-Seite zeigt ein Setup nach
+  Installation oder vor dem Start nur, wenn es nicht starten oder nicht rechtzeitig enden konnte
+  (ein Exit-Code ≠ 0 sagt unter Wine wenig, er steht im Log), „Setup wiederholen“ immer.
 - **Setup-Skripte lesen:** `launch::windows::missing_paths` folgt einem ETI-Skript wie cmd:
   `set`-Variablen, `cd`/`pushd` (`%~dp0` = Spielordner), Programme relativ zum aktuellen Ordner,
   bloße Namen über den `PATH` (sonst gilt `reg.exe` als fehlend), `md` angelegte Ordner, `if`/

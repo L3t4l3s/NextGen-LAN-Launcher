@@ -5,6 +5,7 @@ mod commands;
 mod fixes;
 mod state;
 mod tray;
+mod wine_setup;
 
 use lanlauncher_core::catalog::Catalog;
 use lanlauncher_core::install::{InstallManager, ManifestSetupHook, SetupHook};
@@ -50,8 +51,9 @@ fn is_demo() -> bool {
             .unwrap_or(false)
 }
 
-/// Platform post-extraction hook: Windows runs `game_setup.cmd`, everyone
-/// applies manifest steps. Holds the state weakly because the state owns the
+/// Platform post-extraction hook: everyone applies manifest steps, then
+/// Windows runs `game_setup.cmd` elevated and macOS/Linux run it in the
+/// game's prefix (`wine_setup`). Holds the state weakly because the state owns the
 /// manager that owns this hook.
 struct AppSetupHook {
     state: std::sync::Weak<AppState>,
@@ -65,12 +67,20 @@ impl SetupHook for AppSetupHook {
         manifest: Option<&Manifest>,
     ) -> lanlauncher_core::Result<()> {
         ManifestSetupHook.run_setup(paths, manifest).await?;
-        if !cfg!(target_os = "windows") {
-            return Ok(());
-        }
         let Some(state) = self.state.upgrade() else {
             return Ok(());
         };
+        if !cfg!(target_os = "windows") {
+            // The script in the game's prefix, through Wine's own cmd.
+            let game_id = paths
+                .share_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            return crate::wine_setup::after_install(&state, game_id, paths)
+                .await
+                .map_err(lanlauncher_core::Error::Code);
+        }
         let (lang, player) = {
             let s = state.settings.read().await;
             (s.game_language.clone(), s.safe_player_name())

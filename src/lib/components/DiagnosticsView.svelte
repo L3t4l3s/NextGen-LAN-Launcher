@@ -85,7 +85,9 @@
     if (!gameId) return;
     try {
       await api.rerunSetup(gameId);
-      app.toast("success", t("toast.fix_done"));
+      // Started, not finished: it is not waited for, and its outcome shows
+      // here once it ends.
+      app.toast("success", t("diag.launch.setup_started"));
     } catch (e) {
       app.toast("error", userText(e));
     }

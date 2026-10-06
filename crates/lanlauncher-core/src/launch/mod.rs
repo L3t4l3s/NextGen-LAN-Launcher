@@ -9,6 +9,7 @@
 
 pub mod elevate;
 pub mod proton;
+pub mod setup_script;
 pub mod unix;
 pub mod windows;
 pub mod winetricks;

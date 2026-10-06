@@ -18,5 +18,5 @@ args = ["-window", "-opengl", "-frozenthrone"]
 args = ["-window", "-opengl", "-frozenthrone"]
 
 [setup]
-notes.de = "Das Windows-Setup (game_setup.cmd) entpackt ein Profil nach Dokumente\\Warcraft III und setzt Registry-Werte. Auf Mac/Linux fehlt dieser Schritt; der LAN-Browser braucht ggf. den Bonjour-Dienst in der Bottle."
-notes.en = "The Windows setup (game_setup.cmd) extracts a profile to Documents\\Warcraft III and writes registry values. That step is missing on Mac/Linux; the LAN browser may need the Bonjour service inside the bottle."
+notes.de = "game_setup.cmd schreibt die CD-Keys (wc3_keys.exe), legt das Profil unter Dokumente\\Warcraft III an und setzt Registry-Werte; auf Mac/Linux läuft es im Prefix des Spiels. Der LAN-Browser braucht ggf. den Bonjour-Dienst in der Bottle."
+notes.en = "game_setup.cmd writes the CD keys (wc3_keys.exe), creates the profile in Documents\\Warcraft III and sets registry values; on Mac/Linux it runs in the game's prefix. The LAN browser may need the Bonjour service inside the bottle."

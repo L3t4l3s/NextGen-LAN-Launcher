@@ -474,13 +474,49 @@ async fn plan_with_profile(
     game_id: &str,
     alternative: Option<usize>,
 ) -> Cmd<(LaunchPlan, Option<Manifest>)> {
+    with_launch_context(state, game_id, alternative, None, launch::plan).await
+}
+
+/// How the game's setup script runs on macOS and Linux: Wine's `cmd.exe`
+/// with the game's runner and prefix (`None` for a native game). The same
+/// resolution as the game's own start, so both end up in the same prefix —
+/// in the folder the setup files were written to, `paths`.
+pub(crate) async fn setup_script_plan(
+    state: &AppState,
+    game_id: &str,
+    paths: &lanlauncher_core::paths::GamePaths,
+) -> Cmd<Option<LaunchPlan>> {
+    with_launch_context(
+        state,
+        game_id,
+        None,
+        Some(paths.clone()),
+        launch::unix::setup_script_plan,
+    )
+    .await
+    .map(|(plan, _)| plan)
+}
+
+/// `make` with the context a game's start is planned from — its paths
+/// (`paths`, or where the library finds the game), settings, profile and
+/// receipt — and the profile beside its result.
+async fn with_launch_context<T: Send + 'static>(
+    state: &AppState,
+    game_id: &str,
+    alternative: Option<usize>,
+    paths: Option<lanlauncher_core::paths::GamePaths>,
+    make: impl FnOnce(&LaunchContext<'_>) -> lanlauncher_core::Result<T> + Send + 'static,
+) -> Cmd<(T, Option<Manifest>)> {
     let catalog = state.catalog().await;
     let game = catalog.game(game_id).ok_or("err.unknown_game")?;
     let settings = state.settings.read().await.clone();
-    let paths = settings
-        .library
-        .game_paths(game_id)
-        .ok_or("err.no_library")?;
+    let paths = match paths {
+        Some(paths) => paths,
+        None => settings
+            .library
+            .game_paths(game_id)
+            .ok_or("err.no_library")?,
+    };
     let manifest = resolve_manifest(state, game, Some(&paths));
     drop(catalog);
     let game_id = game_id.to_string();
@@ -496,8 +532,8 @@ async fn plan_with_profile(
             receipt: receipt.as_ref(),
             alternative,
         };
-        let plan = launch::plan(&ctx).map_err(err)?;
-        Ok((plan, manifest))
+        let made = make(&ctx).map_err(err)?;
+        Ok((made, manifest))
     })
     .await
     .map_err(|e| format!("err.plan_task|{e}"))?
@@ -680,6 +716,24 @@ pub async fn play_game(
     if prefix_being_filled(&state, &plan) {
         return Err("err.components_busy_game".into());
     }
+    // Asked before the setup below or the start creates it: a prefix that
+    // was already there may hold saves of versions the launcher never
+    // recorded.
+    let existed_before = cfg!(not(windows))
+        && state
+            .settings
+            .read()
+            .await
+            .library
+            .game_paths(&game_id)
+            .is_some_and(|paths| {
+                launch::unix::own_prefix_exists_before_start(&plan, &paths, &game_id)
+            });
+    // Into the prefix the start then uses; see `wine_setup::catch_up` for
+    // what holds the start back and what does not.
+    if !cfg!(target_os = "windows") {
+        crate::wine_setup::catch_up(state.inner(), &game_id, &plan).await?;
+    }
     let (allow, lang, player, paths) = {
         let s = state.settings.read().await;
         (
@@ -722,12 +776,6 @@ pub async fn play_game(
         let _ = std::fs::remove_file(&path);
         path
     });
-    // Asked before the start creates it: a prefix that was already there may
-    // hold saves of versions the launcher never recorded.
-    let existed_before = cfg!(not(windows))
-        && paths.as_ref().is_some_and(|paths| {
-            launch::unix::own_prefix_exists_before_start(&plan, paths, &game_id)
-        });
     let outcome =
         launch::spawn_for_user_watched(&plan, &state.run_dir(), allow, log.as_deref()).await;
     let pid = state
@@ -738,12 +786,9 @@ pub async fn play_game(
     // Only a start that happened counts: this is what a later pin of the
     // same tool is matched against to keep the game's savegames.
     if let Some(paths) = paths.filter(|_| cfg!(not(windows))) {
-        let (plan, game_id) = (plan.clone(), game_id.clone());
         // Awaited: a pin chosen right after this start must find its record.
-        let _ = tauri::async_runtime::spawn_blocking(move || {
-            launch::unix::remember_default_prefix_user(&plan, &paths, &game_id, existed_before)
-        })
-        .await;
+        crate::wine_setup::remember_prefix(plan.clone(), paths, game_id.clone(), existed_before)
+            .await;
     }
     {
         let mut running = state.running.write().await;
@@ -813,7 +858,31 @@ pub async fn run_extra(
 #[tauri::command]
 pub async fn rerun_setup(state: State<'_, Arc<AppState>>, game_id: String) -> Cmd<()> {
     if !cfg!(target_os = "windows") {
-        return Err("err.windows_only".into());
+        // In the prefix the output always goes into the transcript. What
+        // keeps it from starting is the answer to the click; the run itself
+        // is not waited for, a helper may wait for a click of its own.
+        let paths = state
+            .settings
+            .read()
+            .await
+            .library
+            .game_paths(&game_id)
+            .ok_or("err.no_library")?;
+        if !paths.setup_script.is_file() {
+            return Err("err.extra_missing".into());
+        }
+        let started = crate::wine_setup::start(
+            state.inner(),
+            &game_id,
+            &paths,
+            crate::wine_setup::Record::Always,
+        )
+        .await?;
+        let Some(started) = started else {
+            return Err("err.setup_native".into());
+        };
+        tauri::async_runtime::spawn(started.wait(crate::wine_setup::LIMIT));
+        return Ok(());
     }
     let settings = state.settings.read().await.clone();
     let paths = settings
@@ -1864,21 +1933,19 @@ struct GameUse<'a>(&'a std::sync::Mutex<crate::state::PrefixUse>, String);
 
 impl<'a> GameUse<'a> {
     fn claim(lock: &'a std::sync::Mutex<crate::state::PrefixUse>, game: &str) -> Cmd<Self> {
-        let mut used = lock.lock().unwrap_or_else(|e| e.into_inner());
-        if used.installing.as_ref().is_some_and(|(g, _)| g == game) {
-            return Err("err.components_busy_game".into());
-        }
-        used.busy.push(game.to_string());
+        lock.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .mark_busy(game)?;
         Ok(Self(lock, game.to_string()))
     }
 }
 
 impl Drop for GameUse<'_> {
     fn drop(&mut self) {
-        let mut used = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(i) = used.busy.iter().position(|g| *g == self.1) {
-            used.busy.remove(i);
-        }
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .unmark_busy(&self.1);
     }
 }
 
@@ -1934,7 +2001,7 @@ fn prefix_key(prefix: &std::path::Path) -> std::path::PathBuf {
 
 /// Whether `plan` would start in the prefix components are being
 /// installed into right now — another game's, when profiles share one.
-fn prefix_being_filled(state: &AppState, plan: &LaunchPlan) -> bool {
+pub(crate) fn prefix_being_filled(state: &AppState, plan: &LaunchPlan) -> bool {
     let running = state
         .prefix_use
         .lock()

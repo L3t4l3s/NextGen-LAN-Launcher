@@ -363,7 +363,7 @@ fn precedes_a_command(token: &str) -> Option<usize> {
 
 /// Words of a batch line: a quoted string is one word, everything else splits
 /// on whitespace and on the separators cmd itself treats as such.
-fn tokens(line: &str) -> Vec<String> {
+pub(super) fn tokens(line: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut current = String::new();
     let mut quoted = false;
@@ -388,7 +388,7 @@ fn tokens(line: &str) -> Vec<String> {
 /// window's title, not the program.
 /// An empty title (`start "" "prog.exe"`) does not count: `tokens` drops it,
 /// so there is no word to skip.
-fn after_start_is_quoted(statement: &str) -> bool {
+pub(super) fn after_start_is_quoted(statement: &str) -> bool {
     let mut rest = statement.trim_start()[5..].trim_start();
     while let Some(after) = rest.strip_prefix('/') {
         rest = after
@@ -402,7 +402,7 @@ fn after_start_is_quoted(statement: &str) -> bool {
 /// The commands of one line: cmd chains them with `&`, `&&`, `|` and `||`,
 /// and a script that writes `cd local && "OpenAL\oalinst.exe"` means both
 /// halves. Quoted text is passed over, because a path may contain anything.
-fn statements(line: &str) -> Vec<&str> {
+pub(super) fn statements(line: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut quoted = false;
     let mut start = 0;
@@ -424,7 +424,7 @@ fn statements(line: &str) -> Vec<&str> {
 
 /// One command up to its redirections: `cd /d "%~dp0" >nul 2>&1` is one
 /// directory and two redirections, not a directory with a strange name.
-fn until_the_next_command(line: &str) -> &str {
+pub(super) fn until_the_next_command(line: &str) -> &str {
     let mut quoted = false;
     for (i, c) in line.char_indices() {
         match c {

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **macOS/Linux: Das Einrichtungsskript eines Spiels läuft jetzt.** Bisher wurde `game_setup.cmd`
+  nur unter Windows ausgeführt; unter macOS und Linux fehlten deshalb CD-Keys, Registry-Pfade und
+  was die Hilfsprogramme des Pakets einrichten (Warcraft III fragte nach dem Key für „The Frozen
+  Throne“). Nach dem Entpacken läuft das Skript jetzt im Prefix des Spiels, mit Wine bzw. Proton
+  wie beim Spielstart. Zeilen, die dort nichts zu suchen haben (Windows-Firewall, `dism`,
+  `taskkill`, Warten auf eine Taste, Programme des alten ETI-Launchers), werden übersprungen und
+  im Log genannt. Bereits installierte Spiele holen das Setup beim nächsten Start nach, ebenso
+  Spiele, die installiert wurden, bevor Wine oder Proton da war, und Spiele, die auf eine
+  Proton-Version mit eigenem Prefix umgestellt wurden. „Setup wiederholen“ auf der
+  Diagnose-Seite geht jetzt auch unter macOS und Linux. Mit Proton 11 unter Linux geprüft,
+  CrossOver und reines Wine ungetestet.
 - **Linux mit verlinktem Bibliotheksordner (Fedora Atomic: Silverblue, Kinoite, Bazzite,
   Bluefin):** Ein fertig heruntergeladenes Spiel wurde nie geprüft und entpackt, aus
   „Herunterladen“ wurde nie „Spielen“. Dort zeigt `/home` auf `/var/home`; Resilio meldet den

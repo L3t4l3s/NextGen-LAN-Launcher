@@ -74,8 +74,62 @@ pub struct PrefixUse {
     /// prefix: profiles may give two games the same one.
     pub installing: Option<(String, std::path::PathBuf)>,
     /// Games being started (until spawned), uninstalled, repaired or
-    /// cancelled: what a component installation must not run beside.
+    /// cancelled, or whose setup script runs: what a component installation
+    /// must not run beside.
     pub busy: Vec<String>,
+    /// macOS/Linux: games whose setup script runs in their prefix, until its
+    /// process ends (`wine_setup`).
+    pub setups: Vec<String>,
+}
+
+impl PrefixUse {
+    /// `game` in use, unless its components are being installed or its
+    /// setup script runs: its prefix lives among its files, and a start,
+    /// repair or uninstall must not pull them away under either.
+    pub fn mark_busy(&mut self, game: &str) -> Result<(), String> {
+        if self.installing.as_ref().is_some_and(|(g, _)| g == game) {
+            return Err("err.components_busy_game".into());
+        }
+        if self.setup_running(game) {
+            return Err("err.setup_running".into());
+        }
+        self.busy.push(game.to_string());
+        Ok(())
+    }
+
+    /// The setup script of `game` begins: the game is in use, as by
+    /// [`Self::mark_busy`], and listed as setting up. Refused while anything
+    /// else holds the game — an uninstall, a repair — except the start that
+    /// runs the setup first (`held_by_caller`).
+    pub fn begin_setup(&mut self, game: &str, held_by_caller: bool) -> Result<(), String> {
+        let holders = self.busy.iter().filter(|g| *g == game).count();
+        if holders > usize::from(held_by_caller) {
+            return Err("err.setup_game_busy".into());
+        }
+        self.mark_busy(game)?;
+        self.setups.push(game.to_string());
+        Ok(())
+    }
+
+    /// The setup script of `game` ended.
+    pub fn end_setup(&mut self, game: &str) {
+        self.unmark_busy(game);
+        if let Some(i) = self.setups.iter().position(|g| g == game) {
+            self.setups.remove(i);
+        }
+    }
+
+    /// Whether the setup script of `game` is running.
+    pub fn setup_running(&self, game: &str) -> bool {
+        self.setups.iter().any(|g| g == game)
+    }
+
+    /// One use of `game` less.
+    pub fn unmark_busy(&mut self, game: &str) {
+        if let Some(i) = self.busy.iter().position(|g| g == game) {
+            self.busy.remove(i);
+        }
+    }
 }
 
 /// What the launcher started (or failed to start) last, as shown on the
