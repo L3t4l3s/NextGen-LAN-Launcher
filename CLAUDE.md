@@ -218,6 +218,34 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   später auf Wine umgestellt, läuft sein Setup dann. Die Diagnose-Seite zeigt ein Setup nach
   Installation oder vor dem Start nur, wenn es nicht starten oder nicht rechtzeitig enden konnte
   (ein Exit-Code ≠ 0 sagt unter Wine wenig, er steht im Log), „Setup wiederholen“ immer.
+- **Startskripte unter macOS/Linux:** `launch::unix::starts_through_script` entscheidet: Stammt
+  die Startdatei nur aus `game_start.cmd` (`exe_from_script`, oder kein Profil) und hat niemand
+  gewählt (keine Alternative, kein `exe_override`, keine eigene Konfiguration), startet das ganze
+  gefilterte Skript (`Script::Start`, `.nll-start*.cmd`), sonst die Startdatei nach der
+  Vorbereitung (`Script::Preparation`: der Teil vor der Zeile, die eine Startdatei aus den
+  Firewall-Regeln oder die des Profils aufruft, `setup_script::preparation`; mit `set /p`,
+  `goto`/Sprungmarke oder offenem Block keine). Kein `start "…" /wait`: Proton gibt `cmd.exe`
+  ohnehin ein Konsolenfenster, und ein Menü wird dort beantwortet, auch mit `/dev/null` als
+  Eingabe (mit Proton 11 und einer echten Eingabe geprüft); `start` ergab zwei Fenster.
+  `fnr.exe` (Kopie des alten ETI-Launchers oder im Spielordner) wird im Filter zu `"%NLL_FNR%"`;
+  der Launcher schreibt `launch::fnr` (Shell + Perl) nach `<data>/tools/fnr` und setzt die
+  Variable auf dessen `Z:`-Pfad. Wine startet ein Host-Programm über einen solchen Pfad und
+  wartet darauf (Exit-Code geht verloren) — aber nur mit einer Endung außer
+  `.com/.exe/.bat/.cmd` (ohne Endung sucht cmd genau diese und findet nichts), daher
+  `nll-fnr.sh`. `$0` ist dort ein Pfad über `dosdevices/z:`. Proton gibt sein `LD_LIBRARY_PATH`
+  mit, das Skript startet Perl ohne. Verhalten wie fnr: ohne Groß-/Kleinschreibung, `^`/`$` pro
+  Zeile, `.` nimmt `\r` mit, `Name=.*` trifft auch `ServerName=` — die Pakete vom Sync-Server
+  tragen genau diese Spuren eines Windows-Laufs, also nicht „verbessern“. Eine Datei behält ihre
+  Kodierung (BOM UTF-16/UTF-8, sonst gültiges UTF-8 jenseits ASCII, sonst Windows-ANSI — auch
+  reines ASCII, denn dafür sind die Spiele geschrieben): ein „Jürgen“ landet in einer ANSI-Ini
+  als `\xFC`, nicht als UTF-8. Fehlt Perl, warnt das Log einmal. `starts_through_script_for`
+  ist dieselbe Regel für „Startdatei wählen“ (`needs_exe_choice`); ein Profil ohne Startdatei
+  startet über das Skript. Die Vorbereitung belegt das Spiel wie ein Setup (`SetupClaim`, vom
+  Start gehalten) und hält den Start nach 2 Minuten mit `err.prepare_timeout` an, die Belegung
+  bleibt bis zum Prozessende. Startplan und Vorbereitung kommen aus einer Auflösung
+  (`build_start`, jede sucht alle Steam-Bibliotheken ab). Die Skriptdateien werden nur bei
+  geändertem Inhalt neu geschrieben (`write_if_changed`): cmd liest per Offset weiter, ein
+  zweiter Start darf die Datei des ersten nicht verschieben.
 - **Setup-Skripte lesen:** `launch::windows::missing_paths` folgt einem ETI-Skript wie cmd:
   `set`-Variablen, `cd`/`pushd` (`%~dp0` = Spielordner), Programme relativ zum aktuellen Ordner,
   bloße Namen über den `PATH` (sonst gilt `reg.exe` als fehlend), `md` angelegte Ordner, `if`/

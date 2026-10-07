@@ -178,6 +178,19 @@ again.
 
 ## Open items
 
+- **Start scripts on macOS/Linux — untested on a Mac, check at the LAN:** a game whose executable
+  is only read off `game_start.cmd` (no profile names one, nobody picked one) starts through the
+  whole filtered script in its prefix, as on Windows: language branches, `reg add`, menus
+  (`set /p`, answered in the console window Proton opens for `cmd.exe`), SmartSteamLoader. A
+  game with a curated profile, the user's own configuration or a picked executable runs the
+  script's preparation (the part before the line that starts the game) and then the profile's
+  executable; a preparation with a menu, a jump or an open block does not run. `fnr.exe` — the
+  old ETI launcher's copy or one in the game folder — runs as the launcher's own find and
+  replace (`launch::fnr`, a shell and Perl script Wine starts by its `Z:` path). Tried with
+  Proton 11: Counter-Strike: Source through SmartSteamLoader to its menu, Battlefield 1942's
+  language in the registry, Unreal Tournament 2004's player name through fnr, a menu answered
+  in the console. Like ETI's fnr, `--find "Name=.*"` also rewrites `ServerName=` and the like.
+  Not tried: CrossOver, plain Wine, a Mac (Perl ships with macOS).
 - **Setup scripts on macOS/Linux — untested on a Mac, check at the LAN:** after extraction a
   game's `game_setup.cmd` runs in the game's prefix through Wine's own `cmd.exe`, with the
   runner the game starts with (CD keys, registry paths, the package's own helpers such as
@@ -187,8 +200,7 @@ again.
   lines; the mechanism (paths with spaces and umlauts, the four arguments, `reg add`, exit code)
   was tried with Proton 11 on Linux. Not tried: CrossOver, plain Wine, and most games' real
   scripts. Games installed before this version get their setup at their next start.
-  `game_start.cmd` still does not run on macOS/Linux: what it prepares at each start
-  (`fnr.exe` writing the player name, registry values) is missing there. Known gaps: a setup
+  Known gaps: a setup
   claims its game, not its prefix, so a second game whose profile shares the prefix can start
   beside it; text inside parentheses of an `echo` that names a refused tool is rewritten too.
 - **LANPage tab on Windows and macOS — untested, check at the LAN:** the page runs in an iframe

@@ -1,5 +1,6 @@
 //! macOS / Linux: run Windows game executables through a compatibility layer.
 
+use super::setup_script::Script;
 use super::{expand_args, resolve_exe, LaunchContext, LaunchPlan};
 use crate::error::{Error, Result};
 use crate::manifest::Runner;
@@ -170,6 +171,14 @@ fn dirs_home() -> Option<PathBuf> {
 }
 
 pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
+    if starts_through_script(ctx) {
+        // The script decides what starts; a script run through a native
+        // profile is no case, `starts_through_script` asks for Wine.
+        if let Some(mut plan) = script_plan(ctx, Script::Start)? {
+            plan.wrapper = trusted_wrapper(ctx.manifest);
+            return Ok(plan);
+        }
+    }
     let mut plan = plan_without_wrapper(ctx)?;
     // A `.app` starts through `open`, which hands it to launchd and exits at
     // once: a wrapper would wrap `open`, never the game.
@@ -382,15 +391,71 @@ fn wine_plan(
     }
 }
 
+/// Whether a start runs the game's whole `game_start.cmd` in its prefix
+/// (`Script::Start`), as Windows does, rather than an executable: when the
+/// executable would only be read off that script — no profile names one,
+/// or the profile names none at all — and nobody chose one. A profile that
+/// names its executable, a user's own configuration, an executable picked
+/// by hand or an alternative entry point start that instead, after the
+/// script's preparation ([`preparation_plan`]).
+pub fn starts_through_script(ctx: &LaunchContext<'_>) -> bool {
+    starts_through_script_for(
+        ctx.manifest,
+        ctx.receipt,
+        &ctx.paths.start_script,
+        ctx.alternative,
+    )
+}
+
+/// [`starts_through_script`] from its parts: the one rule, also for
+/// whether the interface has to ask for an executable.
+pub fn starts_through_script_for(
+    manifest: Option<&crate::manifest::Manifest>,
+    receipt: Option<&crate::install::Receipt>,
+    start_script: &Path,
+    alternative: Option<usize>,
+) -> bool {
+    let chosen = alternative.is_some() || receipt.is_some_and(|r| r.exe_override.is_some());
+    let spec = manifest.map(|m| m.launch_for(crate::manifest::Manifest::current_platform()));
+    let from_script = manifest
+        .zip(spec.as_ref())
+        .is_none_or(|(m, spec)| !m.user_config && (m.exe_from_script || spec.exe.is_empty()));
+    let native = spec.is_some_and(|s| s.runner == Runner::Native);
+    !chosen && from_script && !native && start_script.is_file()
+}
+
+/// What the start script prepares before the game, for a start that runs
+/// an executable ([`starts_through_script`] says no): `cmd.exe /c
+/// .nll-prep-run.cmd`, waited for before the game starts. `None` without a
+/// start script, for a native game, and for a start through the script.
+/// Whether a part before the game can run on its own is the files' business
+/// (`setup_script::prepare` writes none then).
+pub fn preparation_plan(ctx: &LaunchContext<'_>) -> Result<Option<LaunchPlan>> {
+    if starts_through_script(ctx) || !ctx.paths.start_script.is_file() {
+        return Ok(None);
+    }
+    script_plan(ctx, Script::Preparation)
+}
+
 /// `cmd.exe /c .nll-setup-run.cmd` with the game's runner, in the game's
-/// prefix and from the game's folder: how
-/// a setup script runs on macOS and Linux (see [`super::setup_script`]).
-/// `None` for a game that does not run through Wine at all — a native build
-/// in its profile — whose Windows setup script has nothing to set up.
+/// prefix and from the game's folder: how a setup script runs on macOS and
+/// Linux (see [`super::setup_script`]). `None` for a game that does not run
+/// through Wine at all — a native build in its profile — whose Windows setup
+/// script has nothing to set up.
 ///
 /// The game's executable is not needed, only what would run it: a package
 /// whose executable the user still has to choose gets its setup all the same.
 pub fn setup_script_plan(ctx: &LaunchContext<'_>) -> Result<Option<LaunchPlan>> {
+    script_plan(ctx, Script::Setup)
+}
+
+/// `script` through Wine's `cmd.exe` with the game's runner, in its prefix,
+/// from the game's folder, with the profile's variables. `None` for a native
+/// game. Proton gives `cmd.exe` a console window of its own, as Windows does,
+/// and a menu (`set /p`) is answered there — also when the launcher's own
+/// input is `/dev/null` (tried with Proton 11: the choice typed into the
+/// window reached the script).
+fn script_plan(ctx: &LaunchContext<'_>, script: Script) -> Result<Option<LaunchPlan>> {
     let platform = crate::manifest::Manifest::current_platform();
     let spec = ctx.manifest.map(|m| m.launch_for(platform));
     let wanted = spec.as_ref().map(|s| s.runner).unwrap_or(Runner::Auto);
@@ -405,24 +470,29 @@ pub fn setup_script_plan(ctx: &LaunchContext<'_>) -> Result<Option<LaunchPlan>> 
     }
     let mut env = spec.map(|s| s.env).unwrap_or_default();
     env.extend(super::setup_script::env(
+        script,
         &ctx.paths.share_dir,
         &ctx.settings.safe_player_name(),
     ));
+    // By its name from the game's folder, not by its path: cmd strips the
+    // quotes around a `/c` path holding `(` or `&` ("Games (LAN)") and then
+    // finds nothing — tried with Proton 11.
     wine_plan(
         ctx,
         PathBuf::from("cmd.exe"),
-        // By its name from the game's folder, not by its path: cmd strips
-        // the quotes around a `/c` path holding `(` or `&` ("Games (LAN)")
-        // and then finds nothing — tried with Proton 11.
-        vec![
-            "/c".to_string(),
-            super::setup_script::WRAPPER_NAME.to_string(),
-        ],
+        vec!["/c".to_string(), script.wrapper_name().to_string()],
         ctx.paths.share_dir.clone(),
         wanted,
         env,
     )
     .map(Some)
+}
+
+/// Whether `plan` runs the game's start script ([`starts_through_script`]).
+pub fn is_script_start(plan: &LaunchPlan) -> bool {
+    plan.args
+        .last()
+        .is_some_and(|a| a == Script::Start.wrapper_name())
 }
 
 /// The prefix a plan runs in, as one string to compare: the CrossOver
@@ -826,6 +896,96 @@ mod tests {
             alternative: None,
         };
         assert_eq!(setup_script_plan(&native).unwrap(), None);
+    }
+
+    /// An executable read off the start script starts through the script,
+    /// as on Windows; an
+    /// executable a profile names, or one picked by hand, starts as it is,
+    /// after the script's preparation.
+    #[cfg(unix)]
+    #[test]
+    fn a_game_without_a_profile_starts_through_its_script() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = GamePaths::new(tmp.path(), "g");
+        std::fs::create_dir_all(&paths.local_dir).unwrap();
+        std::fs::write(paths.local_dir.join("game.exe"), "").unwrap();
+        std::fs::write(&paths.start_script, "\"game.exe\"\r\n").unwrap();
+        let wine = tmp.path().join("wine");
+        std::fs::write(&wine, "").unwrap();
+        let mut settings = Settings::default();
+        settings.runner_paths.wine = Some(wine.clone());
+        let manifest = |from_script: bool| Manifest {
+            id: "g".into(),
+            exe_from_script: from_script,
+            launch: LaunchSpec {
+                exe: "game.exe".into(),
+                runner: Runner::Wine,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let derived = manifest(true);
+        let curated = manifest(false);
+        fn ctx<'a>(
+            paths: &'a GamePaths,
+            settings: &'a Settings,
+            manifest: Option<&'a Manifest>,
+            receipt: Option<&'a crate::install::Receipt>,
+        ) -> LaunchContext<'a> {
+            LaunchContext {
+                paths,
+                game_id: "g",
+                settings,
+                manifest,
+                receipt,
+                alternative: None,
+            }
+        }
+
+        let through_script = plan(&ctx(&paths, &settings, Some(&derived), None)).unwrap();
+        assert!(is_script_start(&through_script));
+        assert_eq!(through_script.args, ["cmd.exe", "/c", ".nll-start-run.cmd"]);
+        assert_eq!(through_script.cwd, paths.share_dir);
+        assert!(through_script.env["NLL_SCRIPT"].ends_with(".nll-start.cmd"));
+        assert!(plan(&ctx(&paths, &settings, None, None)).is_ok_and(|p| is_script_start(&p)));
+        assert_eq!(
+            preparation_plan(&ctx(&paths, &settings, Some(&derived), None)).unwrap(),
+            None
+        );
+
+        let profiled = plan(&ctx(&paths, &settings, Some(&curated), None)).unwrap();
+        assert!(!is_script_start(&profiled));
+        let prep = preparation_plan(&ctx(&paths, &settings, Some(&curated), None))
+            .unwrap()
+            .unwrap();
+        assert_eq!(prep.args, ["cmd.exe", "/c", ".nll-prep-run.cmd"]);
+        assert_eq!(prep.env.get("WINEPREFIX"), profiled.env.get("WINEPREFIX"));
+
+        let picked = crate::install::Receipt {
+            version: 1,
+            game_id: "g".into(),
+            revision: "1".into(),
+            installed_at: chrono::Utc::now(),
+            archive_bytes: 0,
+            files: 0,
+            setup_done: true,
+            exe_override: Some("game.exe".into()),
+            adopted: false,
+            script_setup_prefixes: Vec::new(),
+        };
+        assert!(!is_script_start(
+            &plan(&ctx(&paths, &settings, Some(&derived), Some(&picked))).unwrap()
+        ));
+
+        // No script, no start through it.
+        std::fs::remove_file(&paths.start_script).unwrap();
+        assert!(!is_script_start(
+            &plan(&ctx(&paths, &settings, Some(&derived), None)).unwrap()
+        ));
+        assert_eq!(
+            preparation_plan(&ctx(&paths, &settings, Some(&curated), None)).unwrap(),
+            None
+        );
     }
 
     /// A pinned version gets a prefix of its own, and the setup's bookkeeping

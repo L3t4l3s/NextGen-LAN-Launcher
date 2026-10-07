@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **macOS/Linux: Das Startskript eines Spiels läuft jetzt.** Spiele ohne eigenes Startprofil
+  starten über ihr ganzes `game_start.cmd` im Prefix, wie unter Windows: Sprache, Spielername,
+  Registry-Werte, Auswahlmenüs (im Konsolenfenster) und der SmartSteamLoader, über den viele
+  Spiele starten. Spiele mit Startprofil oder selbst gewählter Startdatei bekommen vorher, was
+  das Skript vor dem Spielstart vorbereitet. `fnr.exe`, mit dem die Skripte Sprache und
+  Spielernamen in Konfigurationsdateien schreiben, ersetzt der Launcher durch ein eigenes
+  Werkzeug – auch die Kopie aus dem Ordner des alten ETI-Launchers, die es sonst nirgends gibt.
+  „Startdatei wählen“ entfällt für Spiele mit Startskript. Mit Proton 11 unter Linux geprüft,
+  CrossOver und reines Wine ungetestet.
 - **macOS/Linux: Das Einrichtungsskript eines Spiels läuft jetzt.** Bisher wurde `game_setup.cmd`
   nur unter Windows ausgeführt; unter macOS und Linux fehlten deshalb CD-Keys, Registry-Pfade und
   was die Hilfsprogramme des Pakets einrichten (Warcraft III fragte nach dem Key für „The Frozen

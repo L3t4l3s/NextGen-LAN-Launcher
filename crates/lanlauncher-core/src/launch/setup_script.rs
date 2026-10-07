@@ -1,4 +1,5 @@
-//! macOS/Linux: a game's `game_setup.cmd`, run inside the game's prefix.
+//! macOS/Linux: a game's ETI scripts, run inside the game's prefix —
+//! `game_setup.cmd` once, `game_start.cmd` at each start ([`Script`]).
 //!
 //! The setup script is what makes an ETI package complete: it writes the CD
 //! keys, the install paths and the player's profile into the registry, and
@@ -12,14 +13,49 @@
 //! they do on Windows. What a Windows machine needs and a prefix does not, or
 //! what would wait for a console nobody sees, is left out line by line; see
 //! [`filter`]. The filtered copy sits next to the original
-//! ([`FILTERED_NAME`]), so `%~dp0` still is the game's folder.
+//! ([`Script::filtered_name`]), so `%~dp0` still is the game's folder.
 
 use std::path::Path;
 
-/// The filtered copy of `game_setup.cmd`, in the game's folder.
-pub const FILTERED_NAME: &str = ".nll-setup.cmd";
-/// The one-line batch that calls [`FILTERED_NAME`] with ETI's four arguments.
-pub const WRAPPER_NAME: &str = ".nll-setup-run.cmd";
+/// Which of a game's ETI scripts runs in the prefix, and the files it gets
+/// in the game's folder: the filtered copy, and the one-line batch that
+/// runs it with ETI's four arguments ([`wrapper`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Script {
+    /// `game_setup.cmd`, once per prefix.
+    Setup,
+    /// `game_start.cmd` as a whole: the start itself, as on Windows —
+    /// language branches, `fnr.exe` writing the player's name, menus.
+    Start,
+    /// What `game_start.cmd` does before it starts the game
+    /// ([`preparation`]), for a game whose profile starts it itself.
+    Preparation,
+}
+
+impl Script {
+    pub fn filtered_name(self) -> &'static str {
+        match self {
+            Script::Setup => ".nll-setup.cmd",
+            Script::Start => ".nll-start.cmd",
+            Script::Preparation => ".nll-prep.cmd",
+        }
+    }
+
+    pub fn wrapper_name(self) -> &'static str {
+        match self {
+            Script::Setup => ".nll-setup-run.cmd",
+            Script::Start => ".nll-start-run.cmd",
+            Script::Preparation => ".nll-prep-run.cmd",
+        }
+    }
+
+    fn source(self, paths: &crate::paths::GamePaths) -> &Path {
+        match self {
+            Script::Setup => &paths.setup_script,
+            Script::Start | Script::Preparation => &paths.start_script,
+        }
+    }
+}
 
 /// Why a line of a setup script does not run in a prefix.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +76,9 @@ pub enum Reason {
     /// helpers (`%programfiles%\eti\lan launcher\unrar.exe`), which a prefix
     /// never has.
     OutsideGame(String),
+    /// Not left out: `fnr.exe` runs as the launcher's own find and replace
+    /// (`launch::fnr`), the line stays as it was otherwise.
+    FindAndReplace,
 }
 
 /// Written into a `rem` line that may stand inside an `if` block, so it holds
@@ -56,6 +95,7 @@ impl std::fmt::Display for Reason {
             Reason::WaitsForKey => f.write_str("waits for a key nobody can press"),
             Reason::NotInWine(tool) => write!(f, "{tool} does not exist in Wine"),
             Reason::OutsideGame(program) => write!(f, "\"{program}\" is outside the game folder"),
+            Reason::FindAndReplace => f.write_str("fnr.exe runs as the launcher's own"),
         }
     }
 }
@@ -440,6 +480,49 @@ fn neutralize_piece(piece: &[u8], out: &mut Vec<u8>, first: &mut Option<Reason>)
     }
 }
 
+/// `line` with every `fnr.exe` where a command begins — the old ETI
+/// launcher's copy or one in the game's folder — replaced by
+/// `"%NLL_FNR%"` (`launch::fnr`), its arguments as they were. `None` when
+/// the line calls none.
+fn swap_fnr(line: &[u8]) -> Option<Vec<u8>> {
+    let mut spans = Vec::new();
+    let mut start = 0;
+    let parentheses = block_parentheses(line);
+    for end in parentheses.iter().copied().chain([line.len()]) {
+        let piece = &line[start..end];
+        let mut offset = 0;
+        for (part, is_command) in commands_and_operators(piece) {
+            if is_command {
+                for (at, word, command_position) in command_words(part) {
+                    // Positions are bytes, the word's length is its text's:
+                    // the two agree for ASCII, which every path to fnr is.
+                    if command_position
+                        && word.is_ascii()
+                        && base_name(word.trim_matches('"')) == "fnr"
+                    {
+                        let from = start + offset + at;
+                        spans.push((from, from + word.len()));
+                    }
+                }
+            }
+            offset += part.len();
+        }
+        start = end + 1;
+    }
+    if spans.is_empty() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(line.len() + 16);
+    let mut at = 0;
+    for (from, to) in spans {
+        out.extend_from_slice(&line[at..from]);
+        out.extend_from_slice(format!("\"%{}%\"", super::fnr::VAR).as_bytes());
+        at = to;
+    }
+    out.extend_from_slice(&line[at..]);
+    Some(out)
+}
+
 /// `content` with every refused command replaced by `ver>nul`, every block
 /// parenthesis where it was: `) else ( taskkill /f /im x & reg add …)`
 /// becomes `) else ( ver>nul & reg add …)`. `None` when nothing in it is
@@ -473,6 +556,16 @@ pub fn filter(script: &[u8]) -> Filtered {
         if lower.starts_with("rem ") || lower == "rem" || lower.starts_with("::") {
             bytes.extend_from_slice(raw);
             continue;
+        }
+        let swapped = swap_fnr(raw);
+        let raw = swapped.as_deref().unwrap_or(raw);
+        if swapped.is_some() {
+            skipped.push(Skipped {
+                line: index + 1,
+                text: line.to_string(),
+                reason: Reason::FindAndReplace,
+                inline: true,
+            });
         }
         let eol: &[u8] = if raw.ends_with(b"\r\n") {
             b"\r\n"
@@ -554,38 +647,144 @@ pub fn wrapper(game_id: &str, lang: &str) -> String {
     )
 }
 
-const SCRIPT_VAR: &str = "NLL_SETUP_SCRIPT";
+const SCRIPT_VAR: &str = "NLL_SCRIPT";
 const GAME_PATH_VAR: &str = "NLL_GAME_PATH";
 const PLAYER_VAR: &str = "NLL_PLAYER";
 
 /// What [`wrapper`] reads, for the runner's environment. The player name is
 /// already free of quotes ([`crate::settings::Settings::safe_player_name`]).
-pub fn env(share_dir: &Path, player: &str) -> [(String, String); 3] {
+pub fn env(script: Script, share_dir: &Path, player: &str) -> [(String, String); 3] {
     [
-        (SCRIPT_VAR.into(), wine_path(&share_dir.join(FILTERED_NAME))),
+        (
+            SCRIPT_VAR.into(),
+            wine_path(&share_dir.join(script.filtered_name())),
+        ),
         (GAME_PATH_VAR.into(), wine_path(share_dir)),
         (PLAYER_VAR.into(), player.replace('"', "")),
     ]
 }
 
-/// Write the filtered copy of `paths.setup_script` ([`FILTERED_NAME`]) and
-/// its wrapper ([`WRAPPER_NAME`]) next to it, and say which lines were left
-/// out; the runner needs [`env`] besides. `None` when the game has no setup
-/// script.
+/// Write the filtered copy of `script` and its wrapper into the game's
+/// folder, and say which lines were left out; the runner needs [`env`]
+/// besides. `None` when there is nothing to run: no such script, or — for
+/// [`Script::Preparation`] — no part before the game's start that can run on
+/// its own. `game_exes` names what starts the game ([`game_exes`]).
 pub fn prepare(
     paths: &crate::paths::GamePaths,
+    script: Script,
     game_id: &str,
     lang: &str,
+    game_exes: &[String],
 ) -> std::io::Result<Option<Vec<Skipped>>> {
-    let script = match std::fs::read(&paths.setup_script) {
-        Ok(script) => script,
+    let text = match std::fs::read(script.source(paths)) {
+        Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e),
     };
-    let filtered = filter(&script);
-    std::fs::write(paths.share_dir.join(FILTERED_NAME), &filtered.bytes)?;
-    std::fs::write(paths.share_dir.join(WRAPPER_NAME), wrapper(game_id, lang))?;
+    let text = match script {
+        Script::Preparation => match preparation(&text, game_exes) {
+            Some(part) => part,
+            None => return Ok(None),
+        },
+        Script::Setup | Script::Start => text,
+    };
+    let filtered = filter(&text);
+    write_if_changed(
+        &paths.share_dir.join(script.filtered_name()),
+        &filtered.bytes,
+    )?;
+    write_if_changed(
+        &paths.share_dir.join(script.wrapper_name()),
+        wrapper(game_id, lang).as_bytes(),
+    )?;
     Ok(Some(filtered.skipped))
+}
+
+/// cmd reads a batch file from disk as it goes, by offset: a start that is
+/// still running the same file (the game started twice) must not find it
+/// rewritten under it. The same text is not written again.
+fn write_if_changed(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if std::fs::read(path).is_ok_and(|old| old == bytes) {
+        return Ok(());
+    }
+    std::fs::write(path, bytes)
+}
+
+/// What starts the game, by name: the programs the start script lets
+/// through the firewall — ETI's scripts name the game's executables there,
+/// launchers included — and the profile's own executable. Helpers the
+/// script runs before (`fnr.exe`, a language selector) are not among them.
+pub fn game_exes(start_script: &str, profile_exe: Option<&str>) -> Vec<String> {
+    use crate::script_probe::{Confidence, ScriptProbe};
+    let mut names: Vec<String> = ScriptProbe::analyse(start_script)
+        .candidates
+        .into_iter()
+        .filter(|c| c.confidence >= Confidence::Medium)
+        .map(|c| base_name(&c.exe))
+        .collect();
+    if let Some(exe) = profile_exe.filter(|e| !e.is_empty()) {
+        names.push(base_name(exe));
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// The part of a start script before the line that starts the game: what
+/// the script prepares — the player's name in a config file, the language
+/// in the registry — for a profile that starts the game itself. `None` when
+/// no line starts one of `game_exes`, or when the part before it cannot run
+/// on its own: a question (`set /p`), a jump (`goto`, a `:label`), or a
+/// block the game's line stands in.
+pub fn preparation(script: &[u8], game_exes: &[String]) -> Option<Vec<u8>> {
+    let script = script.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(script);
+    let mut depth = 0i64;
+    let mut offset = 0;
+    for raw in script.split_inclusive(|b| *b == b'\n') {
+        let content = raw.strip_suffix(b"\n").unwrap_or(raw);
+        let content = content.strip_suffix(b"\r").unwrap_or(content);
+        let text = String::from_utf8_lossy(content);
+        let command = text.trim_start().trim_start_matches('@').trim_start();
+        let lower = command.to_ascii_lowercase();
+        let remark = lower.starts_with("rem ") || lower == "rem" || lower.starts_with("::");
+        if !remark {
+            if lower.starts_with(':') || lower.contains("set /p") || jumps(content) {
+                return None;
+            }
+            if starts_one_of(content, game_exes) {
+                return (depth == 0).then(|| script[..offset].to_vec());
+            }
+            for at in block_parentheses(content) {
+                depth += if content[at] == b'(' { 1 } else { -1 };
+            }
+        }
+        offset += raw.len();
+    }
+    None
+}
+
+/// A `goto` anywhere a word stands — also behind an `if` condition
+/// (`if exist x goto skip`) and as `goto:label`.
+fn jumps(content: &[u8]) -> bool {
+    command_words(content).iter().any(|(_, word, _)| {
+        let lower = word.to_ascii_lowercase();
+        lower == "goto" || lower.starts_with("goto:")
+    })
+}
+
+/// Whether a command of `content` runs one of `names`: where a command
+/// begins, or as what `start`/`call` run.
+fn starts_one_of(content: &[u8], names: &[String]) -> bool {
+    let is_game = |program: &str| names.contains(&base_name(program.trim_matches('"')));
+    commands_and_operators(content)
+        .into_iter()
+        .filter(|(_, is_command)| *is_command)
+        .any(|(part, _)| {
+            command_words(part)
+                .iter()
+                .any(|(_, word, command_position)| *command_position && is_game(word))
+                || program_of(&String::from_utf8_lossy(part)).is_some_and(|p| is_game(&p))
+        })
 }
 
 #[cfg(test)]
@@ -789,6 +988,37 @@ mod tests {
     }
 
     #[test]
+    fn fnr_runs_as_the_launchers_own_wherever_it_was_called_from() {
+        let script = "if %game_lang% == de (\r\n\
+            \t\"%programfiles%\\eti\\lan launcher\\fnr.exe\" --cl --silent --dir \"%cd%\" --fileMask \"Nadeo.ini\" --useRegEx --find \"Language=.*\" --replace \"Language=de\"\r\n\
+            )\r\n\
+            \"fnr.exe\" --cl --silent --dir \"%cd%\\System\" --fileMask \"Demo.ini\" --find \"Name=.*\" --replace \"Name=%player%\"\r\n\
+            cd local && fnr --cl --find a --replace b\r\n\
+            echo fnr.exe is a tool\r\n";
+        let filtered = filter(script.as_bytes());
+        let out = text(&filtered);
+        let lines: Vec<&str> = out.split("\r\n").collect();
+        assert_eq!(
+            lines[1],
+            "\t\"%NLL_FNR%\" --cl --silent --dir \"%cd%\" --fileMask \"Nadeo.ini\" --useRegEx --find \"Language=.*\" --replace \"Language=de\""
+        );
+        assert!(lines[3].starts_with("\"%NLL_FNR%\" --cl --silent --dir \"%cd%\\System\""));
+        assert_eq!(
+            lines[4],
+            "cd local && \"%NLL_FNR%\" --cl --find a --replace b"
+        );
+        assert_eq!(lines[5], "echo fnr.exe is a tool");
+        assert!(filtered
+            .skipped
+            .iter()
+            .all(|s| s.reason == Reason::FindAndReplace));
+        assert_eq!(
+            filtered.skipped.iter().map(|s| s.line).collect::<Vec<_>>(),
+            [2, 4, 5]
+        );
+    }
+
+    #[test]
     fn a_byte_order_mark_goes_and_a_code_page_stays() {
         // cmd reads the BOM as part of the first command ("\u{feff}echo" is
         // not a command); Windows-1252 bytes are not UTF-8 and must survive.
@@ -804,15 +1034,19 @@ mod tests {
     fn the_wrapper_is_ascii_and_the_paths_come_as_wine_paths() {
         assert_eq!(
             wrapper("wc3", "de"),
-            "@echo off\r\n\"%NLL_SETUP_SCRIPT%\" \"%NLL_GAME_PATH%\" wc3 de \"%NLL_PLAYER%\"\r\n"
+            "@echo off\r\n\"%NLL_SCRIPT%\" \"%NLL_GAME_PATH%\" wc3 de \"%NLL_PLAYER%\"\r\n"
         );
-        let env = env(Path::new("/home/jürgen/LAN/wc3"), "Jürgen \"K\"");
+        let env = env(
+            Script::Start,
+            Path::new("/home/jürgen/LAN/wc3"),
+            "Jürgen \"K\"",
+        );
         assert_eq!(
             env,
             [
                 (
-                    "NLL_SETUP_SCRIPT".to_string(),
-                    "Z:\\home\\jürgen\\LAN\\wc3\\.nll-setup.cmd".to_string()
+                    "NLL_SCRIPT".to_string(),
+                    "Z:\\home\\jürgen\\LAN\\wc3\\.nll-start.cmd".to_string()
                 ),
                 (
                     "NLL_GAME_PATH".to_string(),
@@ -827,15 +1061,112 @@ mod tests {
     fn prepare_writes_both_files_next_to_the_script() {
         let dir = tempfile::tempdir().unwrap();
         let paths = crate::paths::GamePaths::new(dir.path(), "demo");
-        assert_eq!(prepare(&paths, "demo", "de").unwrap(), None);
+        assert_eq!(
+            prepare(&paths, Script::Setup, "demo", "de", &[]).unwrap(),
+            None
+        );
         std::fs::create_dir_all(&paths.share_dir).unwrap();
         std::fs::write(&paths.setup_script, "cd /d \"%~dp0\"\r\ntimeout 5\r\n").unwrap();
-        let skipped = prepare(&paths, "demo", "de").unwrap().unwrap();
-        assert_eq!(skipped.len(), 1);
-        let copy = std::fs::read_to_string(paths.share_dir.join(FILTERED_NAME)).unwrap();
-        assert!(copy.starts_with("cd /d \"%~dp0\"\r\nrem "));
-        assert!(std::fs::read_to_string(paths.share_dir.join(WRAPPER_NAME))
+        let skipped = prepare(&paths, Script::Setup, "demo", "de", &[])
             .unwrap()
-            .contains("%NLL_SETUP_SCRIPT%"));
+            .unwrap();
+        assert_eq!(skipped.len(), 1);
+        let copy =
+            std::fs::read_to_string(paths.share_dir.join(Script::Setup.filtered_name())).unwrap();
+        assert!(copy.starts_with("cd /d \"%~dp0\"\r\nrem "));
+        assert!(
+            std::fs::read_to_string(paths.share_dir.join(Script::Setup.wrapper_name()))
+                .unwrap()
+                .contains("%NLL_SCRIPT%")
+        );
+    }
+
+    /// ETI's start template: header, language branches, `fnr.exe` writing
+    /// the player's name, the firewall rule naming the game, the game, the
+    /// rule removed again (Unreal Tournament 2004's shape, made-up values).
+    const UT_SHAPE: &str = "set game_path=%1\r\n\
+        set game_id=%2\r\n\
+        set game_lang=%3\r\n\
+        set player=%4\r\n\
+        echo off\r\n\
+        cd /d \"%~dp0\"\r\n\
+        cd local\r\n\
+        if %game_lang% == de (\r\n\
+        \t\"fnr.exe\" --cl --silent --dir \"%cd%\\System\" --fileMask \"Demo.ini\" --find \"Language=.*\" --replace \"Language=det\"\r\n\
+        )\r\n\
+        \"fnr.exe\" --cl --silent --dir \"%cd%\\System\" --fileMask \"Demo.ini\" --find \"Name=.*\" --replace \"Name=%player%\"\r\n\
+        netsh advfirewall firewall add rule name=\"%game_id%\" dir=in action=allow program=\"%game_path%\\local\\system\\Demo.exe\" profile=any enable=yes >nul\r\n\
+        cd system\r\n\
+        \"Demo.exe\"\r\n\
+        :end\r\n\
+        netsh advfirewall firewall delete rule name=\"%game_id%\" >nul\r\n\
+        exit\r\n";
+
+    #[test]
+    fn the_preparation_is_what_comes_before_the_game() {
+        let names = game_exes(UT_SHAPE, None);
+        assert_eq!(names, vec!["demo".to_string()]);
+        let part = String::from_utf8(preparation(UT_SHAPE.as_bytes(), &names).unwrap()).unwrap();
+        assert!(part.contains("--replace \"Name=%player%\""));
+        assert!(part.ends_with("cd system\r\n"));
+        assert!(!part.contains("\"Demo.exe\""));
+        // The profile's own executable counts as the game, too.
+        assert_eq!(
+            game_exes(UT_SHAPE, Some("system/Other.exe")),
+            vec!["demo".to_string(), "other".to_string()]
+        );
+    }
+
+    #[test]
+    fn no_preparation_where_the_part_before_the_game_cannot_run_alone() {
+        let names = vec!["game".to_string()];
+        let menu = "echo 1. HD\r\nset /P wahl=Auswahl: \r\nif /i \"%wahl%\"==\"1\" goto:HD\r\n:HD\r\n\"game.exe\"\r\n";
+        assert_eq!(preparation(menu.as_bytes(), &names), None);
+        let jump = "if exist x goto skip\r\nreg add HKCU\\X /v a /d 1 /f\r\n\"game.exe\"\r\n";
+        assert_eq!(preparation(jump.as_bytes(), &names), None);
+        let in_block = "if %game_lang% == de (\r\n\"game.exe\" -de\r\n)\r\n";
+        assert_eq!(preparation(in_block.as_bytes(), &names), None);
+        let elsewhere = "\"other.exe\"\r\n";
+        assert_eq!(preparation(elsewhere.as_bytes(), &names), None);
+        // Through `start` it is the game as well.
+        let started = "reg add HKCU\\X /v a /d 1 /f\r\nstart \"\" /wait \"game.exe\"\r\n";
+        assert_eq!(
+            preparation(started.as_bytes(), &names).as_deref(),
+            Some(&b"reg add HKCU\\X /v a /d 1 /f\r\n"[..])
+        );
+    }
+
+    fn copy_has_fnr(paths: &crate::paths::GamePaths) -> bool {
+        std::fs::read_to_string(paths.share_dir.join(".nll-prep.cmd"))
+            .unwrap()
+            .contains("\"%NLL_FNR%\" --cl")
+    }
+
+    #[test]
+    fn prepare_writes_the_preparation_only_where_there_is_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::paths::GamePaths::new(dir.path(), "demo");
+        std::fs::create_dir_all(&paths.share_dir).unwrap();
+        std::fs::write(&paths.start_script, UT_SHAPE).unwrap();
+        let names = game_exes(UT_SHAPE, None);
+        let skipped = prepare(&paths, Script::Preparation, "demo", "de", &names)
+            .unwrap()
+            .unwrap();
+        // fnr for language and name, and the firewall rule before the game.
+        assert_eq!(
+            skipped.iter().map(|s| &s.reason).collect::<Vec<_>>(),
+            [
+                &Reason::FindAndReplace,
+                &Reason::FindAndReplace,
+                &Reason::Firewall
+            ]
+        );
+        assert!(copy_has_fnr(&paths));
+        let copy = std::fs::read_to_string(paths.share_dir.join(".nll-prep.cmd")).unwrap();
+        assert!(copy.ends_with("cd system\r\n"));
+        assert_eq!(
+            prepare(&paths, Script::Preparation, "demo", "de", &["x".into()]).unwrap(),
+            None
+        );
     }
 }

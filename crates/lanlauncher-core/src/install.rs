@@ -1730,8 +1730,15 @@ impl InstallManager {
                     Action::Ready | Action::None => {}
                 }
             }
+            // A start through the start script decides itself what starts.
             let needs_exe_choice = tracker.phase.is_playable()
                 && !cfg!(target_os = "windows")
+                && !crate::launch::unix::starts_through_script_for(
+                    manifest.as_ref(),
+                    obs.receipt.as_ref(),
+                    &paths.start_script,
+                    None,
+                )
                 && manifest
                     .as_ref()
                     .map(|m| m.launch_for(Manifest::current_platform()).exe.is_empty())

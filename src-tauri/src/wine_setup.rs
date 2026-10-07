@@ -6,7 +6,8 @@
 
 use crate::state::{AppState, LaunchAttempt};
 use lanlauncher_core::install::Receipt;
-use lanlauncher_core::launch::{self, setup_script, ExitWatch, LaunchPlan};
+use lanlauncher_core::launch::setup_script::{self, Script, Skipped};
+use lanlauncher_core::launch::{self, ExitWatch, LaunchPlan};
 use lanlauncher_core::paths::GamePaths;
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,6 +20,10 @@ pub(crate) const LIMIT: Duration = Duration::from_secs(30 * 60);
 /// The same before a start: the player is waiting in front of the button,
 /// and a helper that asks something shows its window meanwhile.
 const CATCH_UP_LIMIT: Duration = Duration::from_secs(10 * 60);
+
+/// What a start script prepares — a name into a config file, a value into
+/// the registry — takes seconds; after this the game starts all the same.
+const PREPARATION_LIMIT: Duration = Duration::from_secs(2 * 60);
 
 /// Whether the diagnostics page shows the run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,7 +153,7 @@ pub(crate) async fn start(
     }
     // Before the files are written: a run still going reads them.
     let claim = SetupClaim::claim(state, game_id, record == Record::BeforeStart)?;
-    let Some(plan) = crate::commands::setup_script_plan(state, game_id, paths).await? else {
+    let Some(mut plan) = crate::commands::setup_script_plan(state, game_id, paths).await? else {
         log::info!("setup {game_id}: the game runs natively; its Windows setup script is not run");
         return Ok(None);
     };
@@ -161,7 +166,7 @@ pub(crate) async fn start(
     let prepared = {
         let (paths, game_id) = (paths.clone(), game_id.to_string());
         tauri::async_runtime::spawn_blocking(move || {
-            setup_script::prepare(&paths, &game_id, &lang)
+            setup_script::prepare(&paths, Script::Setup, &game_id, &lang, &[])
                 .map_err(|e| format!("err.setup_write|{}: {e}", paths.share_dir.display()))
         })
         .await
@@ -170,23 +175,7 @@ pub(crate) async fn start(
     let Some(skipped) = prepared else {
         return Ok(None);
     };
-    for s in &skipped {
-        if s.inline {
-            log::info!(
-                "setup {game_id}: line {}: command replaced by ver>nul ({}): {}",
-                s.line,
-                s.reason,
-                s.text.trim()
-            );
-        } else {
-            log::info!(
-                "setup {game_id}: line {} skipped ({}): {}",
-                s.line,
-                s.reason,
-                s.text.trim()
-            );
-        }
-    }
+    log_skipped(game_id, "setup", &skipped);
     let title = state
         .catalog()
         .await
@@ -229,6 +218,7 @@ pub(crate) async fn start(
         .await
         .unwrap_or(true)
     };
+    with_fnr(state, &mut plan).await;
     let watch = match launch::spawn(&plan, Some(&log)).await {
         Ok((pid, watch)) => {
             attempt.pid = Some(pid);
@@ -465,4 +455,179 @@ async fn mark_done(paths: &GamePaths, prefix: Option<&str>) {
         }
     })
     .await;
+}
+
+/// The lines of a script that did not run as written, for the log.
+fn log_skipped(game_id: &str, what: &str, skipped: &[Skipped]) {
+    for s in skipped {
+        let done = match (&s.reason, s.inline) {
+            (setup_script::Reason::FindAndReplace, _) => "kept",
+            (_, true) => "command replaced by ver>nul",
+            (_, false) => "skipped",
+        };
+        log::info!(
+            "{what} {game_id}: line {}: {done} ({}): {}",
+            s.line,
+            s.reason,
+            s.text.trim()
+        );
+    }
+}
+
+/// Before a start through the game's start script
+/// (`launch::unix::is_script_start`): the script's files in the game's
+/// folder, and the find and replace its `fnr.exe` calls run as.
+pub(crate) async fn prepare_start(
+    state: &Arc<AppState>,
+    game_id: &str,
+    paths: &GamePaths,
+    plan: &mut LaunchPlan,
+) -> Result<(), String> {
+    let lang = state.settings.read().await.game_language.clone();
+    let prepared = {
+        let (paths, game_id) = (paths.clone(), game_id.to_string());
+        tauri::async_runtime::spawn_blocking(move || {
+            setup_script::prepare(&paths, Script::Start, &game_id, &lang, &[])
+                .map_err(|e| format!("err.start_write|{}: {e}", paths.share_dir.display()))
+        })
+        .await
+        .map_err(|e| format!("err.start_write|{e}"))??
+    };
+    let skipped = prepared.ok_or("err.start_script_missing")?;
+    log_skipped(game_id, "start", &skipped);
+    with_fnr(state, plan).await;
+    Ok(())
+}
+
+/// `plan` with [`launch::fnr::VAR`] naming the launcher's find and replace,
+/// which the scripts' `fnr.exe` calls became. Without it (the folder cannot
+/// be written) those calls fail as they would have before, and the script
+/// goes on.
+async fn with_fnr(state: &AppState, plan: &mut LaunchPlan) {
+    // Asked once, the way the script starts it: without the libraries an
+    // AppImage or Proton put in front.
+    static PERL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let dir = state.dirs.data.join("tools").join("fnr");
+    let installed = tauri::async_runtime::spawn_blocking(move || {
+        let script = launch::fnr::install(&dir)?;
+        let perl = *PERL.get_or_init(|| {
+            let found = std::process::Command::new("env")
+                .args(["-u", "LD_LIBRARY_PATH", "-u", "LD_PRELOAD", "perl", "-e", "1"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success());
+            if !found {
+                log::warn!(
+                    "no perl on this machine: the scripts' fnr.exe calls (player name, language in config files) do nothing"
+                );
+            }
+            found
+        });
+        Ok::<_, std::io::Error>((script, perl))
+    })
+    .await
+    .map_err(std::io::Error::other)
+    .and_then(|r| r);
+    match installed {
+        Ok((script, _perl)) => {
+            plan.env.insert(
+                launch::fnr::VAR.to_string(),
+                setup_script::wine_path(&script),
+            );
+        }
+        Err(e) => log::warn!("cannot write the find and replace for fnr.exe: {e}"),
+    }
+}
+
+/// Before a start of an executable: what the start script does before it
+/// starts the game itself — the player's name into a config file, the
+/// language into the registry — run in the prefix and waited for, the game
+/// held like during a setup. What cannot run is no reason not to start (the
+/// game started without it before); a preparation still running at its
+/// limit is: the game would start beside a script still writing its
+/// configuration. Its claim then stays until it ends.
+pub(crate) async fn run_preparation(
+    state: &Arc<AppState>,
+    game_id: &str,
+    paths: &GamePaths,
+    (mut plan, exe): (LaunchPlan, Option<String>),
+) -> Result<(), String> {
+    // The start holds the game already; this takes the prefix's script slot.
+    let claim = SetupClaim::claim(state, game_id, true)?;
+    let lang = state.settings.read().await.game_language.clone();
+    let prepared = {
+        let (paths, game_id) = (paths.clone(), game_id.to_string());
+        tauri::async_runtime::spawn_blocking(move || {
+            let script = std::fs::read_to_string(&paths.start_script).unwrap_or_default();
+            let names = setup_script::game_exes(&script, exe.as_deref());
+            setup_script::prepare(&paths, Script::Preparation, &game_id, &lang, &names)
+        })
+        .await
+        .map_err(std::io::Error::other)
+        .and_then(|r| r)
+    };
+    let skipped = match prepared {
+        Ok(Some(skipped)) => skipped,
+        Ok(None) => {
+            log::info!("prepare {game_id}: nothing in the start script to run before the game");
+            return Ok(());
+        }
+        Err(e) => {
+            log::warn!("prepare {game_id}: cannot write the files ({e}); starting without it");
+            return Ok(());
+        }
+    };
+    log_skipped(game_id, "prepare", &skipped);
+    // A second start beside a running game: its configuration is in use.
+    if let Ok(target) = launch::winetricks::target(&plan) {
+        let in_use = tauri::async_runtime::spawn_blocking(move || {
+            launch::winetricks::prefix_in_use(&target)
+        })
+        .await
+        .unwrap_or(false);
+        if in_use {
+            log::info!("prepare {game_id}: the game runs already; starting without it");
+            return Ok(());
+        }
+    }
+    with_fnr(state, &mut plan).await;
+    let log = state.launch_log(game_id, "prepare");
+    // The last run's transcript must not pass for this one's.
+    {
+        let log = log.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || std::fs::remove_file(log)).await;
+    }
+    log::info!(
+        "prepare {game_id}: running what game_start.cmd does before the game via {}",
+        plan.runner
+    );
+    let mut watch = match launch::spawn(&plan, Some(&log)).await {
+        Ok((_, watch)) => watch,
+        Err(e) => {
+            log::warn!("prepare {game_id}: cannot start ({e}); starting without it");
+            return Ok(());
+        }
+    };
+    match tokio::time::timeout(PREPARATION_LIMIT, &mut watch).await {
+        Ok(code) => {
+            log::info!(
+                "prepare {game_id}: ended (exit code {:?})",
+                code.ok().flatten()
+            );
+            Ok(())
+        }
+        Err(_) => {
+            log::warn!(
+                "prepare {game_id}: still running after {} minutes; the game does not start beside it (transcript: {})",
+                PREPARATION_LIMIT.as_secs() / 60,
+                log.display()
+            );
+            tauri::async_runtime::spawn(async move {
+                let _ = watch.await;
+                drop(claim);
+            });
+            Err("err.prepare_timeout".into())
+        }
+    }
 }

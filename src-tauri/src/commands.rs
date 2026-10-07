@@ -497,6 +497,31 @@ pub(crate) async fn setup_script_plan(
     .map(|(plan, _)| plan)
 }
 
+/// A start's plan and, on macOS/Linux, what the start script prepares before
+/// it ([`launch::unix::preparation_plan`]) with the executable the start
+/// runs — the script's line that starts it ends the preparation. From one
+/// context (profile, receipt, settings); the runner is still looked up for
+/// each plan.
+async fn build_start(
+    state: &AppState,
+    game_id: &str,
+    alternative: Option<usize>,
+) -> Cmd<(LaunchPlan, Option<(LaunchPlan, Option<String>)>)> {
+    with_launch_context(state, game_id, alternative, None, |ctx| {
+        let plan = launch::plan(ctx)?;
+        if cfg!(target_os = "windows") {
+            return Ok((plan, None));
+        }
+        let exe = launch::resolve_exe(ctx)
+            .ok()
+            .and_then(|(exe, ..)| exe.file_name().map(|n| n.to_string_lossy().to_string()));
+        let preparation = launch::unix::preparation_plan(ctx)?.map(|prep| (prep, exe));
+        Ok((plan, preparation))
+    })
+    .await
+    .map(|(made, _)| made)
+}
+
 /// `make` with the context a game's start is planned from — its paths
 /// (`paths`, or where the library finds the game), settings, profile and
 /// receipt — and the profile beside its result.
@@ -712,28 +737,12 @@ pub async fn play_game(
     // Held until the game has been spawned; from then on a component
     // installation finds it running in its prefix.
     let _starting = GameUse::claim(&state.prefix_use, &game_id)?;
-    let plan = build_plan(&state, &game_id, alternative).await?;
+    let (mut plan, preparation) = build_start(&state, &game_id, alternative).await?;
     if prefix_being_filled(&state, &plan) {
         return Err("err.components_busy_game".into());
     }
-    // Asked before the setup below or the start creates it: a prefix that
-    // was already there may hold saves of versions the launcher never
-    // recorded.
-    let existed_before = cfg!(not(windows))
-        && state
-            .settings
-            .read()
-            .await
-            .library
-            .game_paths(&game_id)
-            .is_some_and(|paths| {
-                launch::unix::own_prefix_exists_before_start(&plan, &paths, &game_id)
-            });
-    // Into the prefix the start then uses; see `wine_setup::catch_up` for
-    // what holds the start back and what does not.
-    if !cfg!(target_os = "windows") {
-        crate::wine_setup::catch_up(state.inner(), &game_id, &plan).await?;
-    }
+    // Read once: a library move published in between must not send the
+    // setup, the preparation and the start to different folders.
     let (allow, lang, player, paths) = {
         let s = state.settings.read().await;
         (
@@ -743,6 +752,28 @@ pub async fn play_game(
             s.library.game_paths(&game_id),
         )
     };
+    // Asked before the setup below or the start creates it: a prefix that
+    // was already there may hold saves of versions the launcher never
+    // recorded.
+    let existed_before = cfg!(not(windows))
+        && paths.as_ref().is_some_and(|paths| {
+            launch::unix::own_prefix_exists_before_start(&plan, paths, &game_id)
+        });
+    // Into the prefix the start then uses; see `wine_setup::catch_up` for
+    // what holds the start back and what does not.
+    if !cfg!(target_os = "windows") {
+        crate::wine_setup::catch_up(state.inner(), &game_id, &plan).await?;
+        // What the game's start script does, in the prefix: all of it, or
+        // what it prepares before a profile's executable starts.
+        if let Some(paths) = &paths {
+            if launch::unix::is_script_start(&plan) {
+                crate::wine_setup::prepare_start(state.inner(), &game_id, paths, &mut plan).await?;
+            } else if let Some(preparation) = preparation {
+                crate::wine_setup::run_preparation(state.inner(), &game_id, paths, preparation)
+                    .await?;
+            }
+        }
+    }
     if let Some(paths) = &paths {
         crate::fixes::ensure_firewall_rules(&state, paths, &game_id, &lang, &player).await;
     }
