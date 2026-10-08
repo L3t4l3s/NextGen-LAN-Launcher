@@ -2,7 +2,9 @@
   import { app } from "$lib/stores/app.svelte";
   import { api, confirmDialog } from "$lib/api";
   import { t, userText } from "$lib/i18n";
-  import { formatBytes, formatPercent, formatSpeed, percentWidth } from "$lib/format";
+  import { formatBytes, formatSpeed } from "$lib/format";
+  import { stepLabel } from "$lib/steps";
+  import InstallProgress from "./InstallProgress.svelte";
   import type { GameStatus, SharePeer } from "$lib/types";
   import ProblemCard from "./ProblemCard.svelte";
   import Sparkline from "./Sparkline.svelte";
@@ -92,11 +94,9 @@
               <strong class="grow">{game.title}</strong>
               <span class="badge {status.phase === 'failed' ? 'error' : status.stalled || status.phase === 'paused' ? 'warn' : 'busy'}">{t(`phase.${status.phase}`)}</span>
             </div>
-            <div class="progress" class:stalled={status.stalled} class:working={!["syncing", "paused"].includes(status.phase)}>
-              <span style:width={percentWidth(status.progress)}></span>
-            </div>
+            <InstallProgress {status} />
             <div class="row small muted">
-              <span>{formatPercent(status.progress)}</span>
+              <span>{stepLabel(status)}</span>
               <!-- Bytes, rate and sources describe a transfer. While the
                    launcher checks or unpacks an archive none of them moves,
                    and showing them there reads as a stuck download. -->

@@ -3,8 +3,10 @@
   import { app } from "$lib/stores/app.svelte";
   import { api, chooseDialog, confirmDialog, copyText, coverSrc } from "$lib/api";
   import { t, userText } from "$lib/i18n";
-  import { formatBytes, formatPercent, formatRevision, formatSpeed, placeholderGradient, runnerKey, stripHtml, percentWidth } from "$lib/format";
+  import { formatBytes, formatRevision, formatSpeed, placeholderGradient, runnerKey, stripHtml } from "$lib/format";
   import { isBusy, isPlayable, phaseBadge } from "$lib/phase";
+  import { stepLabel } from "$lib/steps";
+  import InstallProgress from "./InstallProgress.svelte";
   import ProblemCard from "./ProblemCard.svelte";
   import GameConfigDialog, { componentRuns } from "./GameConfigDialog.svelte";
   import ReportDialog from "./ReportDialog.svelte";
@@ -294,11 +296,9 @@
     {#if status && status.phase !== "not_installed"}
       <div class="progress-block">
         {#if busy || status.phase === "paused"}
-          <div class="progress" class:stalled={status.stalled} class:working={status.phase !== "syncing" && status.phase !== "paused"}>
-            <span style:width={percentWidth(status.progress)}></span>
-          </div>
+          <InstallProgress {status} />
           <div class="row small muted">
-            <span>{formatPercent(status.progress)}</span>
+            <span>{stepLabel(status)}</span>
             {#if status.phase === "syncing" || status.phase === "paused"}
               <span>{t("detail.total", { total: formatBytes(status.bytesTotal) })}</span>
               {#if status.downloadBps}<span>{formatSpeed(status.downloadBps)}</span>{/if}

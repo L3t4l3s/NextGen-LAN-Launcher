@@ -3,7 +3,9 @@
   import { app } from "$lib/stores/app.svelte";
   import { api, coverSrc } from "$lib/api";
   import { chat } from "$lib/stores/chat.svelte";
-  import { formatPercent, formatSpeed, placeholderGradient, percentWidth } from "$lib/format";
+  import { formatSpeed, placeholderGradient } from "$lib/format";
+  import { stepLabel } from "$lib/steps";
+  import InstallProgress from "./InstallProgress.svelte";
   import { t, userText } from "$lib/i18n";
   import { phaseBadge } from "$lib/phase";
 
@@ -55,7 +57,8 @@
     if (!status) return "";
     if (trouble) return t(trouble.label);
     const speed = status.phase === "syncing" ? formatSpeed(status.downloadBps) : "";
-    return speed ? `${formatPercent(status.progress)} · ${speed}` : formatPercent(status.progress);
+    const step = stepLabel(status, true);
+    return speed ? `${step} · ${speed}` : step;
   });
 </script>
 
@@ -85,9 +88,7 @@
     <strong title={game.title}>{game.title}</strong>
     <small class="muted">{game.genre ?? ""}{game.maxPlayers ? ` · ${game.maxPlayers} ${t("detail.players")}` : ""}</small>
     {#if busy && status}
-      <div class="progress" class:stalled={status.stalled} class:working={status.phase !== "syncing"}>
-        <span style:width={percentWidth(status.progress)}></span>
-      </div>
+      <div class="bar"><InstallProgress {status} /></div>
       <small class="muted label" class:warn-text={!!trouble} title={trouble ? t(trouble.title) : undefined}>{label}</small>
     {/if}
   </div>
@@ -228,7 +229,7 @@
   .meta small {
     font-size: 0.78rem;
   }
-  .progress {
+  .bar {
     margin-top: 0.35rem;
   }
 </style>

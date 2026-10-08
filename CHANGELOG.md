@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Ein Fortschrittsbalken für die ganze Installation.** Bisher lief der Balken für Laden, Prüfen,
+  Entpacken und Einrichten jeweils von vorn voll. Jetzt hat jeder Schritt einen eigenen Abschnitt,
+  von Anfang an sichtbar; das Laden bekommt den größten Teil, jeder Schritt mindestens 10 %. Beim
+  Überfahren nennt ein Abschnitt seinen Schritt und was dort passiert. Darunter steht „Schritt 2
+  von 4 · 45 %“ (auf der Kachel „2/4 · 45 %“); Das Einrichten zeigt eine Bewegung
+  statt einer Zahl, ein Fehler färbt den Abschnitt, in dem er auftrat.
+
 - **Probleme melden (Testphase).** Jedes Spiel hat einen Knopf „Problem melden“, die Titelleiste
   einen „Fehler melden“ für den Launcher allgemein. Der Bericht enthält die Beschreibung, Angaben
   zum Rechner, Startprofil und Startbefehl des Spiels und einen Auszug aus dem Protokoll (Zeilen

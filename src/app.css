@@ -248,12 +248,6 @@ label {
   border-radius: 999px;
   transition: width 0.6s ease;
 }
-.progress.stalled > span {
-  background: var(--color-warning);
-}
-.progress.working > span {
-  background: linear-gradient(90deg, var(--color-primary), var(--color-accent));
-}
 
 .dot {
   width: 10px;
