@@ -2,7 +2,8 @@ schema = 1
 id = "goldsrc"
 title = "Counter-Strike 1.6 / GoldSrc"
 revisions = ["20240623"]
-source = "macETI-LAN v0.6.1 (MIT) – CS 1.6 menu verified on Apple M2 Pro, CrossOver 26.3"
+source = "macETI-LAN v0.6.1 (MIT) – CS 1.6 menu verified on Apple M2 Pro, CrossOver 26.3; NextGen LAN Launcher: start script menu checked with Proton 11 (2026-10)"
+script_start_checked = ["linux"]
 
 [launch]
 # Started through the package's start script, as on Windows: its menu

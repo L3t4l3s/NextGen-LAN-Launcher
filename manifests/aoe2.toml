@@ -3,6 +3,7 @@ id = "aoe2"
 title = "Age of Empires II"
 revisions = ["20240623"]
 source = "Checked with Proton 11 on Linux against the package's game_start.cmd"
+script_start_checked = ["linux"]
 
 [launch]
 # The package's start script asks which edition to start (HD, Classic, The

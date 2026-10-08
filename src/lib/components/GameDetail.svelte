@@ -388,7 +388,7 @@
         </div>
       {/if}
       {#if plan}
-        <pre class="plan">{plan.runner}\n{plan.wrapper?.length ? `${plan.wrapper.join(" ")} ` : ""}{plan.program} {plan.args.join(" ")}\ncwd: {plan.cwd}</pre>
+        <pre class="plan">{`${plan.runner}\n${plan.wrapper?.length ? `${plan.wrapper.join(" ")} ` : ""}${plan.program} ${plan.args.join(" ")}\ncwd: ${plan.cwd}`}</pre>
       {/if}
     </section>
 

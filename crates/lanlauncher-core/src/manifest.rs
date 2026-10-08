@@ -137,6 +137,13 @@ pub struct Manifest {
     pub title: Option<String>,
     /// Package revisions this manifest was verified against. Empty = any.
     pub revisions: Vec<String>,
+    /// The platforms (`linux`, `macos`, `windows`) on which a profile
+    /// without an executable of its own was checked starting through
+    /// `game_start.cmd`, for [`Self::revisions`] (which must name them): the
+    /// script is then the entry point there, not a guess (see
+    /// [`Self::exe_from_script`] and [`Self::verified_for`]).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub script_start_checked: Vec<String>,
     pub source: Option<String>,
     /// Where this manifest came from (filled at load time).
     #[serde(skip)]
@@ -280,6 +287,7 @@ impl Default for Manifest {
             id: String::new(),
             title: None,
             revisions: Vec::new(),
+            script_start_checked: Vec::new(),
             source: None,
             origin: ManifestOrigin::Bundled,
             exe_from_script: false,
@@ -382,6 +390,15 @@ impl Manifest {
         if self.schema != 1 {
             return Err(err("unsupported schema version"));
         }
+        if let Some(bad) = self
+            .script_start_checked
+            .iter()
+            .find(|p| !matches!(p.as_str(), "linux" | "macos" | "windows"))
+        {
+            return Err(err(&format!(
+                "script_start_checked: `{bad}` is no platform (linux, macos, windows)"
+            )));
+        }
         if !crate::catalog::GAME_ID_RE.is_match(&self.id) {
             return Err(err("invalid id"));
         }
@@ -475,6 +492,25 @@ impl Manifest {
             }
         }
         Ok(())
+    }
+
+    /// Whether what starts on `platform` is confirmed for the package
+    /// `revision`. A tester's own settings speak for the package they were
+    /// saved with. A profile whose entry point had to come from the Windows
+    /// script is a guess, whatever revisions its notes name — unless it was
+    /// checked starting that way on this platform, for named revisions. A
+    /// manifest that is *only* the script says so in its origin already.
+    pub fn verified_for(&self, revision: &str, platform: &str) -> bool {
+        if self.user_config {
+            return self.config_revision.as_deref() == Some(revision);
+        }
+        if !self.matches_revision(revision) {
+            return false;
+        }
+        if !self.exe_from_script || self.origin == ManifestOrigin::DerivedFromScript {
+            return true;
+        }
+        !self.revisions.is_empty() && self.script_start_checked.iter().any(|p| p == platform)
     }
 
     pub fn matches_revision(&self, revision: &str) -> bool {
@@ -919,6 +955,38 @@ mod tests {
         .overlay_onto(&mut m, "linux");
         assert!(m.wrapper_is_trusted());
         assert!(m.launch_for("linux").wrapper.is_empty());
+    }
+
+    #[test]
+    fn a_script_start_is_confirmed_only_where_and_for_what_it_was_checked() {
+        let parse = |extra: &str| {
+            Manifest::parse(
+                &format!("schema = 1\nid = \"g\"\n{extra}[launch]\nexe = \"\"\n"),
+                Path::new("g.toml"),
+            )
+        };
+        let mut checked =
+            parse("revisions = [\"1\"]\nscript_start_checked = [\"linux\"]\n").unwrap();
+        checked.exe_from_script = true;
+        assert!(checked.verified_for("1", "linux"));
+        assert!(!checked.verified_for("1", "macos"));
+        assert!(!checked.verified_for("2", "linux"));
+        // Checked for no revision in particular: not for every one.
+        let mut any = parse("script_start_checked = [\"linux\"]\n").unwrap();
+        any.exe_from_script = true;
+        assert!(!any.verified_for("1", "linux"));
+        // Without the claim, a script guess stays unconfirmed; an exe of the
+        // profile's own is confirmed by its revisions alone.
+        let mut guessed = parse("revisions = [\"1\"]\n").unwrap();
+        guessed.exe_from_script = true;
+        assert!(!guessed.verified_for("1", "linux"));
+        guessed.exe_from_script = false;
+        assert!(guessed.verified_for("1", "linux"));
+        // Only the script, no profile: its origin says so, no warning on top.
+        guessed.exe_from_script = true;
+        guessed.origin = ManifestOrigin::DerivedFromScript;
+        assert!(guessed.verified_for("1", "linux"));
+        assert!(parse("script_start_checked = [\"ubuntu\"]\n").is_err());
     }
 
     #[test]

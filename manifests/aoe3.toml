@@ -3,6 +3,7 @@ id = "aoe3"
 title = "Age of Empires III"
 revisions = ["20170105"]
 source = "Checked with Proton 11 on Linux against the package's game_start.cmd"
+script_start_checked = ["linux"]
 
 [launch]
 # The package's start script starts the game through SmartSteamLoader; it

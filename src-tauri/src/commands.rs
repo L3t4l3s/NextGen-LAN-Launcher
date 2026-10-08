@@ -122,18 +122,7 @@ fn manifest_info(m: &Manifest, revision: &str, lang: &str) -> ManifestInfo {
             .get(lang)
             .or_else(|| m.setup.notes.get("en"))
             .cloned(),
-        // A profile whose entry point had to come from the Windows script is
-        // not confirmed for this package, whatever revisions its notes name.
-        // A manifest that is *only* the script says so in its origin line
-        // already, so it does not get the warning on top.
-        // The tester's own settings are verified by the tester — for the
-        // package they were saved with, not for the one an update brought.
-        verified_for_revision: if m.user_config {
-            m.config_revision.as_deref() == Some(revision)
-        } else {
-            m.matches_revision(revision)
-                && !(m.exe_from_script && m.origin != ManifestOrigin::DerivedFromScript)
-        },
+        verified_for_revision: m.verified_for(revision, Manifest::current_platform()),
         own_config: m.user_config,
     }
 }

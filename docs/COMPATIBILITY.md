@@ -107,6 +107,7 @@ installer of this launcher must provide them at that path (planned in `release.y
 schema = 1
 id = "goldsrc"
 revisions = ["20240623"]      # verified package revisions; empty = any
+script_start_checked = ["linux"]   # no exe of its own: platforms where the start through game_start.cmd was checked for these revisions
 source = "macETI-LAN (MIT)"
 
 [launch]

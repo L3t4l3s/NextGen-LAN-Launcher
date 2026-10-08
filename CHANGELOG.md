@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Geprüfte Spiele zeigen nicht mehr „Für diesen Paketstand noch nicht bestätigt“.** Profile
+  ohne eigene Startdatei (CoD2, FlatOut 2, AoE II/III, GoldSrc) starten bewusst über das
+  Startskript des Pakets; dieser Weg ist unter Linux geprüft und steht jetzt so im Profil
+  (`script_start_checked`, pro Plattform und nur für die genannten Paketstände). Außerdem zeigt die Befehlszeile in den Spieldetails wieder
+  Zeilenumbrüche statt `\n`.
+
 - **FlatOut 2 startet unter Linux.** Ohne Microsofts `d3dx9_30` endete es mit „Failed to create
   effect“. Fehlen einem Spiel Windows-Komponenten aus seinem Profil, fragt der Launcher jetzt vor
   dem Start, ob er sie installieren soll („Installieren“ / „Ohne starten“), und startet das Spiel
