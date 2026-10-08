@@ -46,7 +46,6 @@
     min-width: 0;
     padding: 5px 0;
     margin: -5px 0;
-    cursor: help;
   }
   .track {
     display: block;
