@@ -14,6 +14,10 @@ use std::time::Duration;
 /// all the same.
 const REGISTRY_LIMIT: Duration = Duration::from_secs(60);
 
+/// Making a prefix the first time takes longer: Wine sets up the whole
+/// Windows folder tree, and Proton copies its files in.
+const PREFIX_LIMIT: Duration = Duration::from_secs(300);
+
 /// Set what the profile names and what a Steam emulator in the package
 /// reads, then the profile's registry values: on Windows with `reg add`,
 /// elsewhere through `registry_plan` in the game's prefix. What cannot be
@@ -36,9 +40,15 @@ pub(crate) async fn apply(
         }
     };
     let settings = manifest.map(|m| m.settings.clone()).unwrap_or_default();
+    let profile = if manifest.is_some_and(Manifest::uses_windows_profile) {
+        windows_profile(state, game_id, paths, &player, &registry_plan).await?
+    } else {
+        None
+    };
     let (local, who) = (paths.local_dir.clone(), player.clone());
     let done = tauri::async_runtime::spawn_blocking(move || {
-        let (mut done, registry) = player_settings::apply(&local, &settings, &who);
+        let (mut done, registry) =
+            player_settings::apply(&local, profile.as_deref(), &settings, &who);
         let (goldberg, smart_steam_emu) = player_settings::emulators(&local, &who);
         done.extend(goldberg);
         done.extend(smart_steam_emu);
@@ -68,9 +78,59 @@ pub(crate) async fn apply(
         set_with_reg(game_id, registry).await;
         Ok(())
     } else if let Some(plan) = registry_plan {
-        set_in_prefix(state, game_id, paths, &player, plan, &registry).await
+        set_in_prefix(
+            state,
+            game_id,
+            paths,
+            &player,
+            plan,
+            &registry,
+            REGISTRY_LIMIT,
+        )
+        .await
     } else {
         Ok(())
+    }
+}
+
+/// The Windows user's folder for settings that live there
+/// ([`player_settings::Folder`]), `None` when there is none. A prefix that
+/// does not exist yet — the game never started — is made first by an empty
+/// run in it, so the first start already finds what the profile sets (Among
+/// Us' privacy notice, for one). With registry values as well, that is a
+/// second Wine start before the first game start only.
+async fn windows_profile(
+    state: &Arc<AppState>,
+    game_id: &str,
+    paths: &GamePaths,
+    player: &Player,
+    registry_plan: &Option<LaunchPlan>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    let plan = registry_plan.as_ref();
+    let found = if cfg!(target_os = "windows") {
+        std::env::var_os("USERPROFILE").map(|p| (std::path::PathBuf::from(p), true))
+    } else {
+        plan.and_then(launch::windows_profile)
+    };
+    match (found, plan) {
+        (Some((profile, true)), _) => Ok(Some(profile)),
+        (Some(_), Some(plan)) if !cfg!(target_os = "windows") => {
+            log::info!("player settings {game_id}: making the prefix for the user's folder");
+            set_in_prefix(
+                state,
+                game_id,
+                paths,
+                player,
+                plan.clone(),
+                &[],
+                PREFIX_LIMIT,
+            )
+            .await?;
+            Ok(launch::windows_profile(plan)
+                .filter(|(_, there)| *there)
+                .map(|(profile, _)| profile))
+        }
+        _ => Ok(None),
     }
 }
 
@@ -121,6 +181,7 @@ async fn set_in_prefix(
     player: &Player,
     mut plan: LaunchPlan,
     registry: &[RegistryValue],
+    limit: Duration,
 ) -> Result<(), String> {
     let claim = SetupClaim::claim(state, game_id, true)?;
     // Not beside a running copy of the game: its registry is in use.
@@ -165,12 +226,14 @@ async fn set_in_prefix(
             return Ok(());
         }
     };
-    match tokio::time::timeout(REGISTRY_LIMIT, &mut watch).await {
+    match tokio::time::timeout(limit, &mut watch).await {
         Ok(Ok(Some(0))) => {
-            log::info!(
-                "player settings {game_id}: set {} registry value(s) in the prefix",
-                registry.len()
-            );
+            if !registry.is_empty() {
+                log::info!(
+                    "player settings {game_id}: set {} registry value(s) in the prefix",
+                    registry.len()
+                );
+            }
             Ok(())
         }
         Ok(code) => {
@@ -183,7 +246,8 @@ async fn set_in_prefix(
         }
         Err(_) => {
             log::warn!(
-                "player settings {game_id}: the registry values are still being set after a minute; the game does not start beside it"
+                "player settings {game_id}: still running in the prefix after {}s; the game does not start beside it",
+                limit.as_secs()
             );
             tauri::async_runtime::spawn(async move {
                 let _ = watch.await;

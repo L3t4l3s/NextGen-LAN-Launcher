@@ -291,6 +291,18 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   beidseitig geprüft) — gesetzt vorab, erscheint der Dialog nicht, der sonst gern hinter dem
   Vollbild hängt. Herausfinden: `user.reg`/`system.reg` des Prefix vor und nach dem Klick
   vergleichen (der Wineserver schreibt die Dateien erst beim Beenden bzw. zeitverzögert).
+- **Einstellungen im Windows-Benutzerordner:** `folder = "locallow"` usw. (`player_settings::Folder`)
+  plus `json = "a.b"` (`set_json`, fehlende Ebenen werden angelegt, Nicht-JSON bleibt stehen, gleicher
+  Wert schreibt nicht). Der Ordner ist `launch::windows_profile(plan)`: Windows `USERPROFILE`,
+  Proton `<pfx>/drive_c/users/steamuser` (auch ohne Prefix bekannt, nicht über `winetricks::target`,
+  das einen fertigen Prefix verlangt), CrossOver `<bottle>/drive_c/users/crossover` (ungetestet),
+  Wine der einzige Benutzer im Prefix oder `USER`. Im Benutzerordner keine Link-Prüfung: Wine
+  verlinkt `Documents` & Co. absichtlich ins Home (`set_at` statt `set_inside`). Fehlt der
+  Prefix (nie gestartet), legt `player::windows_profile` ihn per leerem `Script::Settings`-Lauf an;
+  dafür baut `build_start` den Registry-Plan auch bei `Manifest::uses_windows_profile`. Gefunden mit
+  Among Us: `player.amogus` → `onboarding.privacyPolicyVersion = 4` (Zahl) und
+  `customization.name`; mit einer von Grund auf angelegten Datei geprüft (kein Dialog, Name in der
+  Lobby). Vor dem Überschreiben eines Profils in `manifests/` immer nachsehen, ob es schon eins gibt.
 - **Argumente im Startskript (`[[script_args]]`):** Ein Profil ohne eigene Startdatei kann
   Programmen, die das Startskript *als Befehl* aufruft, Argumente anhängen
   (`setup_script::with_arguments`, gleiche Befehlsposition-Erkennung wie der fnr-Tausch,

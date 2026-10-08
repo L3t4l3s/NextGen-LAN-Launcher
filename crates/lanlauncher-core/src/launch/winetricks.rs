@@ -181,7 +181,7 @@ pub fn target(plan: &LaunchPlan) -> Result<Target, Refusal> {
     Err(Refusal::NotWindows)
 }
 
-fn absolute(path: &Path, cwd: &Path) -> PathBuf {
+pub(crate) fn absolute(path: &Path, cwd: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -716,6 +716,49 @@ mod tests {
     fn touch(path: &Path) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, "").unwrap();
+    }
+
+    /// The user's folder of a Wine start: the prefix's one user, whatever
+    /// the login is called; before the prefix exists, the login's.
+    #[cfg(unix)]
+    #[test]
+    fn the_windows_profile_is_the_prefixs_user() {
+        let tmp = tempfile::tempdir().unwrap();
+        let prefix = tmp.path().join("pfx");
+        let mut wine_plan = plan(
+            &tmp.path().join("wine"),
+            &[("WINEPREFIX", prefix.to_str().unwrap())],
+            &[],
+        );
+        wine_plan.runner = "Wine".into();
+        let login = std::env::var("USER").unwrap_or_default();
+        if !login.is_empty() {
+            assert_eq!(
+                crate::launch::windows_profile(&wine_plan),
+                Some((prefix.join("drive_c/users").join(&login), false))
+            );
+        }
+        std::fs::create_dir_all(prefix.join("drive_c/users/Public")).unwrap();
+        std::fs::create_dir_all(prefix.join("drive_c/users/someone")).unwrap();
+        assert_eq!(
+            crate::launch::windows_profile(&wine_plan),
+            Some((prefix.join("drive_c/users/someone"), true))
+        );
+        wine_plan.runner = "native".into();
+        assert_eq!(crate::launch::windows_profile(&wine_plan), None);
+
+        // Proton before its first start: no prefix yet, the folder is known.
+        let compat = tmp.path().join("compat");
+        let mut proton = plan(
+            &tmp.path().join("Proton 11.0/proton"),
+            &[("STEAM_COMPAT_DATA_PATH", compat.to_str().unwrap())],
+            &["run"],
+        );
+        proton.runner = "Proton 11.0".into();
+        assert_eq!(
+            crate::launch::windows_profile(&proton),
+            Some((compat.join("pfx/drive_c/users/steamuser"), false))
+        );
     }
 
     #[test]

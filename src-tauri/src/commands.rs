@@ -525,7 +525,10 @@ async fn build_start(
             .ok()
             .and_then(|(exe, ..)| exe.file_name().map(|n| n.to_string_lossy().to_string()));
         let preparation = launch::unix::preparation_plan(ctx)?.map(|prep| (prep, exe));
-        let registry = if ctx.manifest.is_some_and(Manifest::sets_registry) {
+        let registry = if ctx
+            .manifest
+            .is_some_and(|m| m.sets_registry() || m.uses_windows_profile())
+        {
             launch::unix::script_plan(ctx, launch::setup_script::Script::Settings)?
         } else {
             None

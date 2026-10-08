@@ -531,6 +531,64 @@ fn crossover_bottle_dirs(env: &BTreeMap<String, String>) -> Vec<PathBuf> {
     ]
 }
 
+/// The Windows user's profile folder a game started by `plan` sees
+/// (`C:\Users\<name>`), and whether it is there yet. Windows: the
+/// launcher's own (`USERPROFILE`). Elsewhere it lies in the plan's prefix,
+/// also before the prefix exists (the caller may make it): Proton's user is
+/// `steamuser`, CrossOver's `crossover`; plain Wine names it after the login
+/// (`USER`), or whatever single user the prefix already has. `None` for a
+/// native start.
+pub fn windows_profile(plan: &LaunchPlan) -> Option<(PathBuf, bool)> {
+    if cfg!(windows) {
+        let profile = PathBuf::from(std::env::var_os("USERPROFILE")?);
+        let there = profile.is_dir();
+        return Some((profile, there));
+    }
+    if plan.runner.starts_with("native") {
+        return None;
+    }
+    let (users, fixed) = if plan.args.first().is_some_and(|a| a == "--bottle") {
+        let bottle = plan.args.get(1)?;
+        let roots = crossover_bottle_dirs(&plan.env);
+        let root = roots
+            .iter()
+            .find(|r| r.join(bottle).is_dir())
+            .or(roots.first())?;
+        (root.join(bottle).join("drive_c/users"), Some("crossover"))
+    } else if plan.program.file_name().is_some_and(|n| n == "proton") {
+        // Not through `winetricks::target`: that wants the prefix made.
+        let compat = plan.env.get("STEAM_COMPAT_DATA_PATH")?;
+        let compat = winetricks::absolute(Path::new(compat), &plan.cwd);
+        (compat.join("pfx/drive_c/users"), Some("steamuser"))
+    } else {
+        let target = winetricks::target(plan).ok()?;
+        (target.prefix().join("drive_c/users"), None)
+    };
+    let name = match fixed {
+        Some(name) => name.to_string(),
+        None => {
+            let login = std::env::var("USER").ok().filter(|u| !u.is_empty());
+            let existing: Vec<String> = std::fs::read_dir(&users)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|e| e.path().is_dir())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| !n.eq_ignore_ascii_case("public"))
+                .collect();
+            match (login, existing.as_slice()) {
+                (Some(login), _) if existing.contains(&login) => login,
+                (_, [only]) => only.clone(),
+                (Some(login), _) => login,
+                (None, _) => return None,
+            }
+        }
+    };
+    let profile = users.join(name);
+    let there = profile.is_dir();
+    Some((profile, there))
+}
+
 /// The environment variable in which the launcher records what it forced on
 /// itself, as JSON: every name it changed with the value that was there
 /// before (`null` where there was none).

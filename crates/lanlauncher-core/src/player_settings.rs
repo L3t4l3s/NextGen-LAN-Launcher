@@ -36,6 +36,19 @@
 //! key = "FIRSTRUN"             # dialog the game would otherwise show
 //! type = "dword"               # behind its full-screen window
 //! value = "1"
+//!
+//! [[settings]]                 # a JSON key, in the Windows user's folders
+//! folder = "locallow"          # game (local/, the default), appdata,
+//! file = "Innersloth/Among Us/player.amogus"   # localappdata, locallow,
+//! json = "customization.name"  # documents — in the prefix on macOS/Linux
+//! value = "%player%"
+//!
+//! [[settings]]                 # a JSON number (or `type = "bool"`)
+//! folder = "locallow"
+//! file = "Innersloth/Among Us/player.amogus"
+//! json = "onboarding.privacyPolicyVersion"
+//! type = "number"
+//! value = "4"
 //! ```
 //!
 //! `value` is text (`%player%`, `%game_lang%` filled in) or one per game
@@ -63,27 +76,69 @@ pub struct PlayerSetting {
     pub registry: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<SettingValue>,
-    /// A registry value's type; text when not given.
+    /// A key in a JSON file, its levels joined by dots.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub json: Option<String>,
+    /// Where `file` lies; the game's `local/` when not given.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<Folder>,
+    /// The value's type; text when not given.
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    pub reg_type: Option<RegType>,
+    pub value_type: Option<ValueType>,
 }
 
-/// The registry types a profile can set.
+/// The folder a setting's `file` is relative to.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum RegType {
-    /// `REG_SZ`.
+pub enum Folder {
+    /// The game's `local/`.
     #[default]
-    Sz,
-    /// `REG_DWORD`: a number, decimal or `0x…`, as `reg add` takes it.
-    Dword,
+    Game,
+    /// `%APPDATA%` (`AppData\Roaming`).
+    AppData,
+    /// `%LOCALAPPDATA%` (`AppData\Local`).
+    LocalAppData,
+    /// `AppData\LocalLow`, where Unity games keep their settings.
+    LocalLow,
+    /// `Documents` (`My Games` and the like).
+    Documents,
 }
 
-impl RegType {
+impl Folder {
+    /// Below the Windows user's profile folder.
+    pub fn below_profile(self) -> Option<&'static str> {
+        match self {
+            Folder::Game => None,
+            Folder::AppData => Some("AppData/Roaming"),
+            Folder::LocalAppData => Some("AppData/Local"),
+            Folder::LocalLow => Some("AppData/LocalLow"),
+            Folder::Documents => Some("Documents"),
+        }
+    }
+}
+
+/// The types a profile can give a value.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ValueType {
+    /// Text: `REG_SZ` in the registry, a string in JSON.
+    #[default]
+    #[serde(alias = "sz")]
+    Text,
+    /// `REG_DWORD`: a number, decimal or `0x…`, as `reg add` takes it.
+    Dword,
+    /// A JSON number.
+    Number,
+    /// A JSON `true`/`false`.
+    Bool,
+}
+
+impl ValueType {
+    /// The registry type `reg add` gets (only text and DWORD reach it).
     pub fn reg_name(self) -> &'static str {
         match self {
-            RegType::Sz => "REG_SZ",
-            RegType::Dword => "REG_DWORD",
+            ValueType::Dword => "REG_DWORD",
+            ValueType::Text | ValueType::Number | ValueType::Bool => "REG_SZ",
         }
     }
 }
@@ -132,6 +187,10 @@ pub enum Kind<'a> {
         key: &'a str,
         name: &'a str,
     },
+    Json {
+        file: &'a str,
+        path: &'a str,
+    },
 }
 
 impl PlayerSetting {
@@ -146,18 +205,41 @@ impl PlayerSetting {
         if quoted {
             return Err("settings: a value must not hold a double quote");
         }
-        if self.reg_type.is_some() && self.registry.is_none() {
-            return Err("settings: type is for registry values");
-        }
-        if self.reg_type == Some(RegType::Dword) {
-            let numbers = match &self.value {
-                Some(SettingValue::Text(text)) => is_dword(text),
-                Some(SettingValue::ByLanguage(by)) => by.values().all(|v| is_dword(v)),
-                None => false,
-            };
-            if !numbers {
-                return Err("settings: a dword value must be a number (decimal or 0x…)");
+        let all = |ok: fn(&str) -> bool| match &self.value {
+            Some(SettingValue::Text(text)) => ok(text.as_str()),
+            Some(SettingValue::ByLanguage(by)) => by.values().all(|v| ok(v.as_str())),
+            None => false,
+        };
+        match self.value_type {
+            Some(ValueType::Dword) if self.registry.is_none() => {
+                return Err("settings: dword is for registry values")
             }
+            Some(ValueType::Number | ValueType::Bool) if self.json.is_none() => {
+                return Err("settings: number and bool are for JSON keys")
+            }
+            Some(ValueType::Number) if !all(|v| v.parse::<f64>().is_ok_and(f64::is_finite)) => {
+                return Err("settings: a number value must be a number")
+            }
+            Some(ValueType::Bool) if !all(|v| v == "true" || v == "false") => {
+                return Err("settings: a bool value must be true or false")
+            }
+            _ => {}
+        }
+        if self.folder.is_some_and(|f| f != Folder::Game) && self.file.is_none() {
+            return Err("settings: folder is for files");
+        }
+        if let Some(path) = &self.json {
+            if self.file.is_none()
+                || self.section.is_some()
+                || self.key.is_some()
+                || self.line.is_some()
+                || path.split('.').any(str::is_empty)
+            {
+                return Err("settings: json needs a file and a dotted key, nothing else");
+            }
+        }
+        if self.value_type == Some(ValueType::Dword) && !all(is_dword) {
+            return Err("settings: a dword value must be a number (decimal or 0x…)");
         }
         match (
             self.file.as_deref(),
@@ -168,6 +250,10 @@ impl PlayerSetting {
             (Some(file), None, _, _) if !crate::manifest::is_safe_relative(file) => {
                 Err("settings: file must be relative to local/")
             }
+            (Some(file), None, None, None) if self.json.is_some() => Ok(Kind::Json {
+                file,
+                path: self.json.as_deref().unwrap_or_default(),
+            }),
             (Some(file), None, Some(line), None) if self.section.is_none() => {
                 Ok(Kind::Line { file, line })
             }
@@ -248,7 +334,7 @@ pub struct RegistryValue {
     pub key: String,
     pub name: String,
     pub value: String,
-    pub reg_type: RegType,
+    pub reg_type: ValueType,
 }
 
 /// macOS/Linux: the batch that sets `values` in the game's prefix, written
@@ -289,10 +375,14 @@ pub fn write_registry_script(
     Ok(env)
 }
 
-/// Set the file settings of `settings` below `local`, and say what became
-/// of each; the registry ones are returned for the platform to set.
+/// Set the file settings of `settings` below `local` — or, for those in a
+/// [`Folder`] of the Windows user, below `profile` (`C:\Users\<name>`, in
+/// the game's prefix on macOS/Linux; `None` while there is none yet) — and
+/// say what became of each; the registry ones are returned for the platform
+/// to set.
 pub fn apply(
     local: &Path,
+    profile: Option<&Path>,
     settings: &[PlayerSetting],
     player: &Player,
 ) -> (Vec<Applied>, Vec<RegistryValue>) {
@@ -315,16 +405,41 @@ pub fn apply(
                     key: key.to_string(),
                     name: name.to_string(),
                     value,
-                    reg_type: setting.reg_type.unwrap_or_default(),
+                    reg_type: setting.value_type.unwrap_or_default(),
                 });
                 continue;
             }
-            Kind::Ini { file, .. } | Kind::Line { file, .. } | Kind::WholeFile { file } => file,
+            Kind::Ini { file, .. }
+            | Kind::Line { file, .. }
+            | Kind::WholeFile { file }
+            | Kind::Json { file, .. } => file,
+        };
+        let root = match setting.folder.unwrap_or_default().below_profile() {
+            None => local.to_path_buf(),
+            Some(below) => match profile {
+                Some(profile) => existing_or_new(profile, below),
+                None => {
+                    done.push(Applied::Left(format!(
+                        "{file}: the Windows user's folder is not there yet"
+                    )));
+                    continue;
+                }
+            },
         };
         // A file the package does not have yet is made, folders and all:
         // Call of Duty 2 makes its player profile only when asked for one.
-        let path = existing_or_new(local, file);
-        done.push(set_inside(local, path, &kind, &value, false));
+        let path = existing_or_new(&root, file);
+        let utf8 = matches!(kind, Kind::Json { .. });
+        let typed = setting.value_type.unwrap_or_default();
+        done.push(if root == local {
+            set_inside(local, path, &kind, &value, utf8, typed)
+        } else {
+            // The user's folders come from Wine, not from the package, and
+            // Wine links `Documents` and the like into the host's home on
+            // purpose: no link check there. `file` stays relative all the
+            // same (`is_safe_relative`, checked when the profile loads).
+            set_at(path, &kind, &value, utf8, typed)
+        });
     }
     (done, registry)
 }
@@ -399,7 +514,13 @@ fn read(path: &Path) -> std::io::Result<Text> {
 
 /// Set `value` as `kind` says; `false` when the file already said it.
 /// `utf8` for a file whose reader wants UTF-8 whatever it held before.
-fn write(path: &Path, kind: &Kind<'_>, value: &str, utf8: bool) -> std::io::Result<bool> {
+fn write(
+    path: &Path,
+    kind: &Kind<'_>,
+    value: &str,
+    utf8: bool,
+    typed: ValueType,
+) -> std::io::Result<bool> {
     let mut old = read(path)?;
     if utf8 && old.encoding != encoding_rs::UTF_8 {
         // Another encoding's byte order mark must not stand before UTF-8.
@@ -410,6 +531,17 @@ fn write(path: &Path, kind: &Kind<'_>, value: &str, utf8: bool) -> std::io::Resu
         Kind::WholeFile { .. } => value.to_string(),
         Kind::Ini { section, key, .. } => set_ini(&old.text, *section, key, value, old.eol),
         Kind::Line { line, .. } => set_line(&old.text, line, value, old.eol),
+        Kind::Json { path: key, .. } => match set_json(&old.text, key, value, typed) {
+            Some(Some(new)) => new,
+            // The key holds that value already: the file stays as it is,
+            // whatever order or spacing the game wrote it in.
+            Some(None) => return Ok(false),
+            None => {
+                return Err(std::io::Error::other(
+                    "not JSON this launcher can set a key in; left as it is",
+                ))
+            }
+        },
         Kind::Registry { .. } => return Ok(false),
     };
     if new == old.text && path.exists() {
@@ -464,15 +596,74 @@ fn stays_inside(local: &Path, path: &Path) -> bool {
 }
 
 /// [`write`], below `local` only; the outcome as the log wants it.
-fn set_inside(local: &Path, path: PathBuf, kind: &Kind<'_>, value: &str, utf8: bool) -> Applied {
+fn set_inside(
+    local: &Path,
+    path: PathBuf,
+    kind: &Kind<'_>,
+    value: &str,
+    utf8: bool,
+    typed: ValueType,
+) -> Applied {
     if !stays_inside(local, &path) {
         return Applied::Left(format!("{} leads outside the game folder", path.display()));
     }
-    match write(&path, kind, value, utf8) {
+    set_at(path, kind, value, utf8, typed)
+}
+
+/// [`write`], the outcome as the log wants it.
+fn set_at(path: PathBuf, kind: &Kind<'_>, value: &str, utf8: bool, typed: ValueType) -> Applied {
+    match write(&path, kind, value, utf8, typed) {
         Ok(true) => Applied::Written(path),
         Ok(false) => Applied::Unchanged(path),
         Err(e) => Applied::Left(format!("{}: {e}", path.display())),
     }
+}
+
+/// `text` (a JSON object, or nothing yet) with `key` (levels joined by dots)
+/// set to `value` as `typed` says: `Some(None)` when it holds that already,
+/// `None` when it is not an object this can set a key in. Levels that are
+/// missing are made; everything else stays, though the file is written in
+/// key order — which the game reads by name, not by place.
+fn set_json(text: &str, key: &str, value: &str, typed: ValueType) -> Option<Option<String>> {
+    use serde_json::Value;
+    let mut root: Value = if text.trim().is_empty() {
+        Value::Object(Default::default())
+    } else {
+        serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()?
+    };
+    let wanted = match typed {
+        ValueType::Number => {
+            let n: f64 = value.parse().ok()?;
+            if n.fract() == 0.0 && n.abs() < 9.0e15 {
+                Value::from(n as i64)
+            } else {
+                Value::from(n)
+            }
+        }
+        ValueType::Bool => Value::Bool(value == "true"),
+        ValueType::Text | ValueType::Dword => Value::String(value.to_string()),
+    };
+    let mut at = &mut root;
+    let levels: Vec<&str> = key.split('.').collect();
+    for level in &levels[..levels.len() - 1] {
+        let object = at.as_object_mut()?;
+        at = object
+            .entry(level.to_string())
+            .or_insert_with(|| Value::Object(Default::default()));
+    }
+    let object = at.as_object_mut()?;
+    let last = levels[levels.len() - 1];
+    // `4.0` written by the game is the `4` wanted: compared as numbers, or
+    // the file would be rewritten on every start.
+    let same = match (object.get(last), &wanted) {
+        (Some(Value::Number(have)), Value::Number(want)) => have.as_f64() == want.as_f64(),
+        (have, want) => have == Some(want),
+    };
+    if same {
+        return Some(None);
+    }
+    object.insert(last.to_string(), wanted);
+    serde_json::to_string_pretty(&root).ok().map(Some)
 }
 
 /// `key=value` in `[section]` (any case), the existing line replaced or a
@@ -609,7 +800,14 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>) 
         ] {
             if let Some(value) = value {
                 let kind = Kind::WholeFile { file: name };
-                goldberg.push(set_inside(local, settings.join(name), &kind, value, true));
+                goldberg.push(set_inside(
+                    local,
+                    settings.join(name),
+                    &kind,
+                    value,
+                    true,
+                    ValueType::Text,
+                ));
             }
         }
         // Packages that run Goldberg in its local-save mode (Left 4 Dead 2,
@@ -623,7 +821,7 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>) 
             let path = local_save.join(name);
             if let (Some(value), true) = (value, path.is_file()) {
                 let kind = Kind::WholeFile { file: name };
-                goldberg.push(set_inside(local, path, &kind, value, true));
+                goldberg.push(set_inside(local, path, &kind, value, true, ValueType::Text));
             }
         }
     }
@@ -638,7 +836,14 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>) 
                     section: Some("SmartSteamEmu"),
                     key,
                 };
-                sse.push(set_inside(local, ini.clone(), &kind, value, false));
+                sse.push(set_inside(
+                    local,
+                    ini.clone(),
+                    &kind,
+                    value,
+                    false,
+                    ValueType::Text,
+                ));
             }
         }
     }
@@ -711,11 +916,136 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_json_key_is_set_in_the_users_folder_and_the_rest_stays() {
+        let tmp = tempfile::tempdir().unwrap();
+        let local = tmp.path().join("local");
+        let profile = tmp.path().join("users/steamuser");
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::create_dir_all(&profile).unwrap();
+        let json = |key: &str, typed: Option<ValueType>, value: &str| PlayerSetting {
+            folder: Some(Folder::LocalLow),
+            file: Some("Innersloth/Among Us/player.amogus".into()),
+            json: Some(key.into()),
+            value_type: typed,
+            value: Some(SettingValue::Text(value.into())),
+            ..Default::default()
+        };
+        let settings = [
+            json("customization.name", None, "%player%"),
+            json(
+                "onboarding.privacyPolicyVersion",
+                Some(ValueType::Number),
+                "4",
+            ),
+        ];
+        for s in &settings {
+            assert!(s.kind().is_ok());
+        }
+        // Before the game ever ran: made, folders and all.
+        let (done, _) = apply(&local, Some(&profile), &settings, &player());
+        assert!(
+            done.iter().all(|d| matches!(d, Applied::Written(_))),
+            "{done:?}"
+        );
+        let file = profile.join("AppData/LocalLow/Innersloth/Among Us/player.amogus");
+        let made: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(made["customization"]["name"], "Jürgen");
+        assert_eq!(made["onboarding"]["privacyPolicyVersion"], 4);
+
+        // What the game wrote around it stays; a value already there is not
+        // written again.
+        std::fs::write(
+            &file,
+            r#"{"customization":{"name":"Jürgen","hat":"hat_x"},"onboarding":{"privacyPolicyVersion":4},"dataVersion":1}"#,
+        )
+        .unwrap();
+        let (again, _) = apply(&local, Some(&profile), &settings, &player());
+        assert!(
+            again.iter().all(|d| matches!(d, Applied::Unchanged(_))),
+            "{again:?}"
+        );
+        let renamed = Player {
+            name: "Bazzite".into(),
+            lang: "de".into(),
+        };
+        apply(&local, Some(&profile), &settings, &renamed);
+        let kept: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(kept["customization"]["name"], "Bazzite");
+        assert_eq!(kept["customization"]["hat"], "hat_x");
+        assert_eq!(kept["dataVersion"], 1);
+
+        // Not JSON: left alone, never replaced.
+        std::fs::write(&file, "garbage").unwrap();
+        let (left, _) = apply(&local, Some(&profile), &settings, &renamed);
+        assert!(matches!(left[0], Applied::Left(_)), "{left:?}");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "garbage");
+
+        // No user's folder yet (no prefix): said so, nothing written.
+        let (none, _) = apply(&local, None, &settings, &renamed);
+        assert!(matches!(none[0], Applied::Left(_)));
+    }
+
+    #[test]
+    fn typed_values_are_checked_where_they_belong() {
+        let base = || PlayerSetting {
+            file: Some("a.json".into()),
+            json: Some("a.b".into()),
+            value: Some(SettingValue::Text("1".into())),
+            ..Default::default()
+        };
+        assert!(PlayerSetting {
+            value_type: Some(ValueType::Number),
+            ..base()
+        }
+        .kind()
+        .is_ok());
+        let not_a_number = PlayerSetting {
+            value_type: Some(ValueType::Number),
+            value: Some(SettingValue::Text("%player%".into())),
+            ..base()
+        };
+        assert!(not_a_number.kind().is_err());
+        assert!(PlayerSetting {
+            value_type: Some(ValueType::Bool),
+            ..base()
+        }
+        .kind()
+        .is_err());
+        assert!(PlayerSetting {
+            value_type: Some(ValueType::Dword),
+            ..base()
+        }
+        .kind()
+        .is_err());
+        assert!(PlayerSetting {
+            json: Some("a..b".into()),
+            ..base()
+        }
+        .kind()
+        .is_err());
+        assert!(PlayerSetting {
+            key: Some("k".into()),
+            ..base()
+        }
+        .kind()
+        .is_err());
+        let ini_number = PlayerSetting {
+            json: None,
+            key: Some("k".into()),
+            value_type: Some(ValueType::Number),
+            ..base()
+        };
+        assert!(ini_number.kind().is_err());
+    }
+
+    #[test]
     fn a_dword_is_a_number_and_reaches_the_batch_as_one() {
         let dword = |value: &str| PlayerSetting {
             registry: Some("HKCU\\Software\\Game\\1.0\\EULA".into()),
             key: Some("FIRSTRUN".into()),
-            reg_type: Some(RegType::Dword),
+            value_type: Some(ValueType::Dword),
             value: Some(SettingValue::Text(value.into())),
             ..Default::default()
         };
@@ -737,7 +1067,7 @@ mod tests {
         let in_a_file = PlayerSetting {
             file: Some("a.ini".into()),
             key: Some("k".into()),
-            reg_type: Some(RegType::Dword),
+            value_type: Some(ValueType::Dword),
             value: Some(SettingValue::Text("1".into())),
             ..Default::default()
         };
@@ -748,8 +1078,8 @@ mod tests {
             lang: "de".into(),
         };
         let dir = tempfile::tempdir().unwrap();
-        let (_, registry) = apply(dir.path(), &[dword("1")], &player);
-        assert_eq!(registry[0].reg_type, RegType::Dword);
+        let (_, registry) = apply(dir.path(), None, &[dword("1")], &player);
+        assert_eq!(registry[0].reg_type, ValueType::Dword);
         write_registry_script(dir.path(), "aoe3", "de", &registry).unwrap();
         let batch = std::fs::read_to_string(
             dir.path()
@@ -827,7 +1157,7 @@ mod tests {
             setting("file = 'System/Profiles/LAN/new.cfg'\nline = 'seta name'\nvalue = '%player%'"),
             setting("file = 'System/User.ini'\nsection = 'Other'\nkey = 'Language'\nvalue = { de = 'det' }"),
         ];
-        let (done, registry) = apply(tmp.path(), &settings, &player());
+        let (done, registry) = apply(tmp.path(), None, &settings, &player());
         assert!(registry.is_empty());
         // Made where the package has nothing yet, folders and all.
         assert!(matches!(done[3], Applied::Written(_)));
@@ -845,7 +1175,7 @@ mod tests {
             b"[URL]\r\nMap=Gr\xFCn\r\nName=J\xFCrgen\r\n\r\n[Engine.Engine]\r\nLanguage=det\r\n"
         );
         // Again: nothing to write.
-        let (again, _) = apply(tmp.path(), &settings[..1], &player());
+        let (again, _) = apply(tmp.path(), None, &settings[..1], &player());
         assert!(matches!(again[0], Applied::Unchanged(_)));
     }
 
@@ -862,7 +1192,7 @@ mod tests {
             setting("file = 'baseq3/q3config.cfg'\nline = 'seta name'\nvalue = '%player%'"),
             setting("registry = 'HKCU\\Software\\Blizzard Entertainment\\Warcraft III\\String'\nkey = 'userlocal'\nvalue = '%player%'"),
         ];
-        let (_, registry) = apply(tmp.path(), &settings, &player());
+        let (_, registry) = apply(tmp.path(), None, &settings, &player());
         // ASCII is ANSI here: Quake 3 reads Latin-1.
         assert_eq!(
             std::fs::read(tmp.path().join("baseq3/q3config.cfg")).unwrap(),
@@ -874,7 +1204,7 @@ mod tests {
                 key: "HKCU\\Software\\Blizzard Entertainment\\Warcraft III\\String".into(),
                 name: "userlocal".into(),
                 value: "Jürgen".into(),
-                reg_type: RegType::Sz,
+                reg_type: ValueType::Text,
             }]
         );
     }
@@ -889,7 +1219,7 @@ mod tests {
         let settings = [setting(
             "file = 'cfg/config.cfg'\nline = 'name'\nvalue = '%player%'",
         )];
-        apply(tmp.path(), &settings, &polish);
+        apply(tmp.path(), None, &settings, &polish);
         assert_eq!(
             std::fs::read_to_string(tmp.path().join("cfg/config.cfg")).unwrap(),
             "name \"Łukasz\"\r\n"
@@ -915,7 +1245,7 @@ mod tests {
         std::fs::create_dir_all(&outside).unwrap();
         std::os::unix::fs::symlink(&outside, local.join("main/players")).unwrap();
         let settings = [setting("file = 'main/players/active.txt'\nvalue = 'LAN'")];
-        let (done, _) = apply(&local, &settings, &player());
+        let (done, _) = apply(&local, None, &settings, &player());
         assert!(matches!(done[0], Applied::Left(_)));
         assert!(!outside.join("active.txt").exists());
     }

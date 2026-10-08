@@ -15,3 +15,21 @@ runner = "crossover"
 [setup]
 notes.de = "Startet über Steam-Emulation ohne Account. Lokales Spiel über 'Lokal' im Hauptmenü."
 notes.en = "Runs through Steam emulation without an account. Use 'Local' in the main menu for LAN games."
+
+# The game keeps the player's name and the privacy notice it showed in a
+# JSON file in the user's LocalLow folder (in the prefix on macOS/Linux,
+# made before the first start). Written beforehand, the notice does not
+# come and the lobby shows the player's name — checked with Proton 11 and a
+# file made from nothing. The game takes up to 10 characters for a name.
+[[settings]]
+folder = "locallow"
+file = "Innersloth/Among Us/player.amogus"
+json = "customization.name"
+value = "%player%"
+
+[[settings]]
+folder = "locallow"
+file = "Innersloth/Among Us/player.amogus"
+json = "onboarding.privacyPolicyVersion"
+type = "number"
+value = "4"

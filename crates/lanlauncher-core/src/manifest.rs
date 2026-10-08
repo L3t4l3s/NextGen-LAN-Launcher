@@ -348,6 +348,16 @@ pub fn is_safe_relative(path: &str) -> bool {
 }
 
 impl Manifest {
+    /// Whether a setting lies in the Windows user's folders, which on
+    /// macOS/Linux are in the game's prefix: it then needs the same plan as
+    /// registry values, to make that prefix before the first start.
+    pub fn uses_windows_profile(&self) -> bool {
+        self.settings.iter().any(|s| {
+            s.folder
+                .is_some_and(|f| f != crate::player_settings::Folder::Game)
+        })
+    }
+
     /// Whether a `[[settings]]` entry sets a registry value.
     pub fn sets_registry(&self) -> bool {
         self.settings

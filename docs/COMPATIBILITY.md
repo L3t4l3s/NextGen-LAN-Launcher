@@ -168,6 +168,13 @@ key = "FIRSTRUN"
 type = "dword"
 value = "1"
 
+[[settings]]                           # a JSON key in the Windows user's folders
+folder = "locallow"                    # game (local/, default), appdata, localappdata, locallow, documents
+file = "Innersloth/Among Us/player.amogus"
+json = "onboarding.privacyPolicyVersion"   # levels joined by dots, made if missing
+type = "number"                        # text (default), number, bool; dword for registry values
+value = "4"
+
 # macOS/Linux, where the start script runs filtered in the prefix: arguments
 # added where the script starts a program (as a command, not as an argument).
 [[script_args]]
@@ -175,7 +182,11 @@ exe = "empires2.exe"                   # file name, any case, with or without .e
 args = ["NOSTARTUP"]                   # plain words only
 ```
 
-Files keep their encoding (a byte order mark says it, valid UTF-8 beyond ASCII says UTF-8, anything
+A `folder` other than `game` is the Windows user's: `%USERPROFILE%` on Windows, the user in the
+game's prefix elsewhere (Proton's `steamuser`, Wine's login). A prefix that is not there yet is made
+by an empty run in it first, so the first start already finds the file. JSON files are read and
+written as UTF-8; a file that is not JSON is left alone, a value that is already set leaves the file
+untouched, and a changed one rewrites it in key order (games read JSON by name). Files keep their encoding (a byte order mark says it, valid UTF-8 beyond ASCII says UTF-8, anything
 else is Windows' ANSI) and a key that is there keeps its spelling and spacing. Registry values go
 in with `reg add` on Windows (HKLM needs rights the launcher does not have) and through a batch
 in the game's prefix elsewhere, the values passed as variables so a name with an umlaut survives.

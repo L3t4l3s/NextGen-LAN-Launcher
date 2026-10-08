@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Among Us: Spielername und kein Datenschutz-Dialog.** Der Launcher schreibt Namen und die
+  bestätigte Datenschutz-Version vor dem Start in die Datei, in der das Spiel sie ablegt (im
+  Windows-Benutzerordner, unter macOS/Linux im Prefix, der dafür vor dem ersten Start angelegt
+  wird). Profile können dafür jetzt JSON-Schlüssel und Dateien in den Benutzerordnern
+  (`AppData`, `LocalLow`, `Documents`) setzen.
 - **Age of Empires II Classic (Menüpunkte 2–4) startet unter macOS/Linux ins Menü statt ins
   Schwarze.** Die Intro-Videos nutzen einen Codec, den Wine nicht hat (VP7); die Fehlermeldung
   dazu öffnete sich hinter dem Vollbild, und das Spiel wartete darauf. Die drei Classic-Programme

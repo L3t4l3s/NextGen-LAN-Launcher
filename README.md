@@ -178,6 +178,9 @@ again.
 
 ## Open items
 
+- **Settings in the Windows user's folders under CrossOver — untested:** a profile's
+  `folder = "locallow"` etc. (Among Us' name and privacy notice) resolves to
+  `<bottle>/drive_c/users/crossover`; checked with Proton 11 only.
 - **Colour emoji and the web engine:** the AppImage's WebKitGTK died drawing an emoji from a
   COLRv1 colour font (Fedora 44 / Bazzite: `Noto-COLRv1.ttf`); the AppImage now leaves such fonts
   out of its own window, reproduced and checked on Bazzite. Whether a distribution's own WebKitGTK
