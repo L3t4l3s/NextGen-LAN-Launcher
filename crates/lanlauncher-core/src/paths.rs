@@ -157,6 +157,10 @@ mod tests {
 
     use super::*;
 
+    /// Linux only: Windows' and macOS's file systems ignore case themselves,
+    /// so the script's spelling exists there as it is (and `data/` and
+    /// `DATA/` cannot both be made).
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_path_from_a_windows_script_is_found_in_any_case() {
         let tmp = tempfile::tempdir().unwrap();
