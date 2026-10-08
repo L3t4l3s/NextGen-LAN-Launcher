@@ -468,7 +468,7 @@ pub fn setup_script_plan(ctx: &LaunchContext<'_>) -> Result<Option<LaunchPlan>> 
 /// and a menu (`set /p`) is answered there — also when the launcher's own
 /// input is `/dev/null` (tried with Proton 11: the choice typed into the
 /// window reached the script).
-fn script_plan(ctx: &LaunchContext<'_>, script: Script) -> Result<Option<LaunchPlan>> {
+pub fn script_plan(ctx: &LaunchContext<'_>, script: Script) -> Result<Option<LaunchPlan>> {
     let platform = crate::manifest::Manifest::current_platform();
     let spec = ctx.manifest.map(|m| m.launch_for(platform));
     let wanted = spec.as_ref().map(|s| s.runner).unwrap_or(Runner::Auto);

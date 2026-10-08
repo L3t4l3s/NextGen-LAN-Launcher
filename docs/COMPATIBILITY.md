@@ -139,7 +139,38 @@ workdir = ""                           # "" = the exe's own folder, whatever [la
 wrapper = ["gamescope", "-w", "1280", "-h", "800", "--"]
 env = { WINEDLLOVERRIDES = "dinput8=n,b", PROTON_USE_WINED3D = "1" }
 unset_env = ["WINEDEBUG"]              # variables of [launch].env this platform goes without
+
+# The player's name and language in the game's own settings, set before every
+# start on every platform, on top of what game_start.cmd does.
+[[settings]]                           # an INI key in its section
+file = "System/User.ini"               # relative to local/, found in any case, made if missing
+section = "DefaultPlayer"
+key = "Name"
+value = "%player%"                     # %player%, %game_lang%
+
+[[settings]]                           # a config line: seta name "Player"
+file = "main/players/LAN/config_mp.cfg"
+line = "seta name"
+value = "%player%"
+
+[[settings]]                           # a whole file, here one value per game language
+file = "settings/language.txt"
+value = { de = "german", en = "english", fr = "french" }   # a missing language leaves it alone
+
+[[settings]]                           # a registry value (HKCU/HKLM)
+registry = 'HKCU\Software\Blizzard Entertainment\Warcraft III\String'
+key = "userlocal"
+value = "%player%"
 ```
+
+Files keep their encoding (a byte order mark says it, valid UTF-8 beyond ASCII says UTF-8, anything
+else is Windows' ANSI) and a key that is there keeps its spelling and spacing. Registry values go
+in with `reg add` on Windows (HKLM needs rights the launcher does not have) and through a batch
+in the game's prefix elsewhere, the values passed as variables so a name with an umlaut survives.
+Without a profile, two Steam emulators get the name and language anyway: Goldberg (a
+`steam_api(64).dll` naming `force_account_name.txt`) gets `steam_settings/force_account_name.txt`
+and `force_language.txt` next to it, SmartSteamEmu gets `PersonaName`/`Language` in every
+`SmartSteamEmu.ini` of the package.
 
 `winetricks = ["directplay", "vcrun2010"]` (in `[launch]` or `[platform.<os>]`) names Windows
 components as winetricks verbs. They are never installed on their own: the launch configuration

@@ -3,6 +3,7 @@
 mod chat;
 mod commands;
 mod fixes;
+mod player;
 mod state;
 mod tray;
 mod wine_setup;

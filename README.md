@@ -178,6 +178,14 @@ again.
 
 ## Open items
 
+- **Player name and language in the games — check at the LAN:** before every start, on every
+  platform, the launcher writes the player's name and the game language where the game reads
+  them (`[[settings]]` in a profile; Goldberg and SmartSteamEmu packages without one). Written
+  and checked file by file against the packages of Counter-Strike: Source, Counter-Strike 1.6,
+  Age of Empires II HD and III, Call of Duty 2 (player profile made in advance) and Unreal
+  Tournament 2004 (`User.ini`, where ETI's script misses it); Warcraft III's LAN name in the
+  registry is untested. Not yet seen inside the running games. A language the package lacks
+  stays as it is (CoD2 is German only). TrackMania keeps both in binary files and is left out.
 - **Start scripts on macOS/Linux — untested on a Mac, check at the LAN:** a game whose executable
   is only read off `game_start.cmd` (no profile names one, nobody picked one) starts through the
   whole filtered script in its prefix, as on Windows: language branches, `reg add`, menus

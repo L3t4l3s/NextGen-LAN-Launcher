@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Spielername und Sprache im Spiel, auf allen Plattformen.** Vor jedem Start schreibt der
+  Launcher den eingetragenen Spielernamen und die Spielsprache dorthin, wo das Spiel sie liest –
+  zusätzlich zum ETI-Startskript, das das nicht immer richtig macht (Unreal Tournament 2004:
+  `User.ini` statt `UT2004.ini`). Spiele mit den Steam-Emulatoren Goldberg und SmartSteamEmu
+  (Counter-Strike: Source, Counter-Strike 1.6, Age of Empires II und III und viele mehr) bekommen
+  das ohne eigenes Profil; Call of Duty 2 bekommt sein Spielerprofil vorab, Warcraft III den
+  LAN-Namen. Profile können das künftig für weitere Spiele angeben. Fehlt einem Paket eine Sprache,
+  bleibt es, wie es ist.
+- Pfade aus ETI-Skripten werden unter Linux auch in anderer Groß-/Kleinschreibung gefunden; die
+  Meldung „Startprofil passt nicht ganz zum Paket“ bei Unreal Tournament 2004 und Warhammer 40k
+  war eine Fehlmeldung. Das Protokoll behält den Anfang einer Sitzung (2 MB, drei Dateien).
 - **macOS/Linux: Das Startskript eines Spiels läuft jetzt.** Spiele ohne eigenes Startprofil
   starten über ihr ganzes `game_start.cmd` im Prefix, wie unter Windows: Sprache, Spielername,
   Registry-Werte, Auswahlmenüs (im Konsolenfenster) und der SmartSteamLoader, über den viele

@@ -1,0 +1,839 @@
+//! The player's name and language in a game's own settings, on every
+//! platform, before every start.
+//!
+//! ETI's start scripts do some of this with `fnr.exe`, and not always right:
+//! Unreal Tournament 2004's writes `Name=` into `UT2004.ini` — into every key
+//! ending in it — while the game reads the player's name from `User.ini`.
+//! A profile names the exact places instead (`[[settings]]`), and packages
+//! built on the Goldberg Steam emulator get theirs without one
+//! ([`goldberg`]). This comes on top of the start script, not instead of it.
+//!
+//! What a profile can name:
+//!
+//! ```toml
+//! [[settings]]                 # an INI key, in its section
+//! file = "System/User.ini"
+//! section = "DefaultPlayer"
+//! key = "Name"
+//! value = "%player%"
+//!
+//! [[settings]]                 # a config line: `seta name "Player"`
+//! file = "baseq3/q3config.cfg"
+//! line = "seta name"
+//! value = "%player%"
+//!
+//! [[settings]]                 # a whole file
+//! file = "settings/language.txt"
+//! value = { de = "german", en = "english", fr = "french" }
+//!
+//! [[settings]]                 # a registry value (HKCU or HKLM)
+//! registry = 'HKCU\Software\Blizzard Entertainment\Warcraft III\String'
+//! key = "userlocal"
+//! value = "%player%"
+//! ```
+//!
+//! `value` is text (`%player%`, `%game_lang%` filled in) or one per game
+//! language; a language the table does not list leaves the setting alone —
+//! a package without German stays as it is rather than broken.
+
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+/// One value a profile sets; see the module documentation for the forms.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "snake_case")]
+pub struct PlayerSetting {
+    /// Relative to `local/`, found in any case.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub section: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registry: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<SettingValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SettingValue {
+    Text(String),
+    /// By game language (`de`, `en`, `fr`).
+    ByLanguage(BTreeMap<String, String>),
+}
+
+/// What a setting does, once checked ([`PlayerSetting::kind`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Kind<'a> {
+    Ini {
+        file: &'a str,
+        section: Option<&'a str>,
+        key: &'a str,
+    },
+    Line {
+        file: &'a str,
+        line: &'a str,
+    },
+    WholeFile {
+        file: &'a str,
+    },
+    Registry {
+        key: &'a str,
+        name: &'a str,
+    },
+}
+
+impl PlayerSetting {
+    /// Which form this is, or why it is none. Checked when a profile loads.
+    pub fn kind(&self) -> Result<Kind<'_>, &'static str> {
+        let quoted = match &self.value {
+            None => return Err("settings: a value is missing"),
+            Some(SettingValue::Text(text)) => text.contains('"'),
+            Some(SettingValue::ByLanguage(by)) => by.values().any(|v| v.contains('"')),
+        };
+        // A value goes between quotes into a config line or a batch.
+        if quoted {
+            return Err("settings: a value must not hold a double quote");
+        }
+        match (
+            self.file.as_deref(),
+            self.registry.as_deref(),
+            self.line.as_deref(),
+            self.key.as_deref(),
+        ) {
+            (Some(file), None, _, _) if !crate::manifest::is_safe_relative(file) => {
+                Err("settings: file must be relative to local/")
+            }
+            (Some(file), None, Some(line), None) if self.section.is_none() => {
+                Ok(Kind::Line { file, line })
+            }
+            (Some(file), None, None, Some(key)) => Ok(Kind::Ini {
+                file,
+                section: self.section.as_deref(),
+                key,
+            }),
+            (Some(file), None, None, None) if self.section.is_none() => {
+                Ok(Kind::WholeFile { file })
+            }
+            (None, Some(key), None, Some(name))
+                if self.section.is_none()
+                    // They stand in a batch file between quotes: no quotes,
+                    // no variables, no backslash before the closing quote.
+                    && !key.contains(['"', '%', '!'])
+                    && !name.contains(['"', '%', '!'])
+                    && !key.ends_with('\\')
+                    && !name.ends_with('\\')
+                    && [
+                        "HKCU\\",
+                        "HKLM\\",
+                        "HKEY_CURRENT_USER\\",
+                        "HKEY_LOCAL_MACHINE\\",
+                    ]
+                    .iter()
+                    .any(|root| key.to_ascii_uppercase().starts_with(root)) =>
+            {
+                Ok(Kind::Registry { key, name })
+            }
+            (None, Some(_), _, _) => {
+                Err("settings: registry needs an HKCU or HKLM key and a value name")
+            }
+            _ => {
+                Err("settings: give file (with section/key, line or neither) or registry with key")
+            }
+        }
+    }
+
+    /// The text to set for this player, `None` where the table has no entry
+    /// for the language.
+    pub fn value_for(&self, player: &Player) -> Option<String> {
+        let text = match self.value.as_ref()? {
+            SettingValue::Text(text) => text.clone(),
+            SettingValue::ByLanguage(by) => by.get(&player.lang.to_ascii_lowercase())?.clone(),
+        };
+        Some(
+            text.replace("%player%", &player.name)
+                .replace("%game_lang%", &player.lang),
+        )
+    }
+}
+
+/// Who is starting the game.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Player {
+    /// Already free of what cmd would trip over
+    /// (`Settings::safe_player_name`).
+    pub name: String,
+    /// The game language, `de`/`en`/`fr`.
+    pub lang: String,
+}
+
+/// What happened to one setting, for the log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Applied {
+    Written(PathBuf),
+    Unchanged(PathBuf),
+    /// Not set, and why: the file is not in the package, the language has
+    /// no entry.
+    Left(String),
+}
+
+/// A registry value to set, for the platform's own way of setting it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistryValue {
+    /// `HKCU\…`/`HKLM\…` as given.
+    pub key: String,
+    pub name: String,
+    pub value: String,
+}
+
+/// macOS/Linux: the batch that sets `values` in the game's prefix, written
+/// into the game's folder as `launch::setup_script::Script::Settings`, and
+/// the variables it reads the values from: a name with an umlaut written
+/// into a batch file would come out in the console's code page, the
+/// environment Wine hands over in Unicode. The runner starts it as it starts
+/// the other scripts (`launch::unix::script_plan`).
+pub fn write_registry_script(
+    share_dir: &Path,
+    game_id: &str,
+    lang: &str,
+    values: &[RegistryValue],
+) -> std::io::Result<Vec<(String, String)>> {
+    use crate::launch::setup_script::{wrapper, write_if_changed, Script};
+    // Delayed expansion: `!V!` is filled in after the line is read, so
+    // nothing in a value (`&`, `|`) becomes part of the command.
+    let mut script = String::from("@echo off\r\nsetlocal EnableDelayedExpansion\r\n");
+    let mut env = Vec::new();
+    for (i, v) in values.iter().enumerate() {
+        let var = format!("NLL_VALUE_{i}");
+        script.push_str(&format!(
+            "reg add \"{}\" /v \"{}\" /t REG_SZ /d \"!{var}!\" /f\r\n",
+            v.key, v.name
+        ));
+        env.push((var, v.value.clone()));
+    }
+    write_if_changed(
+        &share_dir.join(Script::Settings.filtered_name()),
+        script.as_bytes(),
+    )?;
+    write_if_changed(
+        &share_dir.join(Script::Settings.wrapper_name()),
+        wrapper(game_id, lang).as_bytes(),
+    )?;
+    Ok(env)
+}
+
+/// Set the file settings of `settings` below `local`, and say what became
+/// of each; the registry ones are returned for the platform to set.
+pub fn apply(
+    local: &Path,
+    settings: &[PlayerSetting],
+    player: &Player,
+) -> (Vec<Applied>, Vec<RegistryValue>) {
+    let mut done = Vec::new();
+    let mut registry = Vec::new();
+    for setting in settings {
+        let Ok(kind) = setting.kind() else {
+            continue;
+        };
+        let Some(value) = setting.value_for(player) else {
+            done.push(Applied::Left(format!(
+                "no value for game language {:?}",
+                player.lang
+            )));
+            continue;
+        };
+        let file = match kind {
+            Kind::Registry { key, name } => {
+                registry.push(RegistryValue {
+                    key: key.to_string(),
+                    name: name.to_string(),
+                    value,
+                });
+                continue;
+            }
+            Kind::Ini { file, .. } | Kind::Line { file, .. } | Kind::WholeFile { file } => file,
+        };
+        // A file the package does not have yet is made, folders and all:
+        // Call of Duty 2 makes its player profile only when asked for one.
+        let path = existing_or_new(local, file);
+        done.push(set_inside(local, path, &kind, &value, false));
+    }
+    (done, registry)
+}
+
+/// The file in whatever case it is there, or where a new one goes: below
+/// the deepest of its folders that is there in some case, the rest as the
+/// profile spells it. (`file` is relative and checked, `PlayerSetting::kind`.)
+fn existing_or_new(local: &Path, file: &str) -> PathBuf {
+    let parts: Vec<&str> = file
+        .split(['/', '\\'])
+        .filter(|p| !p.is_empty() && *p != ".")
+        .collect();
+    for cut in (0..=parts.len()).rev() {
+        let found = if cut == 0 {
+            Some(local.to_path_buf())
+        } else {
+            crate::paths::find_ignoring_case(local, &parts[..cut].join("/"))
+        };
+        if let Some(found) = found {
+            return parts[cut..]
+                .iter()
+                .fold(found, |path, part| path.join(part));
+        }
+    }
+    local.join(file)
+}
+
+/// A file's text and how to write it back: its encoding and byte order
+/// mark, and its line ends.
+struct Text {
+    text: String,
+    encoding: &'static encoding_rs::Encoding,
+    bom: &'static [u8],
+    eol: &'static str,
+}
+
+/// As fnr.exe reads a file: a byte order mark says the encoding, valid
+/// UTF-8 beyond ASCII says UTF-8, everything else is Windows' ANSI — what
+/// these games were written for, plain ASCII included.
+fn read(path: &Path) -> std::io::Result<Text> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(e),
+    };
+    let (encoding, bom): (&'static encoding_rs::Encoding, &'static [u8]) =
+        if bytes.starts_with(b"\xFF\xFE") {
+            (encoding_rs::UTF_16LE, b"\xFF\xFE")
+        } else if bytes.starts_with(b"\xFE\xFF") {
+            (encoding_rs::UTF_16BE, b"\xFE\xFF")
+        } else if bytes.starts_with(b"\xEF\xBB\xBF") {
+            (encoding_rs::UTF_8, b"\xEF\xBB\xBF")
+        } else if !bytes.is_ascii() && std::str::from_utf8(&bytes).is_ok() {
+            (encoding_rs::UTF_8, b"")
+        } else {
+            (encoding_rs::WINDOWS_1252, b"")
+        };
+    let (text, _) = encoding.decode_without_bom_handling(&bytes[bom.len()..]);
+    let text = text.into_owned();
+    let eol = if text.contains("\r\n") || text.is_empty() {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    Ok(Text {
+        text,
+        encoding,
+        bom,
+        eol,
+    })
+}
+
+/// Set `value` as `kind` says; `false` when the file already said it.
+/// `utf8` for a file whose reader wants UTF-8 whatever it held before.
+fn write(path: &Path, kind: &Kind<'_>, value: &str, utf8: bool) -> std::io::Result<bool> {
+    let mut old = read(path)?;
+    if utf8 && old.encoding != encoding_rs::UTF_8 {
+        // Another encoding's byte order mark must not stand before UTF-8.
+        old.encoding = encoding_rs::UTF_8;
+        old.bom = b"";
+    }
+    let new = match kind {
+        Kind::WholeFile { .. } => value.to_string(),
+        Kind::Ini { section, key, .. } => set_ini(&old.text, *section, key, value, old.eol),
+        Kind::Line { line, .. } => set_line(&old.text, line, value, old.eol),
+        Kind::Registry { .. } => return Ok(false),
+    };
+    if new == old.text && path.exists() {
+        return Ok(false);
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut bytes = old.bom.to_vec();
+    if old.encoding == encoding_rs::UTF_16LE || old.encoding == encoding_rs::UTF_16BE {
+        // encoding_rs encodes into UTF-8 for these: write the units by hand.
+        let big = old.encoding == encoding_rs::UTF_16BE;
+        for unit in new.encode_utf16() {
+            bytes.extend(if big {
+                unit.to_be_bytes()
+            } else {
+                unit.to_le_bytes()
+            });
+        }
+    } else {
+        let (encoded, _, lossy) = old.encoding.encode(&new);
+        if lossy {
+            // A name ANSI cannot hold ("Łukasz", Cyrillic) would come out as
+            // `&#321;`: such a file is better UTF-8, which the game may read.
+            bytes = old.bom.to_vec();
+            bytes.extend_from_slice(new.as_bytes());
+        } else {
+            bytes.extend_from_slice(&encoded);
+        }
+    }
+    std::fs::write(path, bytes)?;
+    Ok(true)
+}
+
+/// Whether `path` stays below `local` once its links are followed: a
+/// package may hold a link that would send a write elsewhere. Asked for the
+/// deepest part that is there, before anything is made.
+fn stays_inside(local: &Path, path: &Path) -> bool {
+    let Ok(root) = std::fs::canonicalize(local) else {
+        return false;
+    };
+    let mut probe = path;
+    loop {
+        if let Ok(real) = std::fs::canonicalize(probe) {
+            return real.starts_with(&root);
+        }
+        match probe.parent() {
+            Some(parent) => probe = parent,
+            None => return false,
+        }
+    }
+}
+
+/// [`write`], below `local` only; the outcome as the log wants it.
+fn set_inside(local: &Path, path: PathBuf, kind: &Kind<'_>, value: &str, utf8: bool) -> Applied {
+    if !stays_inside(local, &path) {
+        return Applied::Left(format!("{} leads outside the game folder", path.display()));
+    }
+    match write(&path, kind, value, utf8) {
+        Ok(true) => Applied::Written(path),
+        Ok(false) => Applied::Unchanged(path),
+        Err(e) => Applied::Left(format!("{}: {e}", path.display())),
+    }
+}
+
+/// `key=value` in `[section]` (any case), the existing line replaced or a
+/// new one put at the end of the section; a missing section is added.
+/// Without a section, the first `key=` anywhere, or a line at the top.
+fn set_ini(text: &str, section: Option<&str>, key: &str, value: &str, eol: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let is_key = |line: &str| {
+        line.split_once('=')
+            .is_some_and(|(k, _)| k.trim().eq_ignore_ascii_case(key))
+    };
+    let header = |line: &str| {
+        let t = line.trim();
+        (t.starts_with('[') && t.ends_with(']')).then(|| t[1..t.len() - 1].trim().to_string())
+    };
+    let wanted = format!("{key}={value}");
+    // A key that is there keeps its spelling and its indentation.
+    let replaced = |line: &str| {
+        let (k, rest) = line.split_once('=').unwrap_or((line, ""));
+        let pad = &rest[..rest.len() - rest.trim_start().len()];
+        format!("{k}={pad}{value}")
+    };
+    let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+    match section {
+        None => match lines.iter().position(|l| is_key(l)) {
+            Some(at) => out[at] = replaced(lines[at]),
+            None => out.insert(0, wanted),
+        },
+        Some(section) => {
+            let start = lines
+                .iter()
+                .position(|l| header(l).is_some_and(|h| h.eq_ignore_ascii_case(section)));
+            match start {
+                None => {
+                    if out.last().is_some_and(|l| !l.trim().is_empty()) {
+                        out.push(String::new());
+                    }
+                    out.push(format!("[{section}]"));
+                    out.push(wanted);
+                }
+                Some(start) => {
+                    let end = lines[start + 1..]
+                        .iter()
+                        .position(|l| header(l).is_some())
+                        .map_or(lines.len(), |at| start + 1 + at);
+                    match (start + 1..end).find(|&at| is_key(lines[at])) {
+                        Some(at) => out[at] = replaced(lines[at]),
+                        None => {
+                            // After the section's last line with content.
+                            let at = (start + 1..end)
+                                .rev()
+                                .find(|&at| !lines[at].trim().is_empty())
+                                .map_or(start + 1, |at| at + 1);
+                            out.insert(at, wanted);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    join(&out, text, eol)
+}
+
+/// `line "value"` (`seta name "Player"`): the line starting with `line`,
+/// any spacing between its words, replaced, or added at the end.
+fn set_line(text: &str, line: &str, value: &str, eol: &str) -> String {
+    let words: Vec<String> = line
+        .split_whitespace()
+        .map(str::to_ascii_lowercase)
+        .collect();
+    let starts = |l: &str| {
+        let have: Vec<String> = l.split_whitespace().map(str::to_ascii_lowercase).collect();
+        have.len() > words.len() && have[..words.len()] == words[..]
+    };
+    let wanted = format!("{line} \"{}\"", value.replace('"', ""));
+    let mut out: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+    match out.iter().position(|l| starts(l)) {
+        Some(at) => out[at] = wanted,
+        None => out.push(wanted),
+    }
+    join(&out, text, eol)
+}
+
+fn join(lines: &[String], before: &str, eol: &str) -> String {
+    let mut text = lines.join(eol);
+    if before.is_empty() || before.ends_with('\n') {
+        text.push_str(eol);
+    }
+    text
+}
+
+/// The Goldberg Steam emulator's own way of being told the player's name
+/// and language: `steam_settings/force_account_name.txt` and
+/// `force_language.txt` next to its `steam_api(64).dll`, over whatever its
+/// other settings say. Packages built on it get them without a profile;
+/// which DLL is Goldberg's its text says (it names those files). Goldberg
+/// reads them as UTF-8.
+pub fn goldberg(local: &Path, player: &Player) -> Vec<Applied> {
+    emulators(local, player).0
+}
+
+/// The SmartSteamEmu Steam emulator (started through `SmartSteamLoader.exe`,
+/// the entry point of many ETI packages) reads the player's name and language
+/// from `[SmartSteamEmu]` in its `SmartSteamEmu.ini`: `PersonaName`,
+/// `Language`. Every such file in the package gets them, without a profile
+/// — Counter-Strike 1.6's start script copies one over another before each
+/// start, so both are set.
+pub fn smart_steam_emu(local: &Path, player: &Player) -> Vec<Applied> {
+    emulators(local, player).1
+}
+
+/// Both emulators from one walk through the package: [`goldberg`] and
+/// [`smart_steam_emu`].
+pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>) {
+    let language = steam_language(&player.lang);
+    let found = find_files(local, 5, |name| {
+        matches!(
+            name,
+            "steam_api.dll" | "steam_api64.dll" | "smartsteamemu.ini"
+        )
+    });
+    let (mut goldberg, mut sse) = (Vec::new(), Vec::new());
+    let mut dirs: Vec<PathBuf> = found
+        .iter()
+        .filter(|path| !is_ini(path) && is_goldberg(path))
+        .filter_map(|dll| dll.parent().map(Path::to_path_buf))
+        .collect();
+    dirs.dedup();
+    for dir in dirs {
+        let settings = dir.join("steam_settings");
+        for (name, value) in [
+            ("force_account_name.txt", Some(player.name.as_str())),
+            ("force_language.txt", language),
+        ] {
+            if let Some(value) = value {
+                let kind = Kind::WholeFile { file: name };
+                goldberg.push(set_inside(local, settings.join(name), &kind, value, true));
+            }
+        }
+    }
+    for ini in found.iter().filter(|path| is_ini(path)) {
+        for (key, value) in [
+            ("PersonaName", Some(player.name.as_str())),
+            ("Language", language),
+        ] {
+            if let Some(value) = value {
+                let kind = Kind::Ini {
+                    file: "SmartSteamEmu.ini",
+                    section: Some("SmartSteamEmu"),
+                    key,
+                };
+                sse.push(set_inside(local, ini.clone(), &kind, value, false));
+            }
+        }
+    }
+    (goldberg, sse)
+}
+
+fn is_ini(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("ini"))
+}
+
+/// Whether the DLL at `path` is Goldberg's, remembered by size and time:
+/// reading a megabyte and a half before every start is not needed when the
+/// package did not change.
+fn is_goldberg(path: &Path) -> bool {
+    type Seen = std::collections::HashMap<PathBuf, (u64, Option<std::time::SystemTime>, bool)>;
+    static SEEN: std::sync::Mutex<Option<Seen>> = std::sync::Mutex::new(None);
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    let stamp = (meta.len(), meta.modified().ok());
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    let seen = seen.get_or_insert_with(Default::default);
+    if let Some((len, time, answer)) = seen.get(path) {
+        if (*len, *time) == stamp {
+            return *answer;
+        }
+    }
+    let answer = meta.len() < 32 << 20
+        && std::fs::read(path).is_ok_and(|b| b.windows(22).any(|w| w == b"force_account_name.txt"));
+    seen.insert(path.to_path_buf(), (stamp.0, stamp.1, answer));
+    answer
+}
+
+/// The game language as Steam names it.
+fn steam_language(lang: &str) -> Option<&'static str> {
+    match lang.to_ascii_lowercase().as_str() {
+        "de" => Some("german"),
+        "en" => Some("english"),
+        "fr" => Some("french"),
+        _ => None,
+    }
+}
+
+/// Files below `dir` (at most `depth` folders down) whose lower-case name
+/// `wanted` accepts, in a fixed order. Links to folders are not followed.
+fn find_files(dir: &Path, depth: usize, wanted: impl Fn(&str) -> bool + Copy) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_dir() && depth > 0 {
+            out.extend(find_files(&entry.path(), depth - 1, wanted));
+        } else if kind.is_file()
+            && wanted(&entry.file_name().to_string_lossy().to_ascii_lowercase())
+        {
+            out.push(entry.path());
+        }
+    }
+    out.sort();
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn player() -> Player {
+        Player {
+            name: "Jürgen".into(),
+            lang: "de".into(),
+        }
+    }
+
+    fn setting(toml_text: &str) -> PlayerSetting {
+        toml::from_str(toml_text).unwrap()
+    }
+
+    #[test]
+    fn the_forms_a_profile_can_give() {
+        let ini = setting(
+            "file = 'System/User.ini'\nsection = 'DefaultPlayer'\nkey = 'Name'\nvalue = '%player%'",
+        );
+        assert!(matches!(
+            ini.kind(),
+            Ok(Kind::Ini {
+                section: Some("DefaultPlayer"),
+                ..
+            })
+        ));
+        let line = setting("file = 'baseq3/q3config.cfg'\nline = 'seta name'\nvalue = '%player%'");
+        assert!(matches!(line.kind(), Ok(Kind::Line { .. })));
+        let whole =
+            setting("file = 'settings/language.txt'\nvalue = { de = 'german', en = 'english' }");
+        assert!(matches!(whole.kind(), Ok(Kind::WholeFile { .. })));
+        assert_eq!(whole.value_for(&player()).as_deref(), Some("german"));
+        let fr = Player {
+            lang: "fr".into(),
+            ..player()
+        };
+        assert_eq!(whole.value_for(&fr), None);
+        let reg = setting("registry = 'HKCU\\Software\\X'\nkey = 'userlocal'\nvalue = '%player%'");
+        assert!(matches!(reg.kind(), Ok(Kind::Registry { .. })));
+        for bad in [
+            "file = '../x.ini'\nvalue = 'a'",
+            "file = 'x.ini'",
+            "registry = 'HKCR\\x'\nkey = 'a'\nvalue = 'b'",
+            "file = 'x.ini'\nregistry = 'HKCU\\x'\nkey = 'a'\nvalue = 'b'",
+        ] {
+            assert!(setting(bad).kind().is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn an_ini_key_is_set_in_its_section_and_the_file_keeps_its_encoding() {
+        let tmp = tempfile::tempdir().unwrap();
+        let system = tmp.path().join("System");
+        std::fs::create_dir_all(&system).unwrap();
+        // UT2004's User.ini: a BOM, CRLF; UT2004.ini: ANSI, a key elsewhere.
+        std::fs::write(
+            system.join("User.ini"),
+            b"\xEF\xBB\xBF[DefaultPlayer]\r\nName=Player\r\nClass=Engine.Pawn\r\n\r\n[Other]\r\nName=keep\r\nLanguage = int\r\n",
+        )
+        .unwrap();
+        std::fs::write(system.join("UT2004.ini"), b"[URL]\r\nMap=Gr\xFCn\r\n").unwrap();
+        let settings = [
+            setting("file = 'system/user.ini'\nsection = 'defaultplayer'\nkey = 'name'\nvalue = '%player%'"),
+            setting("file = 'System/UT2004.ini'\nsection = 'URL'\nkey = 'Name'\nvalue = '%player%'"),
+            setting("file = 'System/UT2004.ini'\nsection = 'Engine.Engine'\nkey = 'Language'\nvalue = { de = 'det', en = 'int' }"),
+            setting("file = 'System/Profiles/LAN/new.cfg'\nline = 'seta name'\nvalue = '%player%'"),
+            setting("file = 'System/User.ini'\nsection = 'Other'\nkey = 'Language'\nvalue = { de = 'det' }"),
+        ];
+        let (done, registry) = apply(tmp.path(), &settings, &player());
+        assert!(registry.is_empty());
+        // Made where the package has nothing yet, folders and all.
+        assert!(matches!(done[3], Applied::Written(_)));
+        assert_eq!(
+            std::fs::read(system.join("Profiles/LAN/new.cfg")).unwrap(),
+            b"seta name \"J\xFCrgen\"\r\n"
+        );
+        assert_eq!(
+            std::fs::read(system.join("User.ini")).unwrap(),
+            // The spacing around `=` stays as the file had it.
+            "\u{feff}[DefaultPlayer]\r\nName=Jürgen\r\nClass=Engine.Pawn\r\n\r\n[Other]\r\nName=keep\r\nLanguage = det\r\n".as_bytes()
+        );
+        assert_eq!(
+            std::fs::read(system.join("UT2004.ini")).unwrap(),
+            b"[URL]\r\nMap=Gr\xFCn\r\nName=J\xFCrgen\r\n\r\n[Engine.Engine]\r\nLanguage=det\r\n"
+        );
+        // Again: nothing to write.
+        let (again, _) = apply(tmp.path(), &settings[..1], &player());
+        assert!(matches!(again[0], Applied::Unchanged(_)));
+    }
+
+    #[test]
+    fn a_config_line_and_a_registry_value() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("baseq3")).unwrap();
+        std::fs::write(
+            tmp.path().join("baseq3/q3config.cfg"),
+            "seta r_mode \"4\"\nseta  name \"UnnamedPlayer\"\n",
+        )
+        .unwrap();
+        let settings = [
+            setting("file = 'baseq3/q3config.cfg'\nline = 'seta name'\nvalue = '%player%'"),
+            setting("registry = 'HKCU\\Software\\Blizzard Entertainment\\Warcraft III\\String'\nkey = 'userlocal'\nvalue = '%player%'"),
+        ];
+        let (_, registry) = apply(tmp.path(), &settings, &player());
+        // ASCII is ANSI here: Quake 3 reads Latin-1.
+        assert_eq!(
+            std::fs::read(tmp.path().join("baseq3/q3config.cfg")).unwrap(),
+            b"seta r_mode \"4\"\nseta name \"J\xFCrgen\"\n"
+        );
+        assert_eq!(
+            registry,
+            [RegistryValue {
+                key: "HKCU\\Software\\Blizzard Entertainment\\Warcraft III\\String".into(),
+                name: "userlocal".into(),
+                value: "Jürgen".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_name_ansi_cannot_hold_makes_the_file_utf8_and_quotes_are_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let polish = Player {
+            name: "Łukasz".into(),
+            lang: "de".into(),
+        };
+        let settings = [setting(
+            "file = 'cfg/config.cfg'\nline = 'name'\nvalue = '%player%'",
+        )];
+        apply(tmp.path(), &settings, &polish);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("cfg/config.cfg")).unwrap(),
+            "name \"Łukasz\"\r\n"
+        );
+        assert!(setting("file = 'a.ini'\nkey = 'k'\nvalue = 'x\" & y'")
+            .kind()
+            .is_err());
+        assert!(setting("registry = 'HKCU\\X\\'\nkey = 'k'\nvalue = 'v'")
+            .kind()
+            .is_err());
+        assert!(setting("registry = 'HKCU\\X'\nkey = 'k!'\nvalue = 'v'")
+            .kind()
+            .is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_out_of_the_game_folder_is_not_written_through() {
+        let tmp = tempfile::tempdir().unwrap();
+        let local = tmp.path().join("local");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(local.join("main")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, local.join("main/players")).unwrap();
+        let settings = [setting("file = 'main/players/active.txt'\nvalue = 'LAN'")];
+        let (done, _) = apply(&local, &settings, &player());
+        assert!(matches!(done[0], Applied::Left(_)));
+        assert!(!outside.join("active.txt").exists());
+    }
+
+    #[test]
+    fn every_smart_steam_emu_ini_gets_the_name_and_the_language() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ini = "[Launcher]\r\nTarget = hl.exe\r\n\r\n[SmartSteamEmu]\r\nLanguage = english\r\nPersonaName = ChangeMe\r\n\r\n[DLC]\r\n";
+        std::fs::write(tmp.path().join("SmartSteamEmu.ini"), ini).unwrap();
+        std::fs::create_dir_all(tmp.path().join("hl-cs16")).unwrap();
+        std::fs::write(tmp.path().join("hl-cs16/smartsteamemu.ini"), ini).unwrap();
+        let done = smart_steam_emu(tmp.path(), &player());
+        assert_eq!(
+            done.iter()
+                .filter(|d| matches!(d, Applied::Written(_)))
+                .count(),
+            4
+        );
+        for file in ["SmartSteamEmu.ini", "hl-cs16/smartsteamemu.ini"] {
+            assert_eq!(
+                std::fs::read(tmp.path().join(file)).unwrap(),
+                b"[Launcher]\r\nTarget = hl.exe\r\n\r\n[SmartSteamEmu]\r\nLanguage = german\r\nPersonaName = J\xFCrgen\r\n\r\n[DLC]\r\n"
+            );
+        }
+    }
+
+    #[test]
+    fn a_goldberg_dll_gets_the_name_and_the_language() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("steam_api.dll"), b"MZ...force_account_name.txt...").unwrap();
+        std::fs::create_dir_all(tmp.path().join("other")).unwrap();
+        std::fs::write(
+            tmp.path().join("other/steam_api.dll"),
+            b"MZ...another emulator",
+        )
+        .unwrap();
+        let done = goldberg(tmp.path(), &player());
+        assert_eq!(done.len(), 2);
+        assert_eq!(
+            std::fs::read(bin.join("steam_settings/force_account_name.txt")).unwrap(),
+            "Jürgen".as_bytes()
+        );
+        assert_eq!(
+            std::fs::read_to_string(bin.join("steam_settings/force_language.txt")).unwrap(),
+            "german"
+        );
+        assert!(!tmp.path().join("other/steam_settings").exists());
+    }
+}

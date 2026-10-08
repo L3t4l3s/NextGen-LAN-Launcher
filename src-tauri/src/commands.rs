@@ -497,29 +497,49 @@ pub(crate) async fn setup_script_plan(
     .map(|(plan, _)| plan)
 }
 
-/// A start's plan and, on macOS/Linux, what the start script prepares before
-/// it ([`launch::unix::preparation_plan`]) with the executable the start
-/// runs — the script's line that starts it ends the preparation. From one
-/// context (profile, receipt, settings); the runner is still looked up for
-/// each plan.
+/// What a start needs planned: the game's own plan and, on macOS/Linux, the
+/// start script's preparation before it ([`launch::unix::preparation_plan`])
+/// with the executable the start runs — the script's line that starts it
+/// ends the preparation — and the run that sets the profile's registry
+/// values in the prefix (`player::apply`); the profile beside them.
+pub(crate) struct StartPlans {
+    pub plan: LaunchPlan,
+    pub preparation: Option<(LaunchPlan, Option<String>)>,
+    pub registry: Option<LaunchPlan>,
+    pub manifest: Option<Manifest>,
+}
+
+/// [`StartPlans`] from one context (profile, receipt, settings); the
+/// runner is still looked up for each plan.
 async fn build_start(
     state: &AppState,
     game_id: &str,
     alternative: Option<usize>,
-) -> Cmd<(LaunchPlan, Option<(LaunchPlan, Option<String>)>)> {
-    with_launch_context(state, game_id, alternative, None, |ctx| {
+) -> Cmd<StartPlans> {
+    let (made, manifest) = with_launch_context(state, game_id, alternative, None, |ctx| {
         let plan = launch::plan(ctx)?;
         if cfg!(target_os = "windows") {
-            return Ok((plan, None));
+            return Ok((plan, None, None));
         }
         let exe = launch::resolve_exe(ctx)
             .ok()
             .and_then(|(exe, ..)| exe.file_name().map(|n| n.to_string_lossy().to_string()));
         let preparation = launch::unix::preparation_plan(ctx)?.map(|prep| (prep, exe));
-        Ok((plan, preparation))
+        let registry = if ctx.manifest.is_some_and(Manifest::sets_registry) {
+            launch::unix::script_plan(ctx, launch::setup_script::Script::Settings)?
+        } else {
+            None
+        };
+        Ok((plan, preparation, registry))
     })
-    .await
-    .map(|(made, _)| made)
+    .await?;
+    let (plan, preparation, registry) = made;
+    Ok(StartPlans {
+        plan,
+        preparation,
+        registry,
+        manifest,
+    })
 }
 
 /// `make` with the context a game's start is planned from — its paths
@@ -737,7 +757,12 @@ pub async fn play_game(
     // Held until the game has been spawned; from then on a component
     // installation finds it running in its prefix.
     let _starting = GameUse::claim(&state.prefix_use, &game_id)?;
-    let (mut plan, preparation) = build_start(&state, &game_id, alternative).await?;
+    let StartPlans {
+        mut plan,
+        preparation,
+        registry,
+        manifest,
+    } = build_start(&state, &game_id, alternative).await?;
     if prefix_being_filled(&state, &plan) {
         return Err("err.components_busy_game".into());
     }
@@ -775,6 +800,8 @@ pub async fn play_game(
         }
     }
     if let Some(paths) = &paths {
+        // The player's name and language, on top of what the script does.
+        crate::player::apply(state.inner(), &game_id, paths, manifest.as_ref(), registry).await?;
         crate::fixes::ensure_firewall_rules(&state, paths, &game_id, &lang, &player).await;
     }
     let title = state

@@ -158,6 +158,10 @@ pub struct Manifest {
     pub setup: SetupSpec,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub platform: BTreeMap<String, PlatformOverride>,
+    /// The player's name and language in the game's own settings, set before
+    /// every start on every platform (`player_settings`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub settings: Vec<crate::player_settings::PlayerSetting>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -237,6 +241,7 @@ impl Default for Manifest {
             launch: LaunchSpec::default(),
             setup: SetupSpec::default(),
             platform: BTreeMap::new(),
+            settings: Vec::new(),
         }
     }
 }
@@ -295,6 +300,13 @@ pub fn is_safe_relative(path: &str) -> bool {
 }
 
 impl Manifest {
+    /// Whether a `[[settings]]` entry sets a registry value.
+    pub fn sets_registry(&self) -> bool {
+        self.settings
+            .iter()
+            .any(|s| matches!(s.kind(), Ok(crate::player_settings::Kind::Registry { .. })))
+    }
+
     pub fn parse(text: &str, path: &Path) -> Result<Self> {
         let m: Manifest = toml::from_str(text).map_err(|e| Error::Manifest {
             path: path.to_path_buf(),
@@ -317,6 +329,9 @@ impl Manifest {
         }
         if !self.launch.exe.is_empty() && !is_safe_relative(&self.launch.exe) {
             return Err(err("launch.exe must be relative to local/"));
+        }
+        if let Some(bad) = self.settings.iter().find_map(|s| s.kind().err()) {
+            return Err(err(bad));
         }
         // A working folder may be `local/` itself, but never outside it.
         // A trailing separator (`bin/`) is the same folder.

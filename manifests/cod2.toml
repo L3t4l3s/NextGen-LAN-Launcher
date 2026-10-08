@@ -2,11 +2,11 @@ schema = 1
 id = "cod2"
 title = "Call of Duty 2"
 revisions = ["20160922"]
-source = "macETI-LAN v0.6.1 docs (MIT) – research profile, no working setup established"
+source = "macETI-LAN v0.6.1 docs (MIT); NextGen LAN Launcher: start script and player profile checked with Proton 11 (2026-10)"
 
 [launch]
-# Unresearched: no verified entry point. The launcher picks an executable from
-# the package, and the multiplayer binary may have to be chosen by hand.
+# No entry point of its own: the start runs the package's game_start.cmd,
+# which starts the multiplayer binary (CoD2MP_s.exe).
 exe = ""
 args = []
 
@@ -14,5 +14,17 @@ args = []
 runner = "crossover"
 
 [setup]
-notes.de = "Für dieses Paket ist unter CrossOver/Wine noch kein funktionierender Start belegt. Für die LAN die Mehrspieler-Datei ausdrücklich auswählen (Startdatei ändern) und Einzel- und Mehrspieler getrennt bewerten. Der alte Tipp gegen hängende Intro-Videos stammt von 2009 und ist auf Apple Silicon ungeprüft."
-notes.en = "No working start under CrossOver/Wine has been established for this package. For a LAN, pick the multiplayer executable explicitly (change the executable) and judge single- and multiplayer separately. The old workaround for a hanging intro movie is from 2009 and untested on Apple silicon."
+notes.de = "Unter Proton geprüft: Das Startskript startet die Mehrspieler-Datei, das Paket ist deutsch. Das Spielerprofil (players/LAN) legt der Launcher mit dem eingetragenen Namen an. Ohne Grafikkarte bleibt das Intro-Video hängen; auf CrossOver ungeprüft."
+notes.en = "Checked with Proton: the start script starts the multiplayer executable, the package is German. The launcher creates the player profile (players/LAN) with the player's name. Without a graphics card the intro movie hangs; untested on CrossOver."
+
+# The player profile Call of Duty 2 otherwise asks for at the first start
+# (players/active.txt names it, its config_mp.cfg holds the name). A fixed
+# profile name: a player's name may hold what a folder name cannot.
+[[settings]]
+file = "main/players/active.txt"
+value = "LAN"
+
+[[settings]]
+file = "main/players/LAN/config_mp.cfg"
+line = "seta name"
+value = "%player%"

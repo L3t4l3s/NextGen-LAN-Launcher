@@ -43,13 +43,17 @@ pub(crate) enum Record {
 /// no component installation begins beside it) and is listed in
 /// `prefix_use.setups`, so that neither a second setup rewrites the files the
 /// first is reading nor the game starts into the prefix it is writing.
-struct SetupClaim {
+pub(crate) struct SetupClaim {
     state: Arc<AppState>,
     game_id: String,
 }
 
 impl SetupClaim {
-    fn claim(state: &Arc<AppState>, game_id: &str, held_by_caller: bool) -> Result<Self, String> {
+    pub(crate) fn claim(
+        state: &Arc<AppState>,
+        game_id: &str,
+        held_by_caller: bool,
+    ) -> Result<Self, String> {
         state
             .prefix_use
             .lock()

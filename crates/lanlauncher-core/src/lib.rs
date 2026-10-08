@@ -36,6 +36,7 @@ pub mod launcher_ini;
 pub mod library;
 pub mod manifest;
 pub mod paths;
+pub mod player_settings;
 pub mod problem;
 pub mod script_probe;
 pub mod settings;

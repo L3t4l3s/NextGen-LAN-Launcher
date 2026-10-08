@@ -1,0 +1,19 @@
+schema = 1
+id = "ut2004"
+title = "Unreal Tournament 2004"
+source = "NextGen LAN Launcher: player settings checked against the package (2026-10)"
+
+[launch]
+# No entry point of its own: the start runs the package's game_start.cmd.
+exe = ""
+args = []
+
+[setup]
+notes.de = "Den Spielernamen liest das Spiel aus User.ini ([DefaultPlayer] Name); das ETI-Startskript schreibt ihn nach UT2004.ini, wo er nicht wirkt. Der Launcher setzt ihn dort, wo das Spiel ihn liest."
+notes.en = "The game reads the player's name from User.ini ([DefaultPlayer] Name); ETI's start script writes it into UT2004.ini, where it has no effect. The launcher sets it where the game reads it."
+
+[[settings]]
+file = "System/User.ini"
+section = "DefaultPlayer"
+key = "Name"
+value = "%player%"

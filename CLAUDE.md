@@ -248,6 +248,19 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   (`build_start`, jede sucht alle Steam-Bibliotheken ab). Die Skriptdateien werden nur bei
   geändertem Inhalt neu geschrieben (`write_if_changed`): cmd liest per Offset weiter, ein
   zweiter Start darf die Datei des ersten nicht verschieben.
+- **Spielername und Sprache (`player_settings`):** vor jedem Start, auf allen Plattformen,
+  zusätzlich zum ETI-Skript (`player::apply` in `play_game`, nach Setup/Vorbereitung, vor dem
+  Spawn). `[[settings]]` im Profil: INI-Schlüssel im Abschnitt, `line = "seta name"`, ganze Datei,
+  Registry (Windows `reg add`, sonst `Script::Settings` im Prefix mit den Werten als Variablen
+  `NLL_VALUE_n` — ein Name mit Umlaut in der Batchdatei käme in der Konsolen-Codepage an).
+  Dateien werden in jeder Schreibweise gefunden und mitsamt Ordnern angelegt (CoD2 legt sein
+  Spielerprofil sonst erst auf Nachfrage an); ein vorhandener Schlüssel behält Schreibweise und
+  Abstände. Kodierung wie beim fnr-Ersatz, ASCII gilt als ANSI (Quake 3, UT2004 lesen Latin-1) —
+  außer Goldbergs Dateien, die es als UTF-8 liest. Ohne Profil: Goldberg (DLL nennt
+  `force_account_name.txt` → `steam_settings/force_*.txt`) und SmartSteamEmu (jede
+  `SmartSteamEmu.ini`: `[SmartSteamEmu] PersonaName/Language`). Fehlt die Sprache in der Tabelle
+  eines Profils, bleibt der Wert stehen. Der Ort, wo ein Spiel den Namen liest, steht oft woanders,
+  als das ETI-Skript schreibt (UT2004 `User.ini`), also am Paket nachsehen, nicht abschreiben.
 - **Setup-Skripte lesen:** `launch::windows::missing_paths` folgt einem ETI-Skript wie cmd:
   `set`-Variablen, `cd`/`pushd` (`%~dp0` = Spielordner), Programme relativ zum aktuellen Ordner,
   bloße Namen über den `PATH` (sonst gilt `reg.exe` als fehlend), `md` angelegte Ordner, `if`/

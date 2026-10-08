@@ -30,6 +30,10 @@ pub enum Script {
     /// What `game_start.cmd` does before it starts the game
     /// ([`preparation`]), for a game whose profile starts it itself.
     Preparation,
+    /// The registry values a profile sets for the player
+    /// (`player_settings::write_registry_script`); written by the launcher,
+    /// not taken from the package.
+    Settings,
 }
 
 impl Script {
@@ -38,6 +42,7 @@ impl Script {
             Script::Setup => ".nll-setup.cmd",
             Script::Start => ".nll-start.cmd",
             Script::Preparation => ".nll-prep.cmd",
+            Script::Settings => ".nll-settings.cmd",
         }
     }
 
@@ -46,13 +51,17 @@ impl Script {
             Script::Setup => ".nll-setup-run.cmd",
             Script::Start => ".nll-start-run.cmd",
             Script::Preparation => ".nll-prep-run.cmd",
+            Script::Settings => ".nll-settings-run.cmd",
         }
     }
 
-    fn source(self, paths: &crate::paths::GamePaths) -> &Path {
+    /// The package's script this one is made from; none for the settings,
+    /// which the launcher writes itself.
+    fn source(self, paths: &crate::paths::GamePaths) -> Option<&Path> {
         match self {
-            Script::Setup => &paths.setup_script,
-            Script::Start | Script::Preparation => &paths.start_script,
+            Script::Setup => Some(&paths.setup_script),
+            Script::Start | Script::Preparation => Some(&paths.start_script),
+            Script::Settings => None,
         }
     }
 }
@@ -676,7 +685,10 @@ pub fn prepare(
     lang: &str,
     game_exes: &[String],
 ) -> std::io::Result<Option<Vec<Skipped>>> {
-    let text = match std::fs::read(script.source(paths)) {
+    let Some(source) = script.source(paths) else {
+        return Ok(None);
+    };
+    let text = match std::fs::read(source) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e),
@@ -686,7 +698,7 @@ pub fn prepare(
             Some(part) => part,
             None => return Ok(None),
         },
-        Script::Setup | Script::Start => text,
+        Script::Setup | Script::Start | Script::Settings => text,
     };
     let filtered = filter(&text);
     write_if_changed(
@@ -703,7 +715,7 @@ pub fn prepare(
 /// cmd reads a batch file from disk as it goes, by offset: a start that is
 /// still running the same file (the game started twice) must not find it
 /// rewritten under it. The same text is not written again.
-fn write_if_changed(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_if_changed(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if std::fs::read(path).is_ok_and(|old| old == bytes) {
         return Ok(());
     }
