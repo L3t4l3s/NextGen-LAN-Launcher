@@ -232,6 +232,9 @@ mod tests {
         assert_eq!(colr_version(&path), Some(1));
     }
 
+    /// `FONTCONFIG_PATH` is split on `:`, which a Windows path has itself;
+    /// fontconfig and this check only matter on Linux.
+    #[cfg(unix)]
     #[test]
     fn the_session_config_is_the_one_fontconfig_would_read_and_must_exist() {
         let dir = tempfile::tempdir().unwrap();
