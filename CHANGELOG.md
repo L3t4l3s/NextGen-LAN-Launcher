@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Counter-Strike / Half-Life (GoldSrc) fragt wieder, welches Spiel startet.** Das Profil startete
+  fest CS 1.6; jetzt läuft wie unter Windows das Startskript mit seinem Menü (CS 1.6, CS 1.5,
+  Half-Life, Half-Life pre-Steam). CS 1.6 und Half-Life lassen sich weiterhin direkt über
+  „Startdatei wählen“ starten; auf dem Mac ist das der mit CrossOver geprüfte Weg, das Menü dort
+  ist ungetestet.
 - **Among Us: Spielername und kein Datenschutz-Dialog.** Der Launcher schreibt Namen und die
   bestätigte Datenschutz-Version vor dem Start in die Datei, in der das Spiel sie ablegt (im
   Windows-Benutzerordner, unter macOS/Linux im Prefix, der dafür vor dem ersten Start angelegt

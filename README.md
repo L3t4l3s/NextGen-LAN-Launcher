@@ -178,6 +178,9 @@ again.
 
 ## Open items
 
+- **GoldSrc menu on macOS — untested:** the profile now starts the package's start script with its
+  menu on every platform; under CrossOver only the direct CS 1.6 start was verified (kept as the
+  alternative "Counter-Strike 1.6 (direkt)").
 - **Settings in the Windows user's folders under CrossOver — untested:** a profile's
   `folder = "locallow"` etc. (Among Us' name and privacy notice) resolves to
   `<bottle>/drive_c/users/crossover`; checked with Proton 11 only.
