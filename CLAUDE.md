@@ -156,6 +156,30 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   `keep_what_the_webview_says` in `src-tauri/src/lib.rs` hängt Standardfehler per `dup2` an
   `<Log-Ordner>/webview.log` — außer auf einem TTY, dort bleibt die Ausgabe sichtbar. Läuft nach
   `prefer_a_renderer_that_draws` (die Kopfzeile nennt die Sprosse) und vor dem Tauri-Builder.
+- **Farb-Emojis im AppImage (COLRv1):** Das AppImage bringt WebKitGTK samt Skia vom Build-Rechner
+  mit, FreeType und Schriften kommen vom Zielrechner. Fedora 44/Bazzite liefert
+  `Noto-COLRv1.ttf`; ein Emoji mit Farbverlauf (😀, Emoji-Menü im Chat) löst in Skia
+  `colrv1_configure_skpaint … Assertion '__n < this->size()' failed` aus (`webview.log`), der
+  Web-Prozess stirbt, das Fenster bleibt leer. Auf der VM nachgestellt (eigenes Xwayland-Display
+  `Xwayland :98 -geometry …` plus abgeschottete Kopie mit eigenen `XDG_*`-Ordnern, Klick aufs
+  „+“) und mit einer Fontconfig-Datei ohne diese Schrift gegengeprüft. `fonts.rs` findet
+  COLR-Version ≥ 1 (Tabellenverzeichnis, auch `.ttc`), `leave_out_fonts_that_crash_the_webview`
+  schreibt nur unter `APPDIR` eine Fontconfig-Datei, die die Sitzungskonfiguration einbindet
+  (`fonts::session_config`: `FONTCONFIG_FILE`, `FONTCONFIG_PATH`, `/etc/fonts`; fehlt sie, wird
+  nichts gesetzt — ein `include` ins Leere ließe das Fenster ganz ohne Schriften) und
+  diese Dateien per `<pattern>` auf `file` ausschließt (Globs kennen kein Escape), und setzt
+  `FONTCONFIG_FILE` über `force` (landet in `NLL_FORCED_ENV`, Spiele bekommen ihren Wert
+  zurück). Die `webview:`-Zeilen nennen die ausgelassenen Dateien. Ob die Distributions-WebKit
+  dasselbe Problem hat, ist offen. Dazu `reload_a_dead_web_process`: `web-process-terminated` →
+  `reload()`, beim ersten Mal sofort, danach im Abstand von `RELOAD_SPACING` (30 s), höchstens
+  `RELOAD_LIMIT` (3) Mal pro Lauf. Kandidaten liefert `fc-list :color=true` über
+  `launch::host_command` mit der Sitzungskonfiguration (nur für diesen Aufruf gesetzt); eine
+  leere Antwort heißt „keine Farbschriften“, nur ein fehlendes oder scheiterndes `fc-list`
+  kostet den Durchlauf der Schriftordner. Bewusst keine Sprosse der Grafik-Leiter: Die Leiter
+  erkennt ein Fenster, das nicht zeichnet; dieser Absturz kommt erst beim ersten solchen Emoji,
+  oft Minuten später, und ist hier nachgestellt statt vermutet. Programme, die der Launcher
+  ohne `host_command` startet (Browser über `open_url`), erben `FONTCONFIG_FILE` wie schon die
+  `WEBKIT_*`-Variablen der Leiter.
 - **Umgebung beim Spielstart:** Was der Launcher für sein eigenes Fenster setzt, steht als JSON in
   `NLL_FORCED_ENV` (`launch::FORCED_ENV`, Name → vorheriger Wert) und wird beim Spielstart wieder
   hergestellt — sonst läuft ein Spiel mit `LIBGL_ALWAYS_SOFTWARE=1` auf der CPU. Unter einem

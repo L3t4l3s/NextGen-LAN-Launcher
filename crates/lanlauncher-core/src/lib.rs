@@ -24,6 +24,7 @@ pub mod chat;
 pub mod diagnostics;
 pub mod error;
 pub mod extract;
+pub mod fonts;
 pub mod game_config;
 pub mod graphics;
 pub mod hardware;

@@ -1049,9 +1049,10 @@ mod tests {
         };
         assert!(!prefix_in_use(&wine(prefix.clone())));
         // A process just spawned is not always in the process table at once
-        // on a busy machine (CI): asked again for up to two seconds.
+        // on a busy machine (CI, or right after a build): asked again for up
+        // to five seconds — two were seen to fall short.
         let soon = |target: &Target| {
-            (0..20).any(|_| {
+            (0..50).any(|_| {
                 prefix_in_use(target) || {
                     std::thread::sleep(std::time::Duration::from_millis(100));
                     false

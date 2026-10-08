@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Linux (AppImage): Die Oberfläche verschwindet nicht mehr beim Emoji-Menü im Chat.** Fedora 44
+  (und damit Bazzite) liefert seine Farb-Emojis als COLRv1-Schrift; die Web-Engine im AppImage
+  stürzte beim Zeichnen eines solchen Emojis ab, und das Fenster blieb bis zu einem Neustart
+  leer. Der Launcher lässt diese Schriften für sein eigenes Fenster weg, die Emojis kommen aus
+  der nächsten Farbschrift (z. B. Twemoji); Spiele sehen die Schriften unverändert. Stirbt der
+  Web-Prozess trotzdem einmal, lädt der Launcher die Oberfläche neu, statt leer zu bleiben.
+- Die Emoji-Auswahl im Chat liegt jetzt über den Spielcovern einer Umfrage.
 - Startet man mehrere Installationen kurz hintereinander, antwortet die Sync-Engine manchmal erst
   nach Ablauf der Wartezeit. Die Installation galt dann als gescheitert, obwohl die Engine das
   Spiel trotzdem herunterlud. Jetzt fragt der Launcher nach einem Fehler nach, ob die Freigabe

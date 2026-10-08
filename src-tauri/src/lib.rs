@@ -680,6 +680,138 @@ fn prefer_a_renderer_that_draws() {
     write_graphics_memory(&memory);
 }
 
+/// The colour fonts this run leaves out of its own window
+/// (`lanlauncher_core::fonts`). Named in the `webview:` line, since nothing
+/// can log this early.
+#[cfg(target_os = "linux")]
+static LEFT_OUT_FONTS: std::sync::OnceLock<Vec<std::path::PathBuf>> = std::sync::OnceLock::new();
+
+/// Keep COLRv1 colour fonts away from the AppImage's web engine: one emoji
+/// from Fedora 44's `Noto-COLRv1.ttf` kills its web process, and the window
+/// stays blank until a restart. Only under an AppImage — that is where the
+/// engine is the build machine's and the fonts are this machine's; a
+/// distribution's own WebKitGTK is left to its own fonts.
+///
+/// Through `FONTCONFIG_FILE`, so it lands in `NLL_FORCED_ENV` and a game gets
+/// the session's fonts back. The file includes the configuration the session
+/// had, so nothing else changes.
+#[cfg(target_os = "linux")]
+fn leave_out_fonts_that_crash_the_webview() {
+    use lanlauncher_core::fonts;
+    const NAME: &str = "FONTCONFIG_FILE";
+    if std::env::var_os("APPDIR").is_none() {
+        return;
+    }
+    let mut forced = forced_so_far();
+    // A restart on the ladder inherits this run's file; the session's own
+    // value is the one noted when it was first replaced.
+    let before = match forced.get(NAME) {
+        Some(before) => before.clone(),
+        None => std::env::var(NAME).ok(),
+    };
+    let path = std::env::var("FONTCONFIG_PATH").ok();
+    let written = fonts::session_config(before.as_deref(), path.as_deref()).and_then(|base| {
+        let rejected = fonts::colrv1_fonts(fonts::colour_font_candidates(&base));
+        if rejected.is_empty() {
+            return None;
+        }
+        let file = graphics_memory_file()?.parent()?.join("webview-fonts.conf");
+        std::fs::create_dir_all(file.parent()?).ok()?;
+        std::fs::write(&file, fonts::rejecting_config(&base, &rejected)).ok()?;
+        Some((file, rejected))
+    });
+    match written {
+        Some((file, rejected)) => {
+            force(NAME, &file.to_string_lossy(), &mut forced);
+            let _ = LEFT_OUT_FONTS.set(rejected);
+        }
+        // Nothing to leave out, or no way to: the session's own value,
+        // whatever an earlier run of the climb had put there.
+        None => {
+            if forced.remove(NAME).is_some() {
+                match &before {
+                    Some(v) => std::env::set_var(NAME, v),
+                    None => std::env::remove_var(NAME),
+                }
+            }
+        }
+    }
+    remember_what_was_forced(&forced);
+}
+
+/// A web process that dies takes the whole interface with it, and the window
+/// stays blank until the launcher is quit from the tray and started again —
+/// which on a desktop without a tray means killing it. WebKitGTK says when
+/// that happens, so the page is loaded again in a fresh one: at once the
+/// first time, then at most every [`RELOAD_SPACING`], [`RELOAD_LIMIT`] times
+/// in all, so a page that kills its renderer while it loads does not spin.
+#[cfg(target_os = "linux")]
+fn reload_a_dead_web_process(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let handle = app.clone();
+    let _ = window.with_webview(move |webview| {
+        use webkit2gtk::{WebProcessTerminationReason, WebViewExt};
+        // When the last reload ran or is due to run, and how many there were.
+        let last = std::rc::Rc::new(std::cell::Cell::new(None::<std::time::Instant>));
+        let reloads = std::rc::Rc::new(std::cell::Cell::new(0u32));
+        webview
+            .inner()
+            .connect_web_process_terminated(move |view, reason| {
+                if reason == WebProcessTerminationReason::TerminatedByApi {
+                    return;
+                }
+                if reloads.get() >= RELOAD_LIMIT {
+                    log::error!(
+                        "web process ended ({reason:?}) after {RELOAD_LIMIT} reloads; giving up \
+                         (webview.log says why, a restart of the launcher starts afresh)"
+                    );
+                    return;
+                }
+                reloads.set(reloads.get() + 1);
+                let now = std::time::Instant::now();
+                let due = last
+                    .get()
+                    .map(|t| t + RELOAD_SPACING)
+                    .filter(|t| *t > now)
+                    .unwrap_or(now);
+                last.set(Some(due));
+                if due == now {
+                    log::warn!("web process ended ({reason:?}); loading the interface again");
+                    view.reload();
+                    return;
+                }
+                let wait = due - now;
+                log::warn!(
+                    "web process ended again ({reason:?}); loading the interface again in {}s \
+                     (webview.log says why)",
+                    wait.as_secs()
+                );
+                let handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(wait).await;
+                    if let Some(window) = handle.get_webview_window("main") {
+                        let _ = window.with_webview(|webview| {
+                            use webkit2gtk::WebViewExt;
+                            webview.inner().reload();
+                        });
+                    }
+                });
+            });
+    });
+}
+
+/// How far apart reloads of a dead web process are: a page that kills its
+/// renderer while it loads must not go round as fast as it can.
+#[cfg(target_os = "linux")]
+const RELOAD_SPACING: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How many reloads one run gets. A page that dies every time it loads
+/// would otherwise flash and lose its state every half minute for good.
+#[cfg(target_os = "linux")]
+const RELOAD_LIMIT: u32 = 3;
+
 /// The most conservative step of the ladder that nothing stands in the way of.
 #[cfg(target_os = "linux")]
 fn safest_usable(
@@ -835,6 +967,7 @@ fn force(key: &str, value: &str, forced: &mut std::collections::BTreeMap<String,
 #[cfg(target_os = "linux")]
 fn remember_what_was_forced(forced: &std::collections::BTreeMap<String, Option<String>>) {
     if forced.is_empty() {
+        std::env::remove_var(lanlauncher_core::launch::FORCED_ENV);
         return;
     }
     if let Ok(json) = serde_json::to_string(forced) {
@@ -1480,6 +1613,7 @@ pub fn run() {
             return;
         }
         prefer_a_renderer_that_draws();
+        leave_out_fonts_that_crash_the_webview();
         // Only once the step is decided: the file gets a header naming it,
         // and everything WebKitGTK says from here on lands underneath.
         keep_what_the_webview_says();
@@ -1535,6 +1669,8 @@ pub fn run() {
                     return Ok(());
                 }
             }
+            #[cfg(target_os = "linux")]
+            reload_a_dead_web_process(app.handle());
             let demo = is_demo();
             let dirs = AppDirs {
                 config: app.path().app_config_dir()?,
@@ -1575,6 +1711,17 @@ pub fn run() {
                     .collect::<Vec<_>>()
                     .join(", ")
             );
+            #[cfg(target_os = "linux")]
+            if let Some(fonts) = LEFT_OUT_FONTS.get() {
+                log::info!(
+                    "webview: colour fonts left out (COLRv1 takes the web engine down): {}",
+                    fonts
+                        .iter()
+                        .map(|f| f.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
             #[cfg(target_os = "linux")]
             if let Some(skipped) = SKIPPED_A_KILLER.get() {
                 log::warn!(

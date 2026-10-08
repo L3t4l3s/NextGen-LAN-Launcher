@@ -178,6 +178,11 @@ again.
 
 ## Open items
 
+- **Colour emoji and the web engine:** the AppImage's WebKitGTK died drawing an emoji from a
+  COLRv1 colour font (Fedora 44 / Bazzite: `Noto-COLRv1.ttf`); the AppImage now leaves such fonts
+  out of its own window, reproduced and checked on Bazzite. Whether a distribution's own WebKitGTK
+  (`.deb`/`.rpm` builds) has the same problem is untested; there only the reload of a dead web
+  process applies.
 - **Player name and language in the games — check at the LAN:** before every start, on every
   platform, the launcher writes the player's name and the game language where the game reads
   them (`[[settings]]` in a profile; Goldberg and SmartSteamEmu packages without one). Written

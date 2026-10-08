@@ -796,6 +796,9 @@
     position: absolute;
     bottom: calc(100% + 4px);
     left: 0.6rem;
+    /* The picker's own z-index does nothing on an unpositioned box; without
+       this the game covers of a poll showed through it. */
+    z-index: 30;
   }
   .compose {
     display: flex;

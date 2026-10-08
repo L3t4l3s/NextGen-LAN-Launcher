@@ -2835,6 +2835,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tokio",
  "tracing",
+ "webkit2gtk",
 ]
 
 [[package]]

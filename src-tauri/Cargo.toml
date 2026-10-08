@@ -49,3 +49,6 @@ tauri-plugin-single-instance = "2.4"
 libc = "0.2"
 # Whether the desktop has a tray to come back from (already built for GTK).
 gio = "0.18"
+# A web process that died is started again (`reload_a_dead_web_process`);
+# the same crate and version wry already builds.
+webkit2gtk = { version = "2.0.2", features = ["v2_40"] }
