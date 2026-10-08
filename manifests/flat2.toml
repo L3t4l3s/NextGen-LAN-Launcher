@@ -10,10 +10,15 @@ source = "macETI-LAN v0.6.1 docs (MIT) – v1.2 profile menu verified on Apple M
 # about running it.
 exe = ""
 args = []
+# Wine's own d3dx9_30 cannot build the game's effects: "Failed to create
+# effect: data/shader/pro_static2x.sha" and the game ends. Microsoft's DLL
+# from the DirectX runtime does (checked with Proton 11: intro and German
+# menu). The launcher offers to install it before the first start.
+winetricks = ["d3dx9_30"]
 
 [platform.macos]
 runner = "crossover"
 
 [setup]
-notes.de = "Auflösung und Farbtiefe stellt ein eigenes Fenster ein: Startdatei einmal mit dem Argument '-setup' starten, dort Anzeigemodus mit 32 Bit und passendem Seitenverhältnis wählen, danach das Argument wieder entfernen. Bleibt das Spiel in einem kleinen Fenster, ist meist ein erzwungener virtueller Wine-Desktop schuld. Fehlt d3dx9_30.dll, gehört die offizielle DirectX-Runtime (Juni 2010) in die Bottle. PulseAudio/ALSA-Tipps aus alten Anleitungen betreffen nur Linux."
-notes.en = "Resolution and colour depth live in a separate window: start the executable once with the argument '-setup', pick a display mode with 32-bit colour and a matching aspect ratio, then remove the argument again. A game stuck in a small window usually means a forced Wine virtual desktop. A missing d3dx9_30.dll points at the official DirectX runtime (June 2010) for that bottle. PulseAudio/ALSA tips from old guides are Linux-only."
+notes.de = "Beim ersten Start auf einem Rechner (und nach einem Grafiktreiber-Wechsel) zeigt das Spiel sein Einstellungsfenster: dort Anzeigemodus mit 32 Bit und passendem Seitenverhältnis wählen, voreingestellt ist 640 × 400 × 16. Später erreichbar mit dem Argument '-setup'. Den Spielernamen fragt das Spiel beim Anlegen eines Profils ab. Ohne d3dx9_30 (unter Linux bietet der Launcher es vor dem ersten Start an, bei CrossOver die DirectX-Runtime Juni 2010 über „Software installieren“) endet das Spiel mit „Failed to create effect“. Bleibt das Spiel in einem kleinen Fenster, ist meist ein erzwungener virtueller Wine-Desktop schuld."
+notes.en = "On its first start on a machine (and after a graphics driver change) the game shows its settings window: pick a display mode with 32-bit colour and a matching aspect ratio, the default is 640 × 400 × 16. Later it opens with the argument '-setup'. The game asks for the player name when a profile is created. Without d3dx9_30 (on Linux the launcher offers it before the first start; with CrossOver, the June 2010 DirectX runtime through \"Install Software\") the game ends with \"Failed to create effect\". A game stuck in a small window usually means a forced Wine virtual desktop."

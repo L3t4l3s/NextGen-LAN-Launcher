@@ -2,7 +2,7 @@
   import type { ComponentsReport as Report } from "$lib/types";
   // Outlive the dialog: a run takes minutes, and closing and reopening the
   // dialog must still show that it runs and, afterwards, how it went.
-  const componentRuns = $state<{ running: string | null; results: Record<string, Report> }>({ running: null, results: {} });
+  export const componentRuns = $state<{ running: string | null; results: Record<string, Report> }>({ running: null, results: {} });
 </script>
 
 <script lang="ts">

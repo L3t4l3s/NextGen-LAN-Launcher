@@ -490,8 +490,15 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   `manifest::is_winetricks_verb`: nie eine Option mit `-` und keiner der eigenen Befehle von
   winetricks — `annihilate` löscht den Prefix samt Spielständen, und `--unattended` beantwortet die
   Rückfrage mit Ja; `prefix=`, `shell`, `*.verb` ebenso gesperrt). Installiert wird **nur per
-  Knopf** (`install_components`), nie von selbst — dauert Minuten und braucht meist einmal
-  Internet. Im Demo-Modus gesperrt.
+  Knopf** (`install_components`) oder nach Rückfrage vor dem Start, nie von selbst — dauert
+  Minuten und braucht meist einmal Internet. Im Demo-Modus gesperrt.
+  - *Vor dem Start:* `play_game` meldet `err.components_needed|<verben>`, wenn der Prefix Verben
+    des Profils nicht hat (`winetricks::missing`: was der Launcher dort installiert hat, steht in
+    `<prefix>/.nll-components`, `winetricks::remember`; ein gelöschter oder neuer Prefix startet
+    leer). Das Frontend fragt „Installieren / Ohne starten“ und startet danach mit
+    `skipComponents`. Ein Proton-Prefix, den es noch nicht gibt, legt `make_proton_prefix` mit
+    einem leeren `Script::Settings`-Lauf an. Anlass: FlatOut 2 endet ohne Microsofts
+    `d3dx9_30` mit „Failed to create effect“ (Wines eigene DLL baut die Effekte nicht).
   - *Ziel:* `launch/winetricks.rs` nimmt den Prefix aus dem Startplan: Wine `WINEPREFIX`, Proton
     `<compat>/pfx` mit Protons Wine (`files/bin/wine`, früher `dist/`), wie protontricks. Proton
     erkennt `target` am Programm `proton`, nicht an `STEAM_COMPAT_DATA_PATH` (das kann ein Profil

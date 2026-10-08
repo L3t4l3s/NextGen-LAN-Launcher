@@ -70,6 +70,54 @@ impl Target {
     }
 }
 
+/// The verbs this launcher installed into a prefix, one per line, in the
+/// prefix itself: a prefix that is deleted or replaced (another Proton
+/// pinned) starts without them, as it should. `winetricks.log` cannot say
+/// it (see [`outcome`]).
+const RECORD: &str = ".nll-components";
+
+/// Of `verbs`, those a start of `plan` would miss: not installed by this
+/// launcher into its prefix. Components put there some other way
+/// (protontricks, the button before this record existed) count as missing
+/// once; `winetricks.log` is no proof — it names a verb whose download
+/// failed, and at a LAN without internet that would hide the question. A Proton prefix that does not exist yet misses
+/// all of them; a start winetricks cannot serve (native, CrossOver, a
+/// broken Proton) none — there is nothing to offer.
+pub fn missing(plan: &LaunchPlan, verbs: &[String]) -> Vec<String> {
+    let have = match target(plan) {
+        Ok(target) => std::fs::read_to_string(target.prefix().join(RECORD)).unwrap_or_default(),
+        // Only a prefix the launcher can make; without the variable a
+        // start would not make one either.
+        Err(Refusal::StartFirst) if plan.env.contains_key("STEAM_COMPAT_DATA_PATH") => {
+            String::new()
+        }
+        Err(_) => return Vec::new(),
+    };
+    let have: Vec<&str> = have.lines().map(str::trim).collect();
+    verbs
+        .iter()
+        .filter(|v| !have.iter().any(|h| h.eq_ignore_ascii_case(v)))
+        .cloned()
+        .collect()
+}
+
+/// Note `installed` in `target`'s prefix for [`missing`].
+pub fn remember(target: &Target, installed: &[String]) -> std::io::Result<()> {
+    let path = target.prefix().join(RECORD);
+    let mut have: Vec<String> = std::fs::read_to_string(&path)
+        .unwrap_or_default()
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    for verb in installed {
+        if !have.iter().any(|h| h.eq_ignore_ascii_case(verb)) {
+            have.push(verb.clone());
+        }
+    }
+    std::fs::write(path, have.join("\n") + "\n")
+}
+
 /// The variables of a Wine start that winetricks has to see as well: a
 /// prefix made as `win32` stays one, and a Wine build of its own needs its
 /// own loader, server and libraries.
@@ -759,6 +807,40 @@ mod tests {
             crate::launch::windows_profile(&proton),
             Some((compat.join("pfx/drive_c/users/steamuser"), false))
         );
+    }
+
+    #[test]
+    fn a_prefix_misses_what_this_launcher_did_not_install_there() {
+        let tmp = tempfile::tempdir().unwrap();
+        let verbs = vec!["d3dx9_30".to_string(), "directplay".to_string()];
+        // Proton before its first start: everything is missing.
+        let compat = tmp.path().join("compat");
+        let dist = tmp.path().join("Proton 11.0/files/bin");
+        touch(&dist.join("wine"));
+        let mut proton = plan(
+            &tmp.path().join("Proton 11.0/proton"),
+            &[("STEAM_COMPAT_DATA_PATH", compat.to_str().unwrap())],
+            &["run"],
+        );
+        proton.runner = "Proton 11.0".into();
+        assert_eq!(missing(&proton, &verbs), verbs);
+        std::fs::create_dir_all(compat.join("pfx/drive_c")).unwrap();
+        let target = target(&proton).unwrap();
+        remember(&target, &["D3DX9_30".to_string()]).unwrap();
+        remember(&target, &["d3dx9_30".to_string()]).unwrap();
+        assert_eq!(missing(&proton, &verbs), vec!["directplay".to_string()]);
+        assert_eq!(
+            std::fs::read_to_string(compat.join("pfx/.nll-components")).unwrap(),
+            "D3DX9_30\n"
+        );
+        // Nothing to offer where winetricks cannot install: a Proton start
+        // without its compat folder, a native one.
+        let mut unknown = proton.clone();
+        unknown.env.clear();
+        assert!(missing(&unknown, &verbs).is_empty());
+        let mut native = proton.clone();
+        native.runner = "native".into();
+        assert!(missing(&native, &verbs).is_empty());
     }
 
     #[test]

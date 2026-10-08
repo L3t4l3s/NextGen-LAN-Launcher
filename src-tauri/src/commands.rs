@@ -753,6 +753,9 @@ pub async fn play_game(
     // offers Heretic, Hexen or the GZDoom launcher), and a script whose
     // output goes into a file asks it into a window that shows nothing.
     capture: Option<bool>,
+    // Start without the profile's Windows components, after the user was
+    // told they are missing (`err.components_needed`).
+    skip_components: Option<bool>,
 ) -> Cmd<u32> {
     if state.demo {
         return Err("err.demo_no_play".into());
@@ -768,6 +771,26 @@ pub async fn play_game(
     } = build_start(&state, &game_id, alternative).await?;
     if prefix_being_filled(&state, &plan) {
         return Err("err.components_busy_game".into());
+    }
+    // Components the profile names and this prefix lacks: the frontend
+    // offers to install them (minutes, the internet once) or to start
+    // without. FlatOut 2 without d3dx9_30 only shows an error.
+    if !cfg!(target_os = "windows") && !skip_components.unwrap_or(false) {
+        let verbs = manifest
+            .as_ref()
+            .map(|m| m.launch_for(Manifest::current_platform()).winetricks)
+            .unwrap_or_default();
+        if !verbs.is_empty() {
+            let probe = plan.clone();
+            let missing = tauri::async_runtime::spawn_blocking(move || {
+                launch::winetricks::missing(&probe, &verbs)
+            })
+            .await
+            .map_err(err)?;
+            if !missing.is_empty() {
+                return Err(format!("err.components_needed|{}", missing.join(" ")));
+            }
+        }
     }
     // Read once: a library move published in between must not send the
     // setup, the preparation and the start to different folders.
@@ -2087,15 +2110,57 @@ pub(crate) fn prefix_being_filled(state: &AppState, plan: &LaunchPlan) -> bool {
         .is_some_and(|(_, prefix)| *prefix == key)
 }
 
+/// Into an installed game only: one never installed or just removed has no
+/// receipt (`installed`), and a repair or update being checked or extracted
+/// shows in its phase. An update still downloading leaves the old version
+/// in place, and that one starts.
+async fn ready_for_components(state: &AppState, game_id: &str, installed: bool) -> Cmd<()> {
+    use lanlauncher_core::install::Phase;
+    let phase = manager(state).await?.tracker_phase(game_id).await;
+    if !installed
+        || matches!(
+            phase,
+            Some(Phase::Verifying | Phase::Extracting | Phase::Setup)
+        )
+    {
+        return Err("err.components_not_ready".into());
+    }
+    Ok(())
+}
+
+/// The prefix of a Proton game that never started, for its components:
+/// made by the profile's settings run. A run that could not make it is
+/// `err.components_prefix` (its transcript is in the game's logs).
+async fn make_proton_prefix(
+    state: &Arc<AppState>,
+    game_id: &str,
+    alternative: Option<usize>,
+    paths: lanlauncher_core::paths::GamePaths,
+) -> Cmd<()> {
+    let (plan, _) = with_launch_context(state, game_id, alternative, Some(paths.clone()), |ctx| {
+        launch::unix::script_plan(ctx, launch::setup_script::Script::Settings)
+    })
+    .await?;
+    let plan = plan.ok_or(launch::winetricks::Refusal::StartFirst.code())?;
+    crate::player::make_prefix(state, game_id, &paths, plan)
+        .await
+        .map_err(|e| {
+            log::warn!("components {game_id}: cannot make the prefix ({e})");
+            "err.components_prefix".to_string()
+        })
+}
+
 /// Install the Windows components the profile in force names (winetricks
-/// verbs) into the prefix the game starts in. Only on request: it takes
-/// minutes and usually needs the internet once. One run at a time, and the
-/// game does not start into a prefix that is being changed.
+/// verbs) into the prefix the game starts in (with `alternative`, as the
+/// start that asked). Only on request: it takes minutes and usually needs
+/// the internet once. One run at a time, and the game does not start into a
+/// prefix that is being changed.
 #[tauri::command]
 pub async fn install_components(
     state: State<'_, Arc<AppState>>,
     game_id: String,
     force: bool,
+    alternative: Option<usize>,
 ) -> Cmd<ComponentsReport> {
     if cfg!(windows) {
         return Err("err.components_native".into());
@@ -2105,7 +2170,7 @@ pub async fn install_components(
     }
     // The verbs are not part of the plan; both come from one resolution, so
     // a configuration saved meanwhile cannot mix into one of them.
-    let (plan, manifest) = plan_with_profile(&state, &game_id, None).await?;
+    let (plan, manifest) = plan_with_profile(&state, &game_id, alternative).await?;
     let verbs = manifest
         .as_ref()
         .map(|m| m.launch_for(Manifest::current_platform()).winetricks)
@@ -2113,47 +2178,46 @@ pub async fn install_components(
     if verbs.is_empty() {
         return Err("err.components_none".into());
     }
-    let target = launch::winetricks::target(&plan).map_err(|refusal| refusal.code())?;
     let paths = state.settings.read().await.library.game_paths(&game_id);
     // File system work on a blocking thread, not on a worker other commands
-    // wait for (an SD card is slow).
-    let (key, receipt, existed_before) = {
-        let (prefix, paths, plan, game_id) = (
-            target.prefix().to_path_buf(),
-            paths.clone(),
-            plan.clone(),
-            game_id.clone(),
-        );
+    // wait for (an SD card is slow). Asked before anything runs in the
+    // prefix: winetricks, or the run below, may be what creates it, and the
+    // record of who used it must not take that for a prefix from before.
+    let (receipt, existed_before) = {
+        let (paths, plan, game_id) = (paths.clone(), plan.clone(), game_id.clone());
         tauri::async_runtime::spawn_blocking(move || {
             let receipt = paths
                 .as_ref()
                 .is_some_and(|paths| Receipt::load(&paths.receipt).is_some());
-            // As a start asks it: winetricks may be what creates the prefix,
-            // and the record of who used it must not take that for a prefix
-            // from before.
             let existed_before = paths.as_ref().is_some_and(|paths| {
                 launch::unix::own_prefix_exists_before_start(&plan, paths, &game_id)
             });
-            (prefix_key(&prefix), receipt, existed_before)
+            (receipt, existed_before)
         })
         .await
         .map_err(err)?
     };
+    let target = match launch::winetricks::target(&plan) {
+        // Proton makes its prefix on a start; a run of nothing makes it here.
+        Err(launch::winetricks::Refusal::StartFirst)
+            if plan.env.contains_key("STEAM_COMPAT_DATA_PATH") =>
+        {
+            ready_for_components(&state, &game_id, receipt).await?;
+            let paths = paths.clone().ok_or("err.components_not_ready")?;
+            make_proton_prefix(&state, &game_id, alternative, paths).await?;
+            launch::winetricks::target(&plan).map_err(|_| "err.components_prefix".to_string())?
+        }
+        found => found.map_err(|refusal| refusal.code())?,
+    };
+    let key = {
+        let prefix = target.prefix().to_path_buf();
+        tauri::async_runtime::spawn_blocking(move || prefix_key(&prefix))
+            .await
+            .map_err(err)?
+    };
     let _run = ComponentsRun::claim(&state.prefix_use, &game_id, &key)?;
-    // Into an installed game only: one never installed or just removed has
-    // no receipt, and a repair or update being checked or extracted shows
-    // in its phase. An update still downloading leaves the old version in
-    // place, and that one starts.
-    let phase = manager(&state).await?.tracker_phase(&game_id).await;
-    use lanlauncher_core::install::Phase;
-    if !receipt
-        || matches!(
-            phase,
-            Some(Phase::Verifying | Phase::Extracting | Phase::Setup)
-        )
-    {
-        return Err("err.components_not_ready".into());
-    }
+    // Asked again after the claim: a repair may have begun meanwhile.
+    ready_for_components(&state, &game_id, receipt).await?;
     // After the claim: a start from now on is refused, and one before it
     // runs in the prefix by now. A game there would share its wineserver
     // with the installers, and the time limit's `wineboot -k` would end it.
@@ -2185,6 +2249,17 @@ pub async fn install_components(
     let outcome = launch::winetricks::run(&job, &log, std::time::Duration::from_secs(45 * 60))
         .await
         .map_err(|e| format!("err.components_run|{e}"))?;
+    // What a start asks for before it runs (`launch::winetricks::missing`).
+    {
+        let (target, installed, game_id) =
+            (target.clone(), outcome.installed.clone(), game_id.clone());
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            if let Err(e) = launch::winetricks::remember(&target, &installed) {
+                log::warn!("components {game_id}: cannot note what was installed ({e})");
+            }
+        })
+        .await;
+    }
     // The game's Wine or Proton ran in its prefix, as on a start.
     if let Some(paths) = paths {
         let game_id = game_id.clone();

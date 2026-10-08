@@ -60,8 +60,8 @@ export const api = {
   pause: (gameId: string, paused: boolean) => invoke<void>("pause_game", { gameId, paused }),
   cancelDownload: (gameId: string) => invoke<boolean>("cancel_download", { gameId }),
   uninstall: (gameId: string) => invoke<void>("uninstall_game", { gameId }),
-  play: (gameId: string, alternative?: number, capture = false) =>
-    invoke<number>("play_game", { gameId, alternative: alternative ?? null, capture }),
+  play: (gameId: string, alternative?: number, capture = false, skipComponents = false) =>
+    invoke<number>("play_game", { gameId, alternative: alternative ?? null, capture, skipComponents }),
   runExtra: (gameId: string, extra: Extra) => invoke<number>("run_extra", { gameId, extra }),
   prereqInstaller: () => invoke<string | null>("get_prereq_installer"),
   runPrereqInstaller: () => invoke<number>("run_prereq_installer"),
@@ -78,7 +78,8 @@ export const api = {
   shareGameConfig: (gameId: string, comment: string) => invoke<ConfigReport>("share_game_config", { gameId, comment }),
   /** Opens the system's save dialog; the saved path, or null when cancelled. */
   exportGameConfig: (fileName: string, contents: string) => invoke<string | null>("export_game_config", { fileName, contents }),
-  installComponents: (gameId: string, force = false) => invoke<ComponentsReport>("install_components", { gameId, force }),
+  installComponents: (gameId: string, force = false, alternative?: number) =>
+    invoke<ComponentsReport>("install_components", { gameId, force, alternative: alternative ?? null }),
   settings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { settings }),
   diagnostics: () => invoke<Report>("run_diagnostics"),
@@ -157,6 +158,20 @@ export async function confirmDialog(message: string): Promise<boolean> {
   if (!inTauri) return window.confirm(message);
   const { ask } = await import("@tauri-apps/plugin-dialog");
   return ask(message, { kind: "warning" });
+}
+
+/** Three choices; closing the dialog is `cancel`. */
+export async function chooseDialog(message: string, labels: { yes: string; no: string; cancel: string }): Promise<"yes" | "no" | "cancel"> {
+  if (!inTauri) {
+    if (window.confirm(`${message}\n\n[OK] ${labels.yes}`)) return "yes";
+    return window.confirm(`${message}\n\n[OK] ${labels.no}`) ? "no" : "cancel";
+  }
+  const { message: show } = await import("@tauri-apps/plugin-dialog");
+  // Custom buttons answer with their label; the plain names as a fallback.
+  const answer = await show(message, { kind: "warning", buttons: labels });
+  if (answer === labels.yes || answer === "Yes") return "yes";
+  if (answer === labels.no || answer === "No") return "no";
+  return "cancel";
 }
 
 export async function copyText(text: string): Promise<void> {

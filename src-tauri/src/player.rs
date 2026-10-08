@@ -86,6 +86,7 @@ pub(crate) async fn apply(
             plan,
             &registry,
             REGISTRY_LIMIT,
+            true,
         )
         .await
     } else {
@@ -124,6 +125,7 @@ async fn windows_profile(
                 plan.clone(),
                 &[],
                 PREFIX_LIMIT,
+                true,
             )
             .await?;
             Ok(launch::windows_profile(plan)
@@ -132,6 +134,36 @@ async fn windows_profile(
         }
         _ => Ok(None),
     }
+}
+
+/// Make the prefix of a Proton game that never started, by an empty run of
+/// `plan` (the profile's settings run) in it: components go into a prefix
+/// that is there (`install_components`). Nothing else may hold the game.
+pub(crate) async fn make_prefix(
+    state: &Arc<AppState>,
+    game_id: &str,
+    paths: &GamePaths,
+    plan: LaunchPlan,
+) -> Result<(), String> {
+    let player = {
+        let s = state.settings.read().await;
+        Player {
+            name: s.safe_player_name(),
+            lang: s.game_language.clone(),
+        }
+    };
+    log::info!("components {game_id}: making the prefix first");
+    set_in_prefix(
+        state,
+        game_id,
+        paths,
+        &player,
+        plan,
+        &[],
+        PREFIX_LIMIT,
+        false,
+    )
+    .await
 }
 
 /// Windows: `reg add` for each value. HKLM wants administrator rights the
@@ -173,7 +205,9 @@ async fn set_with_reg(game_id: &str, registry: Vec<RegistryValue>) {
 }
 
 /// macOS/Linux: the values through a batch in the prefix, waited for, the
-/// game held like during a setup.
+/// game held like during a setup (`held_by_caller`: by the start that
+/// asks, see [`SetupClaim::claim`]).
+#[allow(clippy::too_many_arguments)]
 async fn set_in_prefix(
     state: &Arc<AppState>,
     game_id: &str,
@@ -182,8 +216,9 @@ async fn set_in_prefix(
     mut plan: LaunchPlan,
     registry: &[RegistryValue],
     limit: Duration,
+    held_by_caller: bool,
 ) -> Result<(), String> {
-    let claim = SetupClaim::claim(state, game_id, true)?;
+    let claim = SetupClaim::claim(state, game_id, held_by_caller)?;
     // Not beside a running copy of the game: its registry is in use.
     if let Ok(target) = launch::winetricks::target(&plan) {
         let in_use = tauri::async_runtime::spawn_blocking(move || {

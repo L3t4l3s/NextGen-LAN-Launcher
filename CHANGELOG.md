@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **FlatOut 2 startet unter Linux.** Ohne Microsofts `d3dx9_30` endete es mit „Failed to create
+  effect“. Fehlen einem Spiel Windows-Komponenten aus seinem Profil, fragt der Launcher jetzt vor
+  dem Start, ob er sie installieren soll („Installieren“ / „Ohne starten“), und startet das Spiel
+  danach selbst; bei Proton legt er dafür den Prefix vorher an. Bisher ging das nur über den Knopf
+  in der Startkonfiguration, und erst nach einem gescheiterten ersten Start.
+
 - **Counter-Strike / Half-Life (GoldSrc) fragt wieder, welches Spiel startet.** Das Profil startete
   fest CS 1.6; jetzt läuft wie unter Windows das Startskript mit seinem Menü (CS 1.6, CS 1.5,
   Half-Life, Half-Life pre-Steam). CS 1.6 und Half-Life lassen sich weiterhin direkt über

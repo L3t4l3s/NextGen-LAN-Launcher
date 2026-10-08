@@ -1,12 +1,12 @@
 <script lang="ts">
   import type { Extra, GameView, LaunchPlan, RunnerChoices } from "$lib/types";
   import { app } from "$lib/stores/app.svelte";
-  import { api, confirmDialog, copyText, coverSrc } from "$lib/api";
+  import { api, chooseDialog, confirmDialog, copyText, coverSrc } from "$lib/api";
   import { t, userText } from "$lib/i18n";
   import { formatBytes, formatPercent, formatRevision, formatSpeed, placeholderGradient, stripHtml, percentWidth } from "$lib/format";
   import { isBusy, isPlayable, phaseBadge } from "$lib/phase";
   import ProblemCard from "./ProblemCard.svelte";
-  import GameConfigDialog from "./GameConfigDialog.svelte";
+  import GameConfigDialog, { componentRuns } from "./GameConfigDialog.svelte";
 
   let { game, onclose }: { game: GameView; onclose: () => void } = $props();
 
@@ -113,15 +113,64 @@
     await app.reloadGames();
   }
 
-  async function play() {
+  async function play(skipComponents = false) {
     if (status?.needsExeChoice) {
       await openExeChooser();
       return;
     }
+    let needed: string | null = null;
     await run("play", async () => {
-      const pid = await api.play(game.id, alternative ?? undefined);
-      app.toast("success", t("detail.launched", { pid }));
+      try {
+        const pid = await api.play(game.id, alternative ?? undefined, false, skipComponents);
+        app.toast("success", t("detail.launched", { pid }));
+      } catch (e) {
+        const missing = /^err\.components_needed\|(.*)$/.exec(e instanceof Error ? e.message : String(e));
+        if (!missing) throw e;
+        needed = missing[1];
+      }
     });
+    if (needed) await offerComponents(needed);
+  }
+
+  // The profile names Windows components the game's prefix lacks (FlatOut 2
+  // shows only an error without d3dx9_30): install them, then start — or
+  // start without, e.g. at a LAN without internet.
+  async function offerComponents(verbs: string) {
+    const id = game.id;
+    const title = game.title;
+    const chosen = alternative ?? undefined;
+    const choice = await chooseDialog(t("detail.components.ask", { title, verbs }), {
+      yes: t("detail.components.install"),
+      no: t("detail.components.without"),
+      cancel: t("detail.components.cancel"),
+    });
+    if (choice === "cancel") return;
+    if (choice === "no") {
+      await play(true);
+      return;
+    }
+    componentRuns.running = id;
+    delete componentRuns.results[id];
+    app.toast("info", t("detail.components.installing", { title, verbs }));
+    // The game's buttons wait meanwhile: a second start or a repair would
+    // only meet the busy prefix.
+    working = true;
+    try {
+      const result = await api.installComponents(id, false, chosen);
+      componentRuns.results[id] = result;
+      if (result.failed.length) {
+        app.toast("error", t("config.components.failed_toast", { title, verbs: result.failed.join(" ") }));
+        return;
+      }
+      app.toast("success", t("config.components.done_toast", { title }));
+    } catch (e) {
+      app.toast("error", userText(e));
+      return;
+    } finally {
+      componentRuns.running = null;
+      working = false;
+    }
+    if (game.id === id) await play(true);
   }
 
   async function openExeChooser() {
@@ -218,7 +267,7 @@
 
     <div class="primary-row">
       {#if playable}
-        <button class="success big" onclick={play} disabled={working || app.bootstrap?.demo} title={app.bootstrap?.demo ? t("action.play_demo") : ""}>▶ {t("action.play")}</button>
+        <button class="success big" onclick={() => play()} disabled={working || app.bootstrap?.demo} title={app.bootstrap?.demo ? t("action.play_demo") : ""}>▶ {t("action.play")}</button>
         {#if status?.phase === "update_available"}
           <button class="primary" onclick={repair} disabled={working}>{t("action.update")}</button>
         {/if}
