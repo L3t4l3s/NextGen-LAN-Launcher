@@ -373,6 +373,19 @@ export function createMock() {
           fileName: `${id}-${bootstrap.platform}.toml`,
         };
       }
+      case "bug_report": {
+        const what = args.gameId ? String(args.gameId) : "Launcher";
+        const subject = `[bug] ${what} on ${bootstrap.platform}`;
+        const body = `What happened:\n${args.comment}\n\nLauncher: ${bootstrap.version}\nPlatform: ${bootstrap.platform} – Browser-Demo\n`;
+        return {
+          subject,
+          body,
+          toml: body,
+          mailto: `mailto:launcher@schimnick.de?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
+          issueUrl: `https://github.com/L3t4l3s/NextGen-LAN-Launcher/issues/new?title=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
+          fileName: `bug-${args.gameId ?? "launcher"}-${bootstrap.platform}.txt`,
+        };
+      }
       case "install_components": {
         const verbs = (gameConfigs[id]?.winetricks ?? "").split(/\s+/).filter(Boolean);
         if (!verbs.length) throw new Error("err.components_none");

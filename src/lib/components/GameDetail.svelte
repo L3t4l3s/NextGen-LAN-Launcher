@@ -7,6 +7,9 @@
   import { isBusy, isPlayable, phaseBadge } from "$lib/phase";
   import ProblemCard from "./ProblemCard.svelte";
   import GameConfigDialog, { componentRuns } from "./GameConfigDialog.svelte";
+  import ReportDialog from "./ReportDialog.svelte";
+  import Icon from "./Icon.svelte";
+  import { TEST_PHASE } from "$lib/testphase";
 
   let { game, onclose }: { game: GameView; onclose: () => void } = $props();
 
@@ -23,6 +26,7 @@
   let working = $state(false);
   let showExeChooser = $state(false);
   let showConfig = $state(false);
+  let showReport = $state(false);
   let executables = $state<string[]>([]);
   let plan = $state<LaunchPlan | null>(null);
   let runnerChoices = $state<RunnerChoices | null>(null);
@@ -378,10 +382,15 @@
       {:else if platform !== "windows"}
         <p class="hint">{t("detail.manifest.none", { platform })}</p>
       {/if}
-      {#if playable && platform !== "windows"}
+      {#if (playable && platform !== "windows") || TEST_PHASE}
         <div class="row">
-          <button class="ghost" onclick={openExeChooser}>{t("action.choose_exe")}</button>
-          <button class="ghost" onclick={() => (showConfig = true)}>{t("action.launch_config")}</button>
+          {#if playable && platform !== "windows"}
+            <button class="ghost" onclick={openExeChooser}>{t("action.choose_exe")}</button>
+            <button class="ghost" onclick={() => (showConfig = true)}>{t("action.launch_config")}</button>
+          {/if}
+          {#if TEST_PHASE}
+            <button class="ghost" onclick={() => (showReport = true)}><Icon name="bug" /> {t("report.game")}</button>
+          {/if}
         </div>
       {/if}
       {#if plan}
@@ -401,6 +410,15 @@
     {/if}
   </div>
 </div>
+
+{#if showReport}
+  <ReportDialog
+    gameId={game.id}
+    title={game.title}
+    confirmedProfile={platform !== "windows" && game.manifest?.origin === "bundled" && game.manifest.verifiedForRevision}
+    onclose={() => (showReport = false)}
+  />
+{/if}
 
 {#if showConfig}
   <GameConfigDialog

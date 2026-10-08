@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Probleme melden (Testphase).** Jedes Spiel hat einen Knopf „Problem melden“, die Titelleiste
+  einen „Fehler melden“ für den Launcher allgemein. Der Bericht enthält die Beschreibung, Angaben
+  zum Rechner, Startprofil und Startbefehl des Spiels und einen Auszug aus dem Protokoll (Zeilen
+  zum Spiel, Schlüssel unkenntlich); er wird vor dem Senden angezeigt und geht per Mail, als
+  GitHub-Issue, als Kopie oder als Datei. Bei einem geprüften Profil bittet der Dialog zusätzlich
+  darum, eine funktionierende Einstellung über „Funktioniert – teilen“ zu schicken. Melde- und
+  Teilen-Knöpfe tragen ein eigenes Symbol. Abschalten über `TEST_PHASE` in `src/lib/testphase.ts`.
+
 - **Kompatibilitätsversion nur noch in der Startkonfiguration.** Die genaue Proton-/Wine-Version
   stand doppelt: oben in den Spieldetails und (als Art) in der Startkonfiguration. Jetzt wählt man
   beides in der Startkonfiguration, direkt untereinander; die Version wird mit „Speichern“

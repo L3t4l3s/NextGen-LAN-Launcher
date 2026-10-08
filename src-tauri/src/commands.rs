@@ -1974,6 +1974,79 @@ pub async fn share_game_config(
     .map_err(err)
 }
 
+/// A problem report, about `game_id` or (without one) the launcher: what
+/// the reporter wrote, this machine, the game's profile and start, and an
+/// excerpt of the launcher's log with keys blanked out.
+#[tauri::command]
+pub async fn bug_report(
+    state: State<'_, Arc<AppState>>,
+    game_id: Option<String>,
+    comment: String,
+) -> Cmd<lanlauncher_core::game_config::Report> {
+    use lanlauncher_core::game_config;
+    let platform = Manifest::current_platform();
+    let mut runner = String::new();
+    let game = match &game_id {
+        None => None,
+        Some(id) => {
+            let (game, paths, manifest) = config_basis(&state, id).await?;
+            let revision = {
+                let (game, paths) = (game.clone(), paths.clone());
+                tauri::async_runtime::spawn_blocking(move || installed_revision(&game, &paths))
+                    .await
+                    .map_err(err)?
+            };
+            let profile = match &manifest {
+                None => "none".to_string(),
+                Some(m) => format!(
+                    "{:?}{}, {}",
+                    m.origin,
+                    if m.user_config {
+                        " + own configuration"
+                    } else {
+                        ""
+                    },
+                    if m.verified_for(&revision, platform) {
+                        "confirmed for this package".to_string()
+                    } else {
+                        format!("not confirmed (checked: {})", m.revisions.join(", "))
+                    }
+                ),
+            };
+            // Windows starts the package's script as it is; elsewhere the
+            // plan says which Wine/Proton and what runs.
+            let start = build_plan(&state, id, None).await.ok().map(|plan| {
+                runner = plan.runner.clone();
+                format!(
+                    "{}: {} {}",
+                    plan.runner,
+                    plan.program.display(),
+                    plan.args.join(" ")
+                )
+            });
+            Some(game_config::BugGame {
+                id: id.clone(),
+                title: game.title.clone(),
+                revision,
+                profile,
+                start,
+            })
+        }
+    };
+    let log_file = state.dirs.logs_dir().join("launcher.log");
+    let version = crate::app_version();
+    tauri::async_runtime::spawn_blocking(move || {
+        let log = std::fs::read(&log_file)
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .unwrap_or_default();
+        let excerpt = game_config::log_excerpt(&log, game_id.as_deref(), 80);
+        let context = game_config::this_machine(&version, &runner);
+        game_config::bug_report(game.as_ref(), &context, &comment, &excerpt)
+    })
+    .await
+    .map_err(err)
+}
+
 /// Save a report's profile where the tester picks in the system's save
 /// dialog. The path never comes from the web view: it may only name the
 /// file name to suggest, so no page can write a file of its choosing.
@@ -1993,7 +2066,19 @@ pub async fn export_game_config(
             .dialog()
             .file()
             .set_file_name(&suggested)
-            .add_filter("TOML", &["toml"])
+            // A profile, or a problem report as plain text.
+            .add_filter(
+                if suggested.ends_with(".txt") {
+                    "Text"
+                } else {
+                    "TOML"
+                },
+                &[if suggested.ends_with(".txt") {
+                    "txt"
+                } else {
+                    "toml"
+                }],
+            )
             .blocking_save_file()
         else {
             return Ok(None);

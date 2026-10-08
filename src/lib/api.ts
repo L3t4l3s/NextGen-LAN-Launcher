@@ -76,6 +76,7 @@ export const api = {
   saveGameConfig: (gameId: string, config: GameConfig) => invoke<boolean>("save_game_config", { gameId, config }),
   resetGameConfig: (gameId: string) => invoke<void>("reset_game_config", { gameId }),
   shareGameConfig: (gameId: string, comment: string) => invoke<ConfigReport>("share_game_config", { gameId, comment }),
+  bugReport: (gameId: string | null, comment: string) => invoke<ConfigReport>("bug_report", { gameId, comment }),
   /** Opens the system's save dialog; the saved path, or null when cancelled. */
   exportGameConfig: (fileName: string, contents: string) => invoke<string | null>("export_game_config", { fileName, contents }),
   installComponents: (gameId: string, force = false, alternative?: number) =>

@@ -1856,6 +1856,7 @@ pub fn run() {
             commands::save_game_config,
             commands::reset_game_config,
             commands::share_game_config,
+            commands::bug_report,
             commands::export_game_config,
             commands::install_components,
             commands::save_settings,

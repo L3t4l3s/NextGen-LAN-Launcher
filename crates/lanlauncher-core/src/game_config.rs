@@ -547,18 +547,7 @@ pub fn report(
     } else {
         // Without the profile — and without a note long enough to overrun
         // the link on its own.
-        // Cut by encoded length: one emoji is twelve bytes in a URL.
-        let mut kept = String::new();
-        let mut size = 0;
-        for c in head.chars() {
-            size += percent_encode(c.encode_utf8(&mut [0; 4])).len();
-            if size > LINK_BODY_LIMIT / 2 {
-                kept.push_str(" …\n");
-                break;
-            }
-            kept.push(c);
-        }
-        let head = kept;
+        let head = cut_for_link(&head, LINK_BODY_LIMIT / 2);
         format!("{head}\n(The profile is too long for a link: please attach the saved file or paste the copied report.)\n")
     };
     Report {
@@ -579,6 +568,187 @@ pub fn report(
     }
 }
 
+/// The game a problem report is about.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BugGame {
+    pub id: String,
+    pub title: String,
+    /// Installed package revision, else the catalog's.
+    pub revision: String,
+    /// Which start profile applies and whether it is confirmed.
+    pub profile: String,
+    /// What a start runs (runner and command line), when it can be planned.
+    pub start: Option<String>,
+}
+
+/// A problem report: about `game`, or about the launcher in general.
+/// `log` is an excerpt of the launcher's log; it goes into the copied text
+/// and the saved file, not into the links (too long, and a link is sent
+/// before the reporter could read it).
+pub fn bug_report(
+    game: Option<&BugGame>,
+    context: &TestContext,
+    comment: &str,
+    log: &str,
+) -> Report {
+    let what = match game {
+        Some(g) => format!(
+            "{} ({})",
+            if g.title.is_empty() { &g.id } else { &g.title },
+            g.id
+        ),
+        None => "Launcher".to_string(),
+    };
+    let subject = format!("[bug] {what} on {}", context.platform);
+    let mut head = String::new();
+    let comment = comment.trim();
+    head.push_str("What happened:\n");
+    head.push_str(if comment.is_empty() {
+        "(no description)"
+    } else {
+        comment
+    });
+    head.push_str("\n\n");
+    if let Some(g) = game {
+        head.push_str(&format!("Game: {what}, revision {}\n", g.revision));
+        head.push_str(&format!("Profile: {}\n", g.profile));
+        if let Some(start) = &g.start {
+            head.push_str(&format!("Start: {start}\n"));
+        }
+    }
+    head.push_str(&format!("Launcher: {}\n", context.launcher_version));
+    head.push_str(&format!(
+        "Platform: {} – {}\n",
+        context.platform, context.os
+    ));
+    if let Some(device) = &context.device {
+        head.push_str(&format!("Device: {device}\n"));
+    }
+    if !context.cpu.is_empty() {
+        head.push_str(&format!("CPU: {}\n", context.cpu));
+    }
+    if !context.gpu.is_empty() {
+        head.push_str(&format!("GPU: {}\n", context.gpu.join(", ")));
+    }
+    if !context.runner.is_empty() {
+        head.push_str(&format!("Ran with: {}\n", context.runner));
+    }
+    let body = if log.trim().is_empty() {
+        head.clone()
+    } else {
+        format!("{head}\nLog excerpt:\n```\n{}\n```\n", log.trim_end())
+    };
+    let link_body = format!(
+        "{}\n(A log excerpt is in the copied report or the saved file; please paste or attach it.)\n",
+        cut_for_link(&head, LINK_BODY_LIMIT - 400)
+    );
+    let name = game.map_or("launcher", |g| g.id.as_str());
+    Report {
+        mailto: format!(
+            "mailto:{REPORT_EMAIL}?subject={}&body={}",
+            percent_encode(&subject),
+            percent_encode(&link_body)
+        ),
+        issue_url: format!(
+            "https://github.com/{REPORT_REPOSITORY}/issues/new?title={}&body={}",
+            percent_encode(&subject),
+            percent_encode(&link_body)
+        ),
+        file_name: format!("bug-{name}-{}.txt", context.platform),
+        toml: body.clone(),
+        subject,
+        body,
+    }
+}
+
+/// `text` cut to `limit` bytes once encoded for a link: one emoji is twelve
+/// bytes in a URL.
+fn cut_for_link(text: &str, limit: usize) -> String {
+    let mut kept = String::new();
+    let mut size = 0;
+    for c in text.chars() {
+        size += percent_encode(c.encode_utf8(&mut [0; 4])).len();
+        if size > limit {
+            kept.push_str(" …\n");
+            break;
+        }
+        kept.push(c);
+    }
+    kept
+}
+
+/// The last `max` lines of a log that concern `game` (all lines without
+/// one), without the state machine's `tick` lines, and with anything that
+/// looks like a key replaced: share secrets and API keys are long runs of
+/// capitals and digits, and a report goes to a public issue tracker.
+pub fn log_excerpt(log: &str, game: Option<&str>, max: usize) -> String {
+    let wanted = |line: &str| {
+        !line.contains("] tick: ")
+            && game.is_none_or(|id| {
+                line.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+                    .any(|word| word == id)
+            })
+    };
+    let lines: Vec<&str> = log.lines().filter(|l| wanted(l)).collect();
+    let from = lines.len().saturating_sub(max);
+    lines[from..]
+        .iter()
+        .map(|line| redact_keys(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Keys in a log line blanked: long runs of capitals and digits (share
+/// secrets, API keys) and dash-grouped CD keys (`ABCD-EFGH-1234-5678`).
+fn redact_keys(line: &str) -> String {
+    let grouped = |token: &str| {
+        let groups: Vec<&str> = token.split('-').collect();
+        groups.len() >= 3
+            && groups.iter().all(|g| {
+                (4..=6).contains(&g.len())
+                    && g.chars().all(|c| c.is_ascii_alphanumeric())
+                    && !g.chars().any(|c| c.is_ascii_lowercase())
+            })
+            && token.chars().any(|c| c.is_ascii_digit())
+    };
+    let line: String = line
+        .split_inclusive(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+        .map(|piece| {
+            let end = piece
+                .char_indices()
+                .last()
+                .filter(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '-'))
+                .map_or(piece.len(), |(i, _)| i);
+            if grouped(&piece[..end]) {
+                format!("[key]{}", &piece[end..])
+            } else {
+                piece.to_string()
+            }
+        })
+        .collect();
+    let mut out = String::with_capacity(line.len());
+    let mut word = String::new();
+    let flush = |word: &mut String, out: &mut String| {
+        let key = word.len() >= 20
+            && word
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+            && word.chars().any(|c| c.is_ascii_digit());
+        out.push_str(if key { "[key]" } else { word });
+        word.clear();
+    };
+    for c in line.chars() {
+        if c.is_ascii_alphanumeric() {
+            word.push(c);
+        } else {
+            flush(&mut word, &mut out);
+            out.push(c);
+        }
+    }
+    flush(&mut word, &mut out);
+    out
+}
+
 /// How long an encoded body may be in a link. GitHub refuses issue URLs
 /// past about 8 KB; some mail handlers cut far earlier, so this stays well
 /// below both and the full report is always there to copy.
@@ -595,6 +765,58 @@ pub fn percent_encode(text: &str) -> String {
 mod tests {
     use super::*;
     use crate::manifest::{LaunchSpec, ManifestOrigin};
+
+    #[test]
+    fn a_bug_report_keeps_the_log_out_of_its_links() {
+        let context = TestContext {
+            launcher_version: "0.2.0 (abc)".into(),
+            platform: "linux".into(),
+            os: "Bazzite 44".into(),
+            ..Default::default()
+        };
+        let game = BugGame {
+            id: "flat2".into(),
+            title: "FlatOut 2".into(),
+            revision: "20160922".into(),
+            profile: "bundled, confirmed".into(),
+            start: Some("Proton 11.0: cmd.exe /c .nll-start-run.cmd".into()),
+        };
+        let r = bug_report(
+            Some(&game),
+            &context,
+            "Freezes after the intro",
+            "line one\nline two",
+        );
+        assert_eq!(r.subject, "[bug] FlatOut 2 (flat2) on linux");
+        assert!(r.body.contains("Freezes after the intro"));
+        assert!(r.body.contains("line two"));
+        assert!(!r.issue_url.contains("line%20two"));
+        assert!(r.issue_url.contains("Freezes%20after"));
+        assert_eq!(r.file_name, "bug-flat2-linux.txt");
+        let general = bug_report(None, &context, "", "");
+        assert_eq!(general.subject, "[bug] Launcher on linux");
+        assert_eq!(general.file_name, "bug-launcher-linux.txt");
+    }
+
+    #[test]
+    fn a_log_excerpt_keeps_the_games_lines_and_hides_keys() {
+        let log = "[x][INFO] tick: flat2 phase=Ready\n\
+                   [x][INFO] starting flat2 via Proton\n\
+                   [x][INFO] starting flat22 via Proton\n\
+                   [x][INFO] share flat2 secret AB12CD34EF56GH78IJ90KL registered\n\
+                   [x][INFO] key ABCD-EF12-GH34-IJ56 set\n\
+                   [x][INFO] other game";
+        let excerpt = log_excerpt(log, Some("flat2"), 10);
+        assert_eq!(
+            excerpt,
+            "[x][INFO] starting flat2 via Proton\n[x][INFO] share flat2 secret [key] registered"
+        );
+        assert_eq!(log_excerpt(log, None, 1), "[x][INFO] other game");
+        assert_eq!(
+            log_excerpt(log, None, 2).lines().next(),
+            Some("[x][INFO] key [key] set")
+        );
+    }
 
     #[test]
     fn words_split_on_spaces_keep_quotes_and_windows_paths() {

@@ -11,6 +11,7 @@
   import { api, confirmDialog, copyText } from "$lib/api";
   import { t, userText } from "$lib/i18n";
   import { runnerKey } from "$lib/format";
+  import Icon from "./Icon.svelte";
 
   let { game, onclose, onsaved }: { game: GameView; onclose: () => void; onsaved: () => void } = $props();
 
@@ -328,7 +329,7 @@
           <button class="ghost" onclick={reset} disabled={working || installing}>{t("config.reset")}</button>
         {/if}
         <span class="grow"></span>
-        <button class="ghost" onclick={toShare} disabled={working || installing}>{t("config.share")}</button>
+        <button class="ghost" onclick={toShare} disabled={working || installing}><Icon name="share" /> {t("config.share")}</button>
         <button data-gamepad-back onclick={close}>{t("action.close")}</button>
         <button class="primary" onclick={save} disabled={working || installing || !dirty}>{t("config.save")}</button>
       </div>

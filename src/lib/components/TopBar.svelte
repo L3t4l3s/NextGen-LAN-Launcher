@@ -2,6 +2,11 @@
   import appIcon from "$lib/assets/app-icon.png";
   import { app, type View } from "$lib/stores/app.svelte";
   import { t } from "$lib/i18n";
+  import Icon from "./Icon.svelte";
+  import ReportDialog from "./ReportDialog.svelte";
+  import { TEST_PHASE } from "$lib/testphase";
+
+  let showReport = $state(false);
 
   const allTabs: { id: View; label: string; count?: () => number }[] = [
     { id: "library", label: "nav.library" },
@@ -34,9 +39,16 @@
   </nav>
 
   <div class="right">
+    {#if TEST_PHASE}
+      <button class="tab" onclick={() => (showReport = true)} title={t("report.launcher_hint")}><Icon name="bug" /> {t("report.launcher")}</button>
+    {/if}
     <button class:active={app.view === "settings"} class="tab" onclick={() => (app.view = "settings")}>⚙ {t("nav.settings")}</button>
   </div>
 </header>
+
+{#if showReport}
+  <ReportDialog title={t("app.title")} onclose={() => (showReport = false)} />
+{/if}
 
 <style>
   header {
