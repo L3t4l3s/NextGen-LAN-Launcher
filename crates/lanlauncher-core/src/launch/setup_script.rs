@@ -88,6 +88,12 @@ pub enum Reason {
     /// Not left out: `fnr.exe` runs as the launcher's own find and replace
     /// (`launch::fnr`), the line stays as it was otherwise.
     FindAndReplace,
+    /// Not left out: the profile adds arguments to a program the line
+    /// starts (`[[script_args]]`).
+    Arguments,
+    /// A `[[script_args]]` entry whose program the script never starts as a
+    /// command; its line is 0.
+    ArgumentsUnused,
 }
 
 /// Written into a `rem` line that may stand inside an `if` block, so it holds
@@ -105,6 +111,10 @@ impl std::fmt::Display for Reason {
             Reason::NotInWine(tool) => write!(f, "{tool} does not exist in Wine"),
             Reason::OutsideGame(program) => write!(f, "\"{program}\" is outside the game folder"),
             Reason::FindAndReplace => f.write_str("fnr.exe runs as the launcher's own"),
+            Reason::Arguments => f.write_str("arguments from the game's profile"),
+            Reason::ArgumentsUnused => {
+                f.write_str("the profile's arguments found no such program in the script")
+            }
         }
     }
 }
@@ -489,11 +499,10 @@ fn neutralize_piece(piece: &[u8], out: &mut Vec<u8>, first: &mut Option<Reason>)
     }
 }
 
-/// `line` with every `fnr.exe` where a command begins — the old ETI
-/// launcher's copy or one in the game's folder — replaced by
-/// `"%NLL_FNR%"` (`launch::fnr`), its arguments as they were. `None` when
-/// the line calls none.
-fn swap_fnr(line: &[u8]) -> Option<Vec<u8>> {
+/// Where in `line` a program `wanted` (by its [`base_name`]) begins a
+/// command, as byte ranges of the word that names it: in every block and
+/// after every operator, never as an argument.
+fn command_spans(line: &[u8], wanted: impl Fn(&str) -> bool) -> Vec<(usize, usize)> {
     let mut spans = Vec::new();
     let mut start = 0;
     let parentheses = block_parentheses(line);
@@ -504,10 +513,11 @@ fn swap_fnr(line: &[u8]) -> Option<Vec<u8>> {
             if is_command {
                 for (at, word, command_position) in command_words(part) {
                     // Positions are bytes, the word's length is its text's:
-                    // the two agree for ASCII, which every path to fnr is.
+                    // the two agree for ASCII, which every name matched
+                    // here is.
                     if command_position
                         && word.is_ascii()
-                        && base_name(word.trim_matches('"')) == "fnr"
+                        && wanted(&base_name(word.trim_matches('"')))
                     {
                         let from = start + offset + at;
                         spans.push((from, from + word.len()));
@@ -518,6 +528,15 @@ fn swap_fnr(line: &[u8]) -> Option<Vec<u8>> {
         }
         start = end + 1;
     }
+    spans
+}
+
+/// `line` with every `fnr.exe` where a command begins — the old ETI
+/// launcher's copy or one in the game's folder — replaced by
+/// `"%NLL_FNR%"` (`launch::fnr`), its arguments as they were. `None` when
+/// the line calls none.
+fn swap_fnr(line: &[u8]) -> Option<Vec<u8>> {
+    let spans = command_spans(line, |name| name == "fnr");
     if spans.is_empty() {
         return None;
     }
@@ -530,6 +549,82 @@ fn swap_fnr(line: &[u8]) -> Option<Vec<u8>> {
     }
     out.extend_from_slice(&line[at..]);
     Some(out)
+}
+
+/// `line` with a profile's arguments right after each program they belong
+/// to (`wanted`: base name and the arguments as one string), where it
+/// begins a command; the line's own arguments follow them. `None` when the
+/// line calls none of them; `found` notes which entries matched.
+fn add_arguments(line: &[u8], wanted: &[(String, String)], found: &mut [bool]) -> Option<Vec<u8>> {
+    let mut inserts = Vec::new();
+    for ((name, args), seen) in wanted.iter().zip(found.iter_mut()) {
+        for (_, to) in command_spans(line, |base| base == name) {
+            inserts.push((to, args.as_str()));
+            *seen = true;
+        }
+    }
+    if inserts.is_empty() {
+        return None;
+    }
+    inserts.sort_by_key(|(to, _)| *to);
+    let mut out = Vec::with_capacity(line.len() + 32);
+    let mut at = 0;
+    for (to, args) in inserts {
+        out.extend_from_slice(&line[at..to]);
+        out.push(b' ');
+        out.extend_from_slice(args.as_bytes());
+        at = to;
+    }
+    out.extend_from_slice(&line[at..]);
+    Some(out)
+}
+
+/// `filtered` with a profile's arguments added ([`add_arguments`]). Each
+/// line that got some is noted with [`Reason::Arguments`] — the list is of
+/// lines that did not run as written, not only of lines left out — and
+/// each entry that matched no line with [`Reason::ArgumentsUnused`] (line
+/// 0), so a profile written for another form of the script says so.
+fn with_arguments(filtered: Filtered, extra: &[crate::manifest::ScriptArgs]) -> Filtered {
+    if extra.is_empty() {
+        return filtered;
+    }
+    let wanted: Vec<(String, String)> = extra
+        .iter()
+        .map(|e| (base_name(&e.exe), e.args.join(" ")))
+        .collect();
+    let mut found = vec![false; wanted.len()];
+    let Filtered { bytes, mut skipped } = filtered;
+    let mut out = Vec::with_capacity(bytes.len());
+    for (index, raw) in bytes.split_inclusive(|b| *b == b'\n').enumerate() {
+        match add_arguments(raw, &wanted, &mut found) {
+            Some(line) => {
+                out.extend_from_slice(&line);
+                let text = String::from_utf8_lossy(&line);
+                skipped.push(Skipped {
+                    line: index + 1,
+                    text: text.trim_end_matches(['\r', '\n']).to_string(),
+                    reason: Reason::Arguments,
+                    inline: true,
+                });
+            }
+            None => out.extend_from_slice(raw),
+        }
+    }
+    for (entry, seen) in extra.iter().zip(&found) {
+        if !seen {
+            skipped.push(Skipped {
+                line: 0,
+                text: entry.exe.clone(),
+                reason: Reason::ArgumentsUnused,
+                inline: true,
+            });
+        }
+    }
+    skipped.sort_by_key(|s| s.line);
+    Filtered {
+        bytes: out,
+        skipped,
+    }
 }
 
 /// `content` with every refused command replaced by `ver>nul`, every block
@@ -677,13 +772,15 @@ pub fn env(script: Script, share_dir: &Path, player: &str) -> [(String, String);
 /// folder, and say which lines were left out; the runner needs [`env`]
 /// besides. `None` when there is nothing to run: no such script, or — for
 /// [`Script::Preparation`] — no part before the game's start that can run on
-/// its own. `game_exes` names what starts the game ([`game_exes`]).
+/// its own. `game_exes` names what starts the game ([`game_exes`]); `extra`
+/// is what the profile adds to the start script's programs.
 pub fn prepare(
     paths: &crate::paths::GamePaths,
     script: Script,
     game_id: &str,
     lang: &str,
     game_exes: &[String],
+    extra: &[crate::manifest::ScriptArgs],
 ) -> std::io::Result<Option<Vec<Skipped>>> {
     let Some(source) = script.source(paths) else {
         return Ok(None);
@@ -700,7 +797,10 @@ pub fn prepare(
         },
         Script::Setup | Script::Start | Script::Settings => text,
     };
-    let filtered = filter(&text);
+    let filtered = match script {
+        Script::Start => with_arguments(filter(&text), extra),
+        Script::Setup | Script::Preparation | Script::Settings => filter(&text),
+    };
     write_if_changed(
         &paths.share_dir.join(script.filtered_name()),
         &filtered.bytes,
@@ -802,6 +902,81 @@ fn starts_one_of(content: &[u8], names: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn args(exe: &str, words: &[&str]) -> crate::manifest::ScriptArgs {
+        crate::manifest::ScriptArgs {
+            exe: exe.into(),
+            args: words.iter().map(|w| w.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_profile_adds_arguments_where_the_script_starts_the_program() {
+        // AoE II's menu: each choice starts one program from its folder.
+        let script = b"set /P wahl=Auswahl:  \r\n\
+            if /i \"%wahl%\"==\"2\" goto:Classic\r\n\
+            :Classic\r\n\
+            cd local\r\n\
+            \"empires2.exe\"\r\n\
+            AGE2_X1.EXE -multiple & echo done\r\n\
+            if exist empires2.exe (start \"\" /wait empires2.exe)\r\n\
+            echo empires2.exe\r\n\
+            \"AoK HD.exe\"\r\n";
+        let extra = [
+            args("empires2.exe", &["NOSTARTUP"]),
+            args("age2_x1", &["NOSTARTUP"]),
+        ];
+        let out = with_arguments(filter(script), &extra);
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(text.contains("\"empires2.exe\" NOSTARTUP\r\n"), "{text}");
+        assert!(
+            text.contains("AGE2_X1.EXE NOSTARTUP -multiple & echo done"),
+            "{text}"
+        );
+        // An argument (`if exist`, `echo`) is not a start — and neither, for
+        // now, is what `start` runs: documented on `ScriptArgs::exe`.
+        assert!(text.contains("echo empires2.exe\r\n"), "{text}");
+        assert!(
+            text.contains("(start \"\" /wait empires2.exe)\r\n"),
+            "{text}"
+        );
+        assert!(text.contains("\"AoK HD.exe\"\r\n"), "{text}");
+        let noted: Vec<usize> = out
+            .skipped
+            .iter()
+            .filter(|s| s.reason == Reason::Arguments)
+            .map(|s| s.line)
+            .collect();
+        assert_eq!(noted, [5, 6]);
+        assert!(!out
+            .skipped
+            .iter()
+            .any(|s| s.reason == Reason::ArgumentsUnused));
+
+        // An entry the script never starts says so.
+        let out = with_arguments(filter(script), &[args("age2_x2.exe", &["NOSTARTUP"])]);
+        assert!(out
+            .skipped
+            .iter()
+            .any(|s| s.reason == Reason::ArgumentsUnused && s.text == "age2_x2.exe"));
+    }
+
+    #[test]
+    fn nothing_changes_without_arguments_in_the_profile() {
+        let script = b"\"empires2.exe\"\r\n";
+        assert_eq!(with_arguments(filter(script), &[]).bytes, script.to_vec());
+    }
+
+    #[test]
+    fn profile_arguments_are_plain_words_only() {
+        assert!(args("empires2.exe", &["NOSTARTUP"]).check().is_ok());
+        assert!(args("AoK HD.exe", &["-w", "x=1"]).check().is_ok());
+        for bad in ["a&b", "%x%", "!x!", "(x)", "a|b", "\"x\"", ""] {
+            assert!(args("empires2.exe", &[bad]).check().is_err(), "{bad}");
+        }
+        assert!(args("..\\x.exe", &["A"]).check().is_err());
+        assert!(args("empires2.exe", &[]).check().is_err());
+    }
 
     fn text(filtered: &Filtered) -> String {
         String::from_utf8(filtered.bytes.clone()).unwrap()
@@ -1074,12 +1249,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = crate::paths::GamePaths::new(dir.path(), "demo");
         assert_eq!(
-            prepare(&paths, Script::Setup, "demo", "de", &[]).unwrap(),
+            prepare(&paths, Script::Setup, "demo", "de", &[], &[]).unwrap(),
             None
         );
         std::fs::create_dir_all(&paths.share_dir).unwrap();
         std::fs::write(&paths.setup_script, "cd /d \"%~dp0\"\r\ntimeout 5\r\n").unwrap();
-        let skipped = prepare(&paths, Script::Setup, "demo", "de", &[])
+        let skipped = prepare(&paths, Script::Setup, "demo", "de", &[], &[])
             .unwrap()
             .unwrap();
         assert_eq!(skipped.len(), 1);
@@ -1161,7 +1336,7 @@ mod tests {
         std::fs::create_dir_all(&paths.share_dir).unwrap();
         std::fs::write(&paths.start_script, UT_SHAPE).unwrap();
         let names = game_exes(UT_SHAPE, None);
-        let skipped = prepare(&paths, Script::Preparation, "demo", "de", &names)
+        let skipped = prepare(&paths, Script::Preparation, "demo", "de", &names, &[])
             .unwrap()
             .unwrap();
         // fnr for language and name, and the firewall rule before the game.
@@ -1177,7 +1352,15 @@ mod tests {
         let copy = std::fs::read_to_string(paths.share_dir.join(".nll-prep.cmd")).unwrap();
         assert!(copy.ends_with("cd system\r\n"));
         assert_eq!(
-            prepare(&paths, Script::Preparation, "demo", "de", &["x".into()]).unwrap(),
+            prepare(
+                &paths,
+                Script::Preparation,
+                "demo",
+                "de",
+                &["x".into()],
+                &[]
+            )
+            .unwrap(),
             None
         );
     }

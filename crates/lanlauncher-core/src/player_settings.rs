@@ -30,6 +30,12 @@
 //! registry = 'HKCU\Software\Blizzard Entertainment\Warcraft III\String'
 //! key = "userlocal"
 //! value = "%player%"
+//!
+//! [[settings]]                 # a DWORD, decimal or 0x…: a licence
+//! registry = 'HKCU\Software\Microsoft\Microsoft Games\Age of Empires II: The Conquerors Expansion\1.0\EULA'
+//! key = "FIRSTRUN"             # dialog the game would otherwise show
+//! type = "dword"               # behind its full-screen window
+//! value = "1"
 //! ```
 //!
 //! `value` is text (`%player%`, `%game_lang%` filled in) or one per game
@@ -57,6 +63,46 @@ pub struct PlayerSetting {
     pub registry: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<SettingValue>,
+    /// A registry value's type; text when not given.
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub reg_type: Option<RegType>,
+}
+
+/// The registry types a profile can set.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RegType {
+    /// `REG_SZ`.
+    #[default]
+    Sz,
+    /// `REG_DWORD`: a number, decimal or `0x…`, as `reg add` takes it.
+    Dword,
+}
+
+impl RegType {
+    pub fn reg_name(self) -> &'static str {
+        match self {
+            RegType::Sz => "REG_SZ",
+            RegType::Dword => "REG_DWORD",
+        }
+    }
+}
+
+/// A DWORD as `reg add` takes it: decimal or `0x` hex, 32 bits.
+/// Digits only: Rust's parsers take a leading `+`, `reg add` does not.
+fn is_dword(text: &str) -> bool {
+    match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        Some(hex) => {
+            !hex.is_empty()
+                && hex.chars().all(|c| c.is_ascii_hexdigit())
+                && u32::from_str_radix(hex, 16).is_ok()
+        }
+        None => {
+            !text.is_empty()
+                && text.chars().all(|c| c.is_ascii_digit())
+                && text.parse::<u32>().is_ok()
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,6 +145,19 @@ impl PlayerSetting {
         // A value goes between quotes into a config line or a batch.
         if quoted {
             return Err("settings: a value must not hold a double quote");
+        }
+        if self.reg_type.is_some() && self.registry.is_none() {
+            return Err("settings: type is for registry values");
+        }
+        if self.reg_type == Some(RegType::Dword) {
+            let numbers = match &self.value {
+                Some(SettingValue::Text(text)) => is_dword(text),
+                Some(SettingValue::ByLanguage(by)) => by.values().all(|v| is_dword(v)),
+                None => false,
+            };
+            if !numbers {
+                return Err("settings: a dword value must be a number (decimal or 0x…)");
+            }
         }
         match (
             self.file.as_deref(),
@@ -189,6 +248,7 @@ pub struct RegistryValue {
     pub key: String,
     pub name: String,
     pub value: String,
+    pub reg_type: RegType,
 }
 
 /// macOS/Linux: the batch that sets `values` in the game's prefix, written
@@ -211,8 +271,10 @@ pub fn write_registry_script(
     for (i, v) in values.iter().enumerate() {
         let var = format!("NLL_VALUE_{i}");
         script.push_str(&format!(
-            "reg add \"{}\" /v \"{}\" /t REG_SZ /d \"!{var}!\" /f\r\n",
-            v.key, v.name
+            "reg add \"{}\" /v \"{}\" /t {} /d \"!{var}!\" /f\r\n",
+            v.key,
+            v.name,
+            v.reg_type.reg_name()
         ));
         env.push((var, v.value.clone()));
     }
@@ -253,6 +315,7 @@ pub fn apply(
                     key: key.to_string(),
                     name: name.to_string(),
                     value,
+                    reg_type: setting.reg_type.unwrap_or_default(),
                 });
                 continue;
             }
@@ -647,6 +710,58 @@ fn find_files(dir: &Path, depth: usize, wanted: impl Fn(&str) -> bool + Copy) ->
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_dword_is_a_number_and_reaches_the_batch_as_one() {
+        let dword = |value: &str| PlayerSetting {
+            registry: Some("HKCU\\Software\\Game\\1.0\\EULA".into()),
+            key: Some("FIRSTRUN".into()),
+            reg_type: Some(RegType::Dword),
+            value: Some(SettingValue::Text(value.into())),
+            ..Default::default()
+        };
+        for good in ["1", "0", "4294967295", "0x1", "0XFF"] {
+            assert!(dword(good).kind().is_ok(), "{good}");
+        }
+        for bad in [
+            "",
+            "-1",
+            "+1",
+            "0x+1",
+            "4294967296",
+            "0x",
+            "%player%",
+            "1 & x",
+        ] {
+            assert!(dword(bad).kind().is_err(), "{bad}");
+        }
+        let in_a_file = PlayerSetting {
+            file: Some("a.ini".into()),
+            key: Some("k".into()),
+            reg_type: Some(RegType::Dword),
+            value: Some(SettingValue::Text("1".into())),
+            ..Default::default()
+        };
+        assert!(in_a_file.kind().is_err());
+
+        let player = Player {
+            name: "Jürgen".into(),
+            lang: "de".into(),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let (_, registry) = apply(dir.path(), &[dword("1")], &player);
+        assert_eq!(registry[0].reg_type, RegType::Dword);
+        write_registry_script(dir.path(), "aoe3", "de", &registry).unwrap();
+        let batch = std::fs::read_to_string(
+            dir.path()
+                .join(crate::launch::setup_script::Script::Settings.filtered_name()),
+        )
+        .unwrap();
+        assert!(
+            batch.contains("/v \"FIRSTRUN\" /t REG_DWORD /d \"!NLL_VALUE_0!\" /f"),
+            "{batch}"
+        );
+    }
+
     fn player() -> Player {
         Player {
             name: "Jürgen".into(),
@@ -759,6 +874,7 @@ mod tests {
                 key: "HKCU\\Software\\Blizzard Entertainment\\Warcraft III\\String".into(),
                 name: "userlocal".into(),
                 value: "Jürgen".into(),
+                reg_type: RegType::Sz,
             }]
         );
     }

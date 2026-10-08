@@ -162,6 +162,53 @@ pub struct Manifest {
     /// every start on every platform (`player_settings`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub settings: Vec<crate::player_settings::PlayerSetting>,
+    /// Arguments added where the game's start script calls a program, on
+    /// macOS and Linux, where the script runs filtered in the prefix
+    /// (`launch::setup_script`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub script_args: Vec<ScriptArgs>,
+}
+
+/// `[[script_args]]`: what the start script's call of `exe` gets added.
+/// AoE II's classic programs, for one, wait behind their full-screen window
+/// on an error about intro videos Wine cannot play, unless started with
+/// `NOSTARTUP`; the script's menu of which program to start stays.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ScriptArgs {
+    /// The program's file name (`empires2.exe`), matched in any case and
+    /// with or without its extension against what the script calls —
+    /// wherever that lies (`age2_x1\age2_x1.exe` matches `age2_x1.exe`).
+    /// A program counts where the script starts it as a command: first on
+    /// its line, after `&`/`|`, inside a block, after `do`/`else` — not
+    /// behind `if …`, `start` or `call`; the log says when an entry found
+    /// nothing.
+    pub exe: String,
+    pub args: Vec<String>,
+}
+
+impl ScriptArgs {
+    /// Written into a batch file: a file name and plain words only, nothing
+    /// cmd would read as an operator, a variable or a block.
+    pub fn check(&self) -> std::result::Result<(), &'static str> {
+        let name_ok = !self.exe.is_empty()
+            && self
+                .exe
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "._- ".contains(c));
+        if !name_ok {
+            return Err("script_args.exe must be a plain file name");
+        }
+        let word_ok = |a: &String| {
+            !a.is_empty()
+                && a.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-_+/.:=,".contains(c))
+        };
+        if self.args.is_empty() || !self.args.iter().all(word_ok) {
+            return Err("script_args.args must be plain words");
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -242,6 +289,7 @@ impl Default for Manifest {
             setup: SetupSpec::default(),
             platform: BTreeMap::new(),
             settings: Vec::new(),
+            script_args: Vec::new(),
         }
     }
 }
@@ -332,6 +380,23 @@ impl Manifest {
         }
         if let Some(bad) = self.settings.iter().find_map(|s| s.kind().err()) {
             return Err(err(bad));
+        }
+        if let Some(bad) = self.script_args.iter().find_map(|a| a.check().err()) {
+            return Err(err(bad));
+        }
+        let mut names: Vec<String> = self
+            .script_args
+            .iter()
+            .map(|a| {
+                a.exe
+                    .to_ascii_lowercase()
+                    .trim_end_matches(".exe")
+                    .to_string()
+            })
+            .collect();
+        names.sort();
+        if names.windows(2).any(|w| w[0] == w[1]) {
+            return Err(err("script_args: one entry per program"));
         }
         // A working folder may be `local/` itself, but never outside it.
         // A trailing separator (`bin/`) is the same folder.

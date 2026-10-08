@@ -285,6 +285,21 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   `SmartSteamEmu.ini`: `[SmartSteamEmu] PersonaName/Language`). Fehlt die Sprache in der Tabelle
   eines Profils, bleibt der Wert stehen. Der Ort, wo ein Spiel den Namen liest, steht oft woanders,
   als das ETI-Skript schreibt (UT2004 `User.ini`), also am Paket nachsehen, nicht abschreiben.
+  Registry-Werte als Text oder `type = "dword"` (Zahl, beim Laden geprüft). Lizenzdialoge alter
+  Microsoft-Spiele schreiben beim Annehmen ein DWORD `FIRSTRUN=1` (AoE III unter
+  `…\Age of Empires 3 Expansion Pack 2\1.0`, AoE II Conquerors unter `…\1.0\EULA`; bei AoE III
+  beidseitig geprüft) — gesetzt vorab, erscheint der Dialog nicht, der sonst gern hinter dem
+  Vollbild hängt. Herausfinden: `user.reg`/`system.reg` des Prefix vor und nach dem Klick
+  vergleichen (der Wineserver schreibt die Dateien erst beim Beenden bzw. zeitverzögert).
+- **Argumente im Startskript (`[[script_args]]`):** Ein Profil ohne eigene Startdatei kann
+  Programmen, die das Startskript *als Befehl* aufruft, Argumente anhängen
+  (`setup_script::with_arguments`, gleiche Befehlsposition-Erkennung wie der fnr-Tausch,
+  `command_spans`). Nur reine Wörter (`ScriptArgs::check`), sie landen in einer Batchdatei.
+  Anlass: AoE II Classic spielt Intro-Videos in VP7, Wines MCI zeigt einen Fehler hinter dem
+  Vollbild, das Spiel wartet — `NOSTARTUP` lässt die Videos aus, das Auswahlmenü bleibt.
+  Ein Klick unter Wayland lässt sich hier nicht simulieren (`xdotool` erreicht Xwayland-Fenster
+  der Sitzung nicht); ein eigenes `Xwayland :98 -geometry 1280x800 -decorate` mit
+  `DISPLAY=:98` und ohne `WAYLAND_DISPLAY` nimmt Klicks an.
 - **Setup-Skripte lesen:** `launch::windows::missing_paths` folgt einem ETI-Skript wie cmd:
   `set`-Variablen, `cd`/`pushd` (`%~dp0` = Spielordner), Programme relativ zum aktuellen Ordner,
   bloße Namen über den `PATH` (sonst gilt `reg.exe` als fehlend), `md` angelegte Ordner, `if`/

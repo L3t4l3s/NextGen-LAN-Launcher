@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Age of Empires II Classic (Menüpunkte 2–4) startet unter macOS/Linux ins Menü statt ins
+  Schwarze.** Die Intro-Videos nutzen einen Codec, den Wine nicht hat (VP7); die Fehlermeldung
+  dazu öffnete sich hinter dem Vollbild, und das Spiel wartete darauf. Die drei Classic-Programme
+  starten jetzt mit `NOSTARTUP` (ohne Intro), das Auswahlmenü des Startskripts bleibt. Profile
+  können dafür Programmen im Startskript Argumente anhängen (`[[script_args]]`).
+- **Keine Lizenzdialoge mehr bei Age of Empires II: The Conquerors / Forgotten Empires und
+  Age of Empires III.** Der Launcher setzt vorab den Registry-Wert, den das Annehmen schreibt,
+  auf allen Plattformen; Profile können dafür jetzt auch DWORD-Werte setzen (`type = "dword"`).
 - **Linux (AppImage): Die Oberfläche verschwindet nicht mehr beim Emoji-Menü im Chat.** Fedora 44
   (und damit Bazzite) liefert seine Farb-Emojis als COLRv1-Schrift; die Web-Engine im AppImage
   stürzte beim Zeichnen eines solchen Emojis ab, und das Fenster blieb bis zu einem Neustart

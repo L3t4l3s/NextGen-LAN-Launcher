@@ -84,7 +84,15 @@ async fn set_with_reg(game_id: &str, registry: Vec<RegistryValue>) {
             launch::elevate::hide_window_std(&mut reg);
             let status = reg
                 .args([
-                    "add", &v.key, "/v", &v.name, "/t", "REG_SZ", "/d", &v.value, "/f",
+                    "add",
+                    &v.key,
+                    "/v",
+                    &v.name,
+                    "/t",
+                    v.reg_type.reg_name(),
+                    "/d",
+                    &v.value,
+                    "/f",
                 ])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())

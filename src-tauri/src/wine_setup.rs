@@ -170,7 +170,7 @@ pub(crate) async fn start(
     let prepared = {
         let (paths, game_id) = (paths.clone(), game_id.to_string());
         tauri::async_runtime::spawn_blocking(move || {
-            setup_script::prepare(&paths, Script::Setup, &game_id, &lang, &[])
+            setup_script::prepare(&paths, Script::Setup, &game_id, &lang, &[], &[])
                 .map_err(|e| format!("err.setup_write|{}: {e}", paths.share_dir.display()))
         })
         .await
@@ -466,6 +466,8 @@ fn log_skipped(game_id: &str, what: &str, skipped: &[Skipped]) {
     for s in skipped {
         let done = match (&s.reason, s.inline) {
             (setup_script::Reason::FindAndReplace, _) => "kept",
+            (setup_script::Reason::Arguments, _) => "arguments added",
+            (setup_script::Reason::ArgumentsUnused, _) => "not applied",
             (_, true) => "command replaced by ver>nul",
             (_, false) => "skipped",
         };
@@ -486,12 +488,13 @@ pub(crate) async fn prepare_start(
     game_id: &str,
     paths: &GamePaths,
     plan: &mut LaunchPlan,
+    extra: Vec<lanlauncher_core::manifest::ScriptArgs>,
 ) -> Result<(), String> {
     let lang = state.settings.read().await.game_language.clone();
     let prepared = {
         let (paths, game_id) = (paths.clone(), game_id.to_string());
         tauri::async_runtime::spawn_blocking(move || {
-            setup_script::prepare(&paths, Script::Start, &game_id, &lang, &[])
+            setup_script::prepare(&paths, Script::Start, &game_id, &lang, &[], &extra)
                 .map_err(|e| format!("err.start_write|{}: {e}", paths.share_dir.display()))
         })
         .await
@@ -565,7 +568,7 @@ pub(crate) async fn run_preparation(
         tauri::async_runtime::spawn_blocking(move || {
             let script = std::fs::read_to_string(&paths.start_script).unwrap_or_default();
             let names = setup_script::game_exes(&script, exe.as_deref());
-            setup_script::prepare(&paths, Script::Preparation, &game_id, &lang, &names)
+            setup_script::prepare(&paths, Script::Preparation, &game_id, &lang, &names, &[])
         })
         .await
         .map_err(std::io::Error::other)

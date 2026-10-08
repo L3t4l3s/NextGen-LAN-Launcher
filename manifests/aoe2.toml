@@ -1,0 +1,38 @@
+schema = 1
+id = "aoe2"
+title = "Age of Empires II"
+revisions = ["20240623"]
+source = "Checked with Proton 11 on Linux against the package's game_start.cmd"
+
+[launch]
+# The package's start script asks which edition to start (HD, Classic, The
+# Conquerors, Forgotten Empires); it keeps doing so, this file only adds
+# what was learned about running it.
+exe = ""
+args = []
+
+# The classic programs play their intro videos in On2 VP7, a codec Wine does
+# not have. The error about it opens behind the full-screen window and the
+# game waits on it: a black screen with a mouse pointer. NOSTARTUP leaves the
+# videos out (checked: the German main menu comes up at once).
+[[script_args]]
+exe = "empires2.exe"
+args = ["NOSTARTUP"]
+
+[[script_args]]
+exe = "age2_x1.exe"
+args = ["NOSTARTUP"]
+
+[[script_args]]
+exe = "age2_x2.exe"
+args = ["NOSTARTUP"]
+
+# The Conquerors (and Forgotten Empires, which reads the same key) ask for
+# their licence on the first start, a dialog that can open behind the
+# full-screen window. Accepting it sets this value (seen in the registry);
+# set beforehand, the game starts straight away.
+[[settings]]
+registry = 'HKCU\Software\Microsoft\Microsoft Games\Age of Empires II: The Conquerors Expansion\1.0\EULA'
+key = "FIRSTRUN"
+type = "dword"
+value = "1"

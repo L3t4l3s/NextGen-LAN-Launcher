@@ -1,0 +1,20 @@
+schema = 1
+id = "aoe3"
+title = "Age of Empires III"
+revisions = ["20170105"]
+source = "Checked with Proton 11 on Linux against the package's game_start.cmd"
+
+[launch]
+# The package's start script starts the game through SmartSteamLoader; it
+# keeps doing so, this file only adds what was learned about running it.
+exe = ""
+args = []
+
+# The Asian Dynasties asks for its licence on the first start of every
+# prefix. Accepting it sets this value; checked both ways with Proton 11:
+# without it the dialog comes, with it the game starts straight away.
+[[settings]]
+registry = 'HKCU\Software\Microsoft\Microsoft Games\Age of Empires 3 Expansion Pack 2\1.0'
+key = "FIRSTRUN"
+type = "dword"
+value = "1"

@@ -792,7 +792,12 @@ pub async fn play_game(
         // what it prepares before a profile's executable starts.
         if let Some(paths) = &paths {
             if launch::unix::is_script_start(&plan) {
-                crate::wine_setup::prepare_start(state.inner(), &game_id, paths, &mut plan).await?;
+                let extra = manifest
+                    .as_ref()
+                    .map(|m| m.script_args.clone())
+                    .unwrap_or_default();
+                crate::wine_setup::prepare_start(state.inner(), &game_id, paths, &mut plan, extra)
+                    .await?;
             } else if let Some(preparation) = preparation {
                 crate::wine_setup::run_preparation(state.inner(), &game_id, paths, preparation)
                     .await?;

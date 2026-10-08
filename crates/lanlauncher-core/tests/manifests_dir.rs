@@ -16,13 +16,17 @@ fn bundled_manifests_are_valid() {
         let m = Manifest::parse(&text, &path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         let stem = path.file_stem().unwrap().to_string_lossy();
         assert_eq!(m.id, stem, "manifest id must match file name");
-        // A manifest without an entry point is guidance only: no verified
-        // executable, but setup notes worth showing. Everything else must name
-        // what to start and what proves the extraction complete.
+        // A manifest without an entry point starts through the game's own
+        // script: no verified executable, but setup notes worth showing,
+        // arguments for the script's programs or the player's settings.
+        // Everything else must name what to start and what proves the
+        // extraction complete.
         if m.launch.exe.is_empty() {
+            let notes = m.setup.notes.contains_key("de") && m.setup.notes.contains_key("en");
             assert!(
-                m.setup.notes.contains_key("de") && m.setup.notes.contains_key("en"),
-                "{}: no launch.exe and no setup notes — nothing this manifest could add",
+                notes || !m.script_args.is_empty() || !m.settings.is_empty(),
+                "{}: no launch.exe, no setup notes, no script arguments, no settings — \
+                 nothing this manifest could add",
                 path.display()
             );
         } else {

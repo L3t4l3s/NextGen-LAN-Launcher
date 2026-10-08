@@ -161,6 +161,18 @@ value = { de = "german", en = "english", fr = "french" }   # a missing language 
 registry = 'HKCU\Software\Blizzard Entertainment\Warcraft III\String'
 key = "userlocal"
 value = "%player%"
+
+[[settings]]                           # a DWORD (decimal or 0x…), here an accepted licence
+registry = 'HKCU\Software\Microsoft\Microsoft Games\Age of Empires 3 Expansion Pack 2\1.0'
+key = "FIRSTRUN"
+type = "dword"
+value = "1"
+
+# macOS/Linux, where the start script runs filtered in the prefix: arguments
+# added where the script starts a program (as a command, not as an argument).
+[[script_args]]
+exe = "empires2.exe"                   # file name, any case, with or without .exe
+args = ["NOSTARTUP"]                   # plain words only
 ```
 
 Files keep their encoding (a byte order mark says it, valid UTF-8 beyond ASCII says UTF-8, anything
