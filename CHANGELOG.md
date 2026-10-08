@@ -12,7 +12,7 @@
   zusätzlich zum ETI-Startskript, das das nicht immer richtig macht (Unreal Tournament 2004:
   `User.ini` statt `UT2004.ini`). Spiele mit den Steam-Emulatoren Goldberg und SmartSteamEmu
   (Counter-Strike: Source, Counter-Strike 1.6, Age of Empires II und III und viele mehr) bekommen
-  das ohne eigenes Profil; Call of Duty 2 bekommt sein Spielerprofil vorab, Warcraft III den
+  das ohne eigenes Profil; Call of Duty 2 bekommt sein Spielerprofil vorab, Quake 3 den Namen, Warcraft III den
   LAN-Namen. Profile können das künftig für weitere Spiele angeben. Fehlt einem Paket eine Sprache,
   bleibt es, wie es ist.
 - Pfade aus ETI-Skripten werden unter Linux auch in anderer Groß-/Kleinschreibung gefunden; die
