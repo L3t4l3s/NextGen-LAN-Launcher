@@ -1048,6 +1048,16 @@ mod tests {
             child.wait().unwrap();
         };
         assert!(!prefix_in_use(&wine(prefix.clone())));
+        // A process just spawned is not always in the process table at once
+        // on a busy machine (CI): asked again for up to two seconds.
+        let soon = |target: &Target| {
+            (0..20).any(|_| {
+                prefix_in_use(target) || {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    false
+                }
+            })
+        };
 
         let relative = std::process::Command::new("sleep")
             .arg("30")
@@ -1055,7 +1065,7 @@ mod tests {
             .env("WINEPREFIX", "pfx")
             .spawn()
             .unwrap();
-        let in_use = prefix_in_use(&wine(prefix.clone()));
+        let in_use = soon(&wine(prefix.clone()));
         stop(relative);
         assert!(in_use, "relative to where the game runs");
 
@@ -1064,7 +1074,7 @@ mod tests {
             "WINEPREFIX",
             format!("{}/", prefix.display()),
         );
-        let in_use = prefix_in_use(&wine(prefix.clone()));
+        let in_use = soon(&wine(prefix.clone()));
         let other = prefix_in_use(&wine(tmp.path().join("other")));
         stop(game);
         assert!(in_use);
@@ -1084,7 +1094,7 @@ mod tests {
             "STEAM_COMPAT_DATA_PATH",
             compat.display().to_string(),
         );
-        let in_use = prefix_in_use(&proton);
+        let in_use = soon(&proton);
         stop(starting);
         assert!(in_use, "proton itself carries only the compat folder");
 

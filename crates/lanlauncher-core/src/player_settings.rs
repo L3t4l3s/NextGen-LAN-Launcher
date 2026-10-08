@@ -549,6 +549,20 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>) 
                 goldberg.push(set_inside(local, settings.join(name), &kind, value, true));
             }
         }
+        // Packages that run Goldberg in its local-save mode (Left 4 Dead 2,
+        // Counter-Strike: Source) carry its user settings in `settings/`
+        // next to the DLL: those are set too, where the package has them.
+        let local_save = dir.join("settings");
+        for (name, value) in [
+            ("account_name.txt", Some(player.name.as_str())),
+            ("language.txt", language),
+        ] {
+            let path = local_save.join(name);
+            if let (Some(value), true) = (value, path.is_file()) {
+                let kind = Kind::WholeFile { file: name };
+                goldberg.push(set_inside(local, path, &kind, value, true));
+            }
+        }
     }
     for ini in found.iter().filter(|path| is_ini(path)) {
         for (key, value) in [
@@ -824,8 +838,16 @@ mod tests {
             b"MZ...another emulator",
         )
         .unwrap();
+        // Local-save mode: its settings files are set where they are.
+        std::fs::create_dir_all(bin.join("settings")).unwrap();
+        std::fs::write(bin.join("settings/account_name.txt"), "ChangeMe").unwrap();
         let done = goldberg(tmp.path(), &player());
-        assert_eq!(done.len(), 2);
+        assert_eq!(done.len(), 3);
+        assert_eq!(
+            std::fs::read(bin.join("settings/account_name.txt")).unwrap(),
+            "Jürgen".as_bytes()
+        );
+        assert!(!bin.join("settings/language.txt").exists());
         assert_eq!(
             std::fs::read(bin.join("steam_settings/force_account_name.txt")).unwrap(),
             "Jürgen".as_bytes()
