@@ -38,5 +38,6 @@ runner = "crossover"
 [setup]
 # The root SmartSteamEmu.ini is copied next to the CS 1.6 loader, mirroring the Windows script.
 copy = [{ from = "SmartSteamEmu.ini", to = "hl-cs16/SmartSteamEmu.ini" }]
-notes.de = "Das Paket enthält CS 1.6, CS 1.5 und Half-Life; das Startskript fragt im Konsolenfenster, welches. Direkt starten CS 1.6 und Half-Life über 'Startdatei wählen'; '-game cstrike' muss als zwei Argumente übergeben werden."
-notes.en = "The package contains CS 1.6, CS 1.5 and Half-Life; the start script asks which in its console window. CS 1.6 and Half-Life start directly through 'Choose executable'; '-game cstrike' must stay two separate arguments."
+# '-game cstrike' has to be two arguments.
+notes.de = "Ohne gewählte Startdatei fragt das Konsolenfenster beim Start, welches Spiel starten soll: CS 1.6, CS 1.5 oder Half-Life. CS 1.6 und Half-Life lassen sich über „Startdatei wählen“ auch direkt starten."
+notes.en = "Without a chosen executable the console window asks at start which game to start: CS 1.6, CS 1.5 or Half-Life. CS 1.6 and Half-Life also start directly through 'Choose executable'."

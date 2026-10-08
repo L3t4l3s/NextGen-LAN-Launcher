@@ -20,5 +20,10 @@ winetricks = ["d3dx9_30"]
 runner = "crossover"
 
 [setup]
-notes.de = "Beim ersten Start auf einem Rechner (und nach einem Grafiktreiber-Wechsel) zeigt das Spiel sein Einstellungsfenster: dort Anzeigemodus mit 32 Bit und passendem Seitenverhältnis wählen, voreingestellt ist 640 × 400 × 16. Später erreichbar mit dem Argument '-setup'. Den Spielernamen fragt das Spiel beim Anlegen eines Profils ab. Ohne d3dx9_30 (unter Linux bietet der Launcher es vor dem ersten Start an, bei CrossOver die DirectX-Runtime Juni 2010 über „Software installieren“) endet das Spiel mit „Failed to create effect“. Bleibt das Spiel in einem kleinen Fenster, ist meist ein erzwungener virtueller Wine-Desktop schuld."
-notes.en = "On its first start on a machine (and after a graphics driver change) the game shows its settings window: pick a display mode with 32-bit colour and a matching aspect ratio, the default is 640 × 400 × 16. Later it opens with the argument '-setup'. The game asks for the player name when a profile is created. Without d3dx9_30 (on Linux the launcher offers it before the first start; with CrossOver, the June 2010 DirectX runtime through \"Install Software\") the game ends with \"Failed to create effect\". A game stuck in a small window usually means a forced Wine virtual desktop."
+# The game asks for the player name when a profile is made; DefaultPlayerName in
+# Savegame/options.cfg does not fill it in (checked). Its settings window comes up
+# on the first start per machine; the default 640 x 400 x 16 runs (checked).
+
+[setup.platform_notes.macos]
+de = "Vorher die DirectX-Runtime (Juni 2010) über „Software installieren“ in die Flasche installieren, sonst endet das Spiel mit „Failed to create effect“."
+en = "Install the DirectX runtime (June 2010) into the bottle through 'Install Software' first, otherwise the game ends with 'Failed to create effect'."

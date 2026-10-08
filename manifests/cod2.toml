@@ -15,8 +15,9 @@ args = []
 runner = "crossover"
 
 [setup]
-notes.de = "Unter Proton geprüft: Das Startskript startet die Mehrspieler-Datei, das Paket ist deutsch. Das Spielerprofil (players/LAN) legt der Launcher mit dem eingetragenen Namen an. Ohne Grafikkarte bleibt das Intro-Video hängen; auf CrossOver ungeprüft."
-notes.en = "Checked with Proton: the start script starts the multiplayer executable, the package is German. The launcher creates the player profile (players/LAN) with the player's name. Without a graphics card the intro movie hangs; untested on CrossOver."
+# Checked with Proton: the start script starts the multiplayer executable, the
+# package is German; the player profile (players/LAN) is made by the settings
+# below. Without a GPU (test VM) the intro video hangs; CrossOver unchecked.
 
 # The player profile Call of Duty 2 otherwise asks for at the first start
 # (players/active.txt names it, its config_mp.cfg holds the name). A fixed

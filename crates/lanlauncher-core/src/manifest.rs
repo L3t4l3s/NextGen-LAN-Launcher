@@ -110,6 +110,11 @@ pub struct SetupSpec {
     /// Human-readable notes by language.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub notes: BTreeMap<String, String>,
+    /// Notes for one platform only (`[setup.platform_notes.macos]`, by
+    /// language), shown after [`Self::notes`] there: a CrossOver step is
+    /// noise on Linux.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub platform_notes: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -391,6 +396,16 @@ impl Manifest {
             return Err(err("unsupported schema version"));
         }
         if let Some(bad) = self
+            .setup
+            .platform_notes
+            .keys()
+            .find(|p| !matches!(p.as_str(), "linux" | "macos" | "windows"))
+        {
+            return Err(err(&format!(
+                "setup.platform_notes: `{bad}` is no platform (linux, macos, windows)"
+            )));
+        }
+        if let Some(bad) = self
             .script_start_checked
             .iter()
             .find(|p| !matches!(p.as_str(), "linux" | "macos" | "windows"))
@@ -511,6 +526,18 @@ impl Manifest {
             return true;
         }
         !self.revisions.is_empty() && self.script_start_checked.iter().any(|p| p == platform)
+    }
+
+    /// The notes a player on `platform` reads, in `lang` (else English):
+    /// the general ones, then the platform's own.
+    pub fn notes_for(&self, platform: &str, lang: &str) -> Option<String> {
+        let pick = |by: &BTreeMap<String, String>| by.get(lang).or_else(|| by.get("en")).cloned();
+        let general = pick(&self.setup.notes);
+        let own = self.setup.platform_notes.get(platform).and_then(pick);
+        match (general, own) {
+            (Some(g), Some(o)) => Some(format!("{g} {o}")),
+            (g, o) => g.or(o),
+        }
     }
 
     pub fn matches_revision(&self, revision: &str) -> bool {
@@ -987,6 +1014,19 @@ mod tests {
         guessed.origin = ManifestOrigin::DerivedFromScript;
         assert!(guessed.verified_for("1", "linux"));
         assert!(parse("script_start_checked = [\"ubuntu\"]\n").is_err());
+    }
+
+    #[test]
+    fn a_platform_reads_the_general_notes_and_its_own() {
+        let m = Manifest::parse(
+            "schema = 1\nid = \"g\"\n[launch]\nexe = \"g.exe\"\n[setup]\nnotes.de = \"Alle.\"\n\
+             [setup.platform_notes.macos]\nde = \"Mac.\"\nen = \"Mac (en).\"\n",
+            Path::new("g.toml"),
+        )
+        .unwrap();
+        assert_eq!(m.notes_for("macos", "de").as_deref(), Some("Alle. Mac."));
+        assert_eq!(m.notes_for("linux", "de").as_deref(), Some("Alle."));
+        assert_eq!(m.notes_for("macos", "fr").as_deref(), Some("Mac (en)."));
     }
 
     #[test]

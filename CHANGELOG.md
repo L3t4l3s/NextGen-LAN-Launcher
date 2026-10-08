@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Klarere Hinweise in den Spieldetails.** Die Profilhinweise nennen nur noch, was ein Spieler
+  wissen muss; Technisches steht als Kommentar im Profil. Statt „Für diesen Paketstand noch nicht
+  bestätigt“ sagt der Launcher, mit welchem Paket das Profil geprüft wurde, um welches es geht und
+  wie man meldet, dass es läuft („Startkonfiguration“ → „Funktioniert – teilen“); bei einer eigenen
+  Startkonfiguration für ein älteres Paket, dass man sie zurücksetzen kann. Hinweise, die nur
+  CrossOver betreffen, erscheinen nur noch auf dem Mac (`[setup.platform_notes.macos]`).
+
 - **Geprüfte Spiele zeigen nicht mehr „Für diesen Paketstand noch nicht bestätigt“.** Profile
   ohne eigene Startdatei (CoD2, FlatOut 2, AoE II/III, GoldSrc) starten bewusst über das
   Startskript des Pakets; dieser Weg ist unter Linux geprüft und steht jetzt so im Profil

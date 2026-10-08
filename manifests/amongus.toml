@@ -13,8 +13,9 @@ required_files = ["Among Us.exe", "UnityPlayer.dll", "GameAssembly.dll"]
 runner = "crossover"
 
 [setup]
-notes.de = "Startet über Steam-Emulation ohne Account. Lokales Spiel über 'Lokal' im Hauptmenü."
-notes.en = "Runs through Steam emulation without an account. Use 'Local' in the main menu for LAN games."
+# Starts through Steam emulation, no account needed.
+notes.de = "Für ein LAN-Spiel im Hauptmenü „Lokal“ wählen."
+notes.en = "For a LAN game choose 'Local' in the main menu."
 
 # The game keeps the player's name and the privacy notice it showed in a
 # JSON file in the user's LocalLow folder (in the prefix on macOS/Linux,

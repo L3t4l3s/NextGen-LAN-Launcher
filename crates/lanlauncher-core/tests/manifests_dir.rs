@@ -18,14 +18,30 @@ fn bundled_manifests_are_valid() {
         assert_eq!(m.id, stem, "manifest id must match file name");
         // A manifest without an entry point starts through the game's own
         // script: no verified executable, but setup notes worth showing,
-        // arguments for the script's programs or the player's settings.
+        // arguments for the script's programs, the player's settings,
+        // Windows components or the claim that this start was checked.
         // Everything else must name what to start and what proves the
         // extraction complete.
-        if m.launch.exe.is_empty() {
-            let notes = m.setup.notes.contains_key("de") && m.setup.notes.contains_key("en");
+        // Every note in both languages: the other one falls back to English.
+        for by in std::iter::once(&m.setup.notes).chain(m.setup.platform_notes.values()) {
             assert!(
-                notes || !m.script_args.is_empty() || !m.settings.is_empty(),
-                "{}: no launch.exe, no setup notes, no script arguments, no settings — \
+                by.is_empty() || (by.contains_key("de") && by.contains_key("en")),
+                "{}: notes in German and English",
+                path.display()
+            );
+        }
+        if m.launch.exe.is_empty() {
+            let both = |by: &std::collections::BTreeMap<String, String>| {
+                by.contains_key("de") && by.contains_key("en")
+            };
+            let notes = both(&m.setup.notes) || m.setup.platform_notes.values().any(both);
+            assert!(
+                notes
+                    || !m.script_args.is_empty()
+                    || !m.settings.is_empty()
+                    || !m.launch.winetricks.is_empty()
+                    || !m.script_start_checked.is_empty(),
+                "{}: no launch.exe, no setup notes, no script arguments, no settings, no components — \
                  nothing this manifest could add",
                 path.display()
             );

@@ -64,6 +64,12 @@ export interface ManifestInfo {
   verifiedForRevision: boolean;
   /** The tester's own launch configuration is laid over the profile. */
   ownConfig: boolean;
+  /** Package revisions the profile was checked with (empty: any). */
+  checkedRevisions: string[];
+  /** The package revision it is compared with (installed, else the catalog's). */
+  packageRevision: string;
+  /** The revision the own configuration was saved with. */
+  configRevision: string | null;
 }
 
 export interface GameView {

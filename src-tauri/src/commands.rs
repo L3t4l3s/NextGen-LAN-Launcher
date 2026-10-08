@@ -90,6 +90,12 @@ pub struct ManifestInfo {
     pub verified_for_revision: bool,
     /// The tester's own launch configuration is laid over the profile.
     pub own_config: bool,
+    /// What the frontend tells when the profile is not confirmed: the
+    /// package revisions the profile was checked with, the one it is
+    /// compared with, and the one the own configuration was saved with.
+    pub checked_revisions: Vec<String>,
+    pub package_revision: String,
+    pub config_revision: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -116,14 +122,12 @@ fn manifest_info(m: &Manifest, revision: &str, lang: &str) -> ManifestInfo {
         args: spec.args.clone(),
         runner: spec.runner,
         alternatives: spec.alternatives.iter().map(|a| a.name.clone()).collect(),
-        notes: m
-            .setup
-            .notes
-            .get(lang)
-            .or_else(|| m.setup.notes.get("en"))
-            .cloned(),
+        notes: m.notes_for(Manifest::current_platform(), lang),
         verified_for_revision: m.verified_for(revision, Manifest::current_platform()),
         own_config: m.user_config,
+        checked_revisions: m.revisions.clone(),
+        package_revision: revision.to_string(),
+        config_revision: m.config_revision.clone(),
     }
 }
 

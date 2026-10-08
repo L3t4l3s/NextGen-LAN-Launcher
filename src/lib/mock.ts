@@ -60,8 +60,11 @@ function g(
             notes: null,
             verifiedForRevision: true,
             ownConfig: false,
+            checkedRevisions: [],
+            packageRevision: "20240623",
+            configRevision: null,
           }
-        : { origin: "derived_from_script", exe: `${id}.exe`, args: [], runner: "auto", alternatives: [], notes: null, verifiedForRevision: false, ownConfig: false },
+        : { origin: "derived_from_script", exe: `${id}.exe`, args: [], runner: "auto", alternatives: [], notes: null, verifiedForRevision: false, ownConfig: false, checkedRevisions: [], packageRevision: "20240623", configRevision: null },
     disabledByEvent: false,
     shareDir: `D:\\LAN\\${id}`,
     hasKeygen: id === "cod4",

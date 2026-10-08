@@ -127,8 +127,12 @@ args = ["-game", "valve"]
 [setup]
 copy = [{ from = "SmartSteamEmu.ini", to = "hl-cs16/SmartSteamEmu.ini" }]
 touch = ["bin/steam_settings/disable_overlay.txt"]
-notes.de = "…"
+notes.de = "…"                         # only what a player needs to know; details as comments
 notes.en = "…"
+
+[setup.platform_notes.macos]            # shown after the notes, on that platform only
+de = "…"
+en = "…"
 
 [platform.macos]
 runner = "crossover"

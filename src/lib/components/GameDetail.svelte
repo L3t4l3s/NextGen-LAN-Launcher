@@ -113,6 +113,27 @@
     await app.reloadGames();
   }
 
+  // Why the profile is not confirmed, and what helps: which package it was
+  // checked with, and — where the button is — that a tester for whom it
+  // runs can report it, so the profile gets updated.
+  const unverified = $derived.by(() => {
+    const m = game.manifest;
+    if (!m || m.verifiedForRevision) return null;
+    const current = formatRevision(m.packageRevision, lang);
+    if (m.ownConfig) {
+      return m.configRevision
+        ? t("detail.manifest.unverified_config", { saved: formatRevision(m.configRevision, lang), current })
+        : t("detail.manifest.unverified_config_unknown");
+    }
+    // The newest package it was checked with; a revision is a date.
+    const newest = [...m.checkedRevisions].sort().at(-1);
+    const reason =
+      newest && !m.checkedRevisions.includes(m.packageRevision)
+        ? t("detail.manifest.unverified_revision", { checked: formatRevision(newest, lang), current })
+        : t("detail.manifest.unverified_script");
+    return playable && platform !== "windows" ? `${reason} ${t("detail.manifest.unverified_confirm")}` : reason;
+  });
+
   async function play(skipComponents = false) {
     if (status?.needsExeChoice) {
       await openExeChooser();
@@ -366,7 +387,7 @@
           {/if}
           <br /><span>{t(`detail.manifest.${game.manifest.origin}`)}</span>
           {#if game.manifest.ownConfig}<br /><span>{t("detail.manifest.own_config")}</span>{/if}
-          {#if !game.manifest.verifiedForRevision}<br /><span class="warn-text">{t("detail.manifest.unverified")}</span>{/if}
+          {#if unverified}<br /><span class="warn-text">{unverified}</span>{/if}
           {#if game.manifest.notes}<br />{game.manifest.notes}{/if}
         </p>
         {#if game.manifest.alternatives.length}

@@ -10,11 +10,13 @@ args = []
 required_files = ["quake3.exe", "baseq3/pak0.pk3"]
 
 [setup]
-notes.de = "Auf dem Mac läuft alternativ ioquake3 nativ: Engine installieren, Startdatei auf die ioquake3-App setzen; Spieldaten (baseq3) aus local/ verwenden."
-notes.en = "On macOS the native ioquake3 engine is an alternative: install it and pick it as executable; use the game data (baseq3) from local/."
 
 # The package ships the q3config.cfg of whoever packed it, name included.
 [[settings]]
 file = "baseq3/q3config.cfg"
 line = "seta name"
 value = "%player%"
+
+[setup.platform_notes.macos]
+de = "Alternativ läuft ioquake3 nativ: Engine installieren, über „Startdatei wählen“ die ioquake3-App nehmen; die Spieldaten (baseq3) liegen in local/."
+en = "Alternatively ioquake3 runs natively: install the engine, pick the ioquake3 app through 'Choose executable'; the game data (baseq3) is in local/."

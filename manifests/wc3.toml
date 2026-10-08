@@ -18,11 +18,15 @@ args = ["-window", "-opengl", "-frozenthrone"]
 args = ["-window", "-opengl", "-frozenthrone"]
 
 [setup]
-notes.de = "game_setup.cmd schreibt die CD-Keys (wc3_keys.exe), legt das Profil unter Dokumente\\Warcraft III an und setzt Registry-Werte; auf Mac/Linux läuft es im Prefix des Spiels. Der LAN-Browser braucht ggf. den Bonjour-Dienst in der Bottle."
-notes.en = "game_setup.cmd writes the CD keys (wc3_keys.exe), creates the profile in Documents\\Warcraft III and sets registry values; on Mac/Linux it runs in the game's prefix. The LAN browser may need the Bonjour service inside the bottle."
+# game_setup.cmd writes the CD keys (wc3_keys.exe), makes the profile in
+# Documents\Warcraft III and sets registry values; on Mac/Linux it runs in the prefix.
 
 # The name for LAN games, which Warcraft III otherwise asks for.
 [[settings]]
 registry = 'HKCU\Software\Blizzard Entertainment\Warcraft III\String'
 key = "userlocal"
 value = "%player%"
+
+[setup.platform_notes.macos]
+de = "Findet das Spiel keine LAN-Spiele, fehlt in der Flasche meist der Bonjour-Dienst."
+en = "If the game finds no LAN games, the bottle usually lacks the Bonjour service."
