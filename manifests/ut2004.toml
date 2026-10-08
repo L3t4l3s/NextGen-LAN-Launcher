@@ -1,7 +1,10 @@
 schema = 1
 id = "ut2004"
 title = "Unreal Tournament 2004"
-source = "NextGen LAN Launcher: player settings checked against the package (2026-10)"
+source = "NextGen LAN Launcher: started, language and player name checked with Proton 11 (2026-10)"
+
+[tested_with]
+linux = ["Proton 11.0"]
 
 [launch]
 # No entry point of its own: the start runs the package's game_start.cmd.

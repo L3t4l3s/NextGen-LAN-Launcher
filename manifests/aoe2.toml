@@ -5,6 +5,9 @@ revisions = ["20240623"]
 source = "Checked with Proton 11 on Linux against the package's game_start.cmd"
 script_start_checked = ["linux"]
 
+[tested_with]
+linux = ["Proton 11.0"]
+
 [launch]
 # The package's start script asks which edition to start (HD, Classic, The
 # Conquerors, Forgotten Empires); it keeps doing so, this file only adds

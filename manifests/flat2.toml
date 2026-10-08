@@ -5,6 +5,10 @@ revisions = ["20160922"]
 source = "macETI-LAN v0.6.1 docs (MIT) – v1.2 profile menu verified on Apple M2 Pro, CrossOver 26.3; NextGen LAN Launcher: start script checked with Proton 11 (2026-10)"
 script_start_checked = ["linux"]
 
+[tested_with]
+linux = ["Proton 11.0"]
+macos = ["CrossOver 26.3"]
+
 [launch]
 # The package's start script starts FlatOut2.exe; this file only carries
 # what was learned about running it.

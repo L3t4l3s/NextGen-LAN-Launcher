@@ -4,6 +4,10 @@ title = "Among Us"
 revisions = ["20250308"]
 source = "macETI-LAN v0.6.1 (MIT) – verified on Apple M2 Pro with CrossOver 26"
 
+[tested_with]
+linux = ["Proton 11.0"]
+macos = ["CrossOver 26"]
+
 [launch]
 exe = "Among Us.exe"
 args = []
@@ -13,9 +17,7 @@ required_files = ["Among Us.exe", "UnityPlayer.dll", "GameAssembly.dll"]
 runner = "crossover"
 
 [setup]
-# Starts through Steam emulation, no account needed.
-notes.de = "Für ein LAN-Spiel im Hauptmenü „Lokal“ wählen."
-notes.en = "For a LAN game choose 'Local' in the main menu."
+# Starts through Steam emulation, no account needed. LAN games: "Local" in the main menu.
 
 # The game keeps the player's name and the privacy notice it showed in a
 # JSON file in the user's LocalLow folder (in the prefix on macOS/Linux,

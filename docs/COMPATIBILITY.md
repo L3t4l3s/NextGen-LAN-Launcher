@@ -110,6 +110,10 @@ revisions = ["20240623"]      # verified package revisions; empty = any
 script_start_checked = ["linux"]   # no exe of its own: platforms where the start through game_start.cmd was checked for these revisions
 source = "macETI-LAN (MIT)"
 
+[tested_with]                           # shown to the player per platform
+linux = ["Proton 11.0"]
+macos = ["CrossOver 26.3"]
+
 [launch]
 exe = "hl-cs16/SmartSteamLoader.exe"   # relative to local/
 args = ["-game", "cstrike"]

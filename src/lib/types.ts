@@ -64,6 +64,10 @@ export interface ManifestInfo {
   verifiedForRevision: boolean;
   /** The tester's own launch configuration is laid over the profile. */
   ownConfig: boolean;
+  /** Windows components (winetricks verbs) the game needs on this platform. */
+  components: string[];
+  /** What the profile was tested with on this platform ("Proton 11.0"). */
+  testedWith: string[];
   /** Package revisions the profile was checked with (empty: any). */
   checkedRevisions: string[];
   /** The package revision it is compared with (installed, else the catalog's). */

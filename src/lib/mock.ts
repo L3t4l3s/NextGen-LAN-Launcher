@@ -61,10 +61,12 @@ function g(
             verifiedForRevision: true,
             ownConfig: false,
             checkedRevisions: [],
+            components: id === "quake3" ? ["d3dx9_30"] : [],
+            testedWith: id === "amongus" ? ["Proton 11.0"] : [],
             packageRevision: "20240623",
             configRevision: null,
           }
-        : { origin: "derived_from_script", exe: `${id}.exe`, args: [], runner: "auto", alternatives: [], notes: null, verifiedForRevision: false, ownConfig: false, checkedRevisions: [], packageRevision: "20240623", configRevision: null },
+        : { origin: "derived_from_script", exe: `${id}.exe`, args: [], runner: "auto", alternatives: [], notes: null, verifiedForRevision: false, ownConfig: false, components: [], testedWith: [], checkedRevisions: [], packageRevision: "20240623", configRevision: null },
     disabledByEvent: false,
     shareDir: `D:\\LAN\\${id}`,
     hasKeygen: id === "cod4",

@@ -94,6 +94,10 @@ pub struct ManifestInfo {
     /// package revisions the profile was checked with, the one it is
     /// compared with, and the one the own configuration was saved with.
     pub checked_revisions: Vec<String>,
+    /// Windows components (winetricks verbs) the game needs on this platform.
+    pub components: Vec<String>,
+    /// What the profile was tested with on this platform (`Proton 11.0`).
+    pub tested_with: Vec<String>,
     pub package_revision: String,
     pub config_revision: Option<String>,
 }
@@ -126,6 +130,12 @@ fn manifest_info(m: &Manifest, revision: &str, lang: &str) -> ManifestInfo {
         verified_for_revision: m.verified_for(revision, Manifest::current_platform()),
         own_config: m.user_config,
         checked_revisions: m.revisions.clone(),
+        components: spec.winetricks.clone(),
+        tested_with: m
+            .tested_with
+            .get(Manifest::current_platform())
+            .cloned()
+            .unwrap_or_default(),
         package_revision: revision.to_string(),
         config_revision: m.config_revision.clone(),
     }

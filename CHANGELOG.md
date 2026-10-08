@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Spieldetails nennen, was ein Spiel braucht.** Unter dem Startprofil steht jetzt „Benötigt:“
+  (Proton oder Wine, auf dem Mac CrossOver oder Wine, dazu Windows-Komponenten wie `d3dx9_30`)
+  und, wo bekannt, „Getestet mit:“ (z. B. Proton 11.0). Hinweise zum Spielmenü (Among Us) sind
+  entfallen; dort stehen nur noch Voraussetzungen, Installation und Start.
+
 - **Klarere Hinweise in den Spieldetails.** Die Profilhinweise nennen nur noch, was ein Spieler
   wissen muss; Technisches steht als Kommentar im Profil. Statt „Für diesen Paketstand noch nicht
   bestätigt“ sagt der Launcher, mit welchem Paket das Profil geprüft wurde, um welches es geht und

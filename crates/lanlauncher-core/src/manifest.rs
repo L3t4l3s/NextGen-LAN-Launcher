@@ -149,6 +149,11 @@ pub struct Manifest {
     /// [`Self::exe_from_script`] and [`Self::verified_for`]).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub script_start_checked: Vec<String>,
+    /// What the profile was tested with, per platform (`linux = ["Proton
+    /// 11.0"]`, `macos`): shown to the player beside what the game needs,
+    /// while the profile is confirmed for the package.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub tested_with: BTreeMap<String, Vec<String>>,
     pub source: Option<String>,
     /// Where this manifest came from (filled at load time).
     #[serde(skip)]
@@ -293,6 +298,7 @@ impl Default for Manifest {
             title: None,
             revisions: Vec::new(),
             script_start_checked: Vec::new(),
+            tested_with: BTreeMap::new(),
             source: None,
             origin: ManifestOrigin::Bundled,
             exe_from_script: false,
@@ -394,6 +400,23 @@ impl Manifest {
         };
         if self.schema != 1 {
             return Err(err("unsupported schema version"));
+        }
+        if let Some(bad) = self
+            .tested_with
+            .iter()
+            .find(|(p, with)| {
+                // Shown on macOS and Linux; Windows starts the package as it is.
+                !matches!(p.as_str(), "linux" | "macos")
+                    || with.is_empty()
+                    || with.iter().any(|w| {
+                        w.is_empty() || w.chars().count() > 40 || w.chars().any(char::is_control)
+                    })
+            })
+            .map(|(p, _)| p)
+        {
+            return Err(err(&format!(
+                "tested_with.{bad}: linux or macos, with one or more short names"
+            )));
         }
         if let Some(bad) = self
             .setup
@@ -1014,6 +1037,22 @@ mod tests {
         guessed.origin = ManifestOrigin::DerivedFromScript;
         assert!(guessed.verified_for("1", "linux"));
         assert!(parse("script_start_checked = [\"ubuntu\"]\n").is_err());
+    }
+
+    #[test]
+    fn tested_with_names_a_platform_and_short_names() {
+        let parse = |t: &str| {
+            Manifest::parse(
+                &format!("schema = 1\nid = \"g\"\n[launch]\nexe = \"g.exe\"\n[tested_with]\n{t}\n"),
+                Path::new("g.toml"),
+            )
+        };
+        let m = parse("linux = [\"Proton 11.0\"]").unwrap();
+        assert_eq!(m.tested_with["linux"], vec!["Proton 11.0".to_string()]);
+        assert!(parse("steamos = [\"Proton 11.0\"]").is_err());
+        assert!(parse("linux = [\"\"]").is_err());
+        assert!(parse("linux = []").is_err());
+        assert!(parse("windows = [\"Windows 11\"]").is_err());
     }
 
     #[test]

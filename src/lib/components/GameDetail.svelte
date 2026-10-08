@@ -113,6 +113,21 @@
     await app.reloadGames();
   }
 
+  // What has to be on this computer: the layer that runs Windows games
+  // and the Windows components the profile names (the launcher offers
+  // those before the first start).
+  const needs = $derived.by(() => {
+    const m = game.manifest;
+    if (!m || m.runner === "native") return null;
+    const layer =
+      m.runner === "auto" ? t(platform === "macos" ? "detail.needs.auto_macos" : "detail.needs.auto_linux") : t(`detail.needs.${m.runner}`);
+    if (!m.components.length) return layer;
+    // Not through CrossOver: it installs them itself ("Install Software").
+    const offered = platform === "linux" || m.runner === "wine" || m.runner === "proton";
+    const key = offered ? "detail.needs.components" : "detail.needs.components_plain";
+    return `${layer}; ${t(key, { verbs: m.components.join(", ") })}`;
+  });
+
   // Why the profile is not confirmed, and what helps: which package it was
   // checked with, and — where the button is — that a tester for whom it
   // runs can report it, so the profile gets updated.
@@ -388,6 +403,8 @@
           <br /><span>{t(`detail.manifest.${game.manifest.origin}`)}</span>
           {#if game.manifest.ownConfig}<br /><span>{t("detail.manifest.own_config")}</span>{/if}
           {#if unverified}<br /><span class="warn-text">{unverified}</span>{/if}
+          {#if needs}<br /><strong>{t("detail.needs")}:</strong> {needs}{/if}
+          {#if game.manifest.testedWith.length && game.manifest.verifiedForRevision}<br /><strong>{t("detail.tested_with")}:</strong> {game.manifest.testedWith.join(", ")}{/if}
           {#if game.manifest.notes}<br />{game.manifest.notes}{/if}
         </p>
         {#if game.manifest.alternatives.length}

@@ -5,6 +5,9 @@ revisions = ["20160922"]
 source = "macETI-LAN v0.6.1 docs (MIT); NextGen LAN Launcher: start script and player profile checked with Proton 11 (2026-10)"
 script_start_checked = ["linux"]
 
+[tested_with]
+linux = ["Proton 11.0"]
+
 [launch]
 # No entry point of its own: the start runs the package's game_start.cmd,
 # which starts the multiplayer binary (CoD2MP_s.exe).
