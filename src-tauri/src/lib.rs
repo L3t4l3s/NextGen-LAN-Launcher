@@ -1453,8 +1453,9 @@ fn warn_about_a_blank_window(app: &tauri::AppHandle) {
             };
             format!(
                 "{opening}\n\nWhat the webview said about it is in webview.log, \
-                 and what the launcher did is in launcher.log — both in\n{folder}\n\n\
-                 Send both; docs/TROUBLESHOOTING.md lists what else to try."
+                 and what the launcher did is in launcher.log (older parts in \
+                 launcher_<date>.log) — all in\n{folder}\n\n\
+                 Send them all; docs/TROUBLESHOOTING.md lists what else to try."
             )
         };
         #[cfg(not(target_os = "linux"))]
@@ -1505,6 +1506,10 @@ pub fn run() {
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
+                // The default keeps one file of 40 kB: a long setup's ticks
+                // pushed the start before it out within minutes.
+                .max_file_size(2_000_000)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(3))
                 .targets([
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {

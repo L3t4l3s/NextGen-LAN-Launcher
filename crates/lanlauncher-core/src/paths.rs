@@ -13,6 +13,41 @@
 
 use std::path::{Path, PathBuf};
 
+/// `rel` (below `root`, `/` or `\\` between its parts) as it is on disk,
+/// a part spelled in another case where the exact spelling is missing:
+/// Windows and Wine find ETI's `local\\system\\UT2004.exe` in `System/`, a
+/// Linux file system does not. Letters compare as Windows compares them,
+/// `Ä` with `ä`; where two folders differ only in case (an archive made on
+/// Windows, unpacked here) each is tried. `None` when the path is not there
+/// in any case, or leaves `root` (`..`).
+pub fn find_ignoring_case(root: &Path, rel: &str) -> Option<PathBuf> {
+    let parts: Vec<&str> = rel
+        .split(['/', '\\'])
+        .filter(|p| !p.is_empty() && *p != ".")
+        .collect();
+    if parts.contains(&"..") {
+        return None;
+    }
+    fn walk(path: PathBuf, parts: &[&str]) -> Option<PathBuf> {
+        let Some((part, rest)) = parts.split_first() else {
+            return path.exists().then_some(path);
+        };
+        let exact = path.join(part);
+        if exact.exists() {
+            if let Some(found) = walk(exact, rest) {
+                return Some(found);
+            }
+        }
+        let wanted = part.to_lowercase();
+        std::fs::read_dir(&path)
+            .ok()?
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().to_lowercase() == wanted)
+            .find_map(|e| walk(e.path(), rest))
+    }
+    walk(root.to_path_buf(), &parts)
+}
+
 /// Windows verbatim paths (`\\?\C:\…`) come out of `canonicalize()` and out
 /// of Tauri's `resource_dir()`. Windows itself accepts them, but tools the
 /// launcher hands them to do not: `netsh advfirewall … program=\\?\C:\…`
@@ -119,7 +154,34 @@ impl GamePaths {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
+
+    #[test]
+    fn a_path_from_a_windows_script_is_found_in_any_case() {
+        let tmp = tempfile::tempdir().unwrap();
+        let local = tmp.path();
+        std::fs::create_dir_all(local.join("System")).unwrap();
+        std::fs::write(local.join("System/UT2004.exe"), "").unwrap();
+        assert_eq!(
+            find_ignoring_case(local, "system\\ut2004.EXE"),
+            Some(local.join("System/UT2004.exe"))
+        );
+        assert_eq!(
+            find_ignoring_case(local, "System/UT2004.exe"),
+            Some(local.join("System/UT2004.exe"))
+        );
+        assert_eq!(find_ignoring_case(local, "system/other.exe"), None);
+        assert_eq!(find_ignoring_case(local, "../x"), None);
+        // Two folders differing only in case: the one holding it.
+        std::fs::create_dir_all(local.join("data")).unwrap();
+        std::fs::create_dir_all(local.join("DATA")).unwrap();
+        std::fs::write(local.join("DATA/Spielstände.cfg"), "").unwrap();
+        assert_eq!(
+            find_ignoring_case(local, "Data/SPIELSTÄNDE.CFG"),
+            Some(local.join("DATA/Spielstände.cfg"))
+        );
+    }
 
     #[test]
     fn verbatim_prefixes_are_stripped() {

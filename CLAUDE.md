@@ -69,7 +69,9 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   ohne GUI durch.
 - Manuelle End-to-End-Prüfung unter Linux ohne Bildschirm: `Xvfb :99`, App mit `--demo` starten,
   mit `xdotool` klicken, mit `import -window root` (ImageMagick) Screenshots ziehen. Log liegt in
-  `<XDG_DATA_HOME>/xyz.nextgen-lan.launcher/logs/launcher.log` (Windows:
+  `<XDG_DATA_HOME>/xyz.nextgen-lan.launcher/logs/launcher.log`, ältere Teile als
+  `launcher_<Datum>.log` (2 MB je Datei, drei bleiben; Tauris Standard war eine Datei mit 40 kB,
+  die ein langes Setup in Minuten mit `tick`-Zeilen füllte) (Windows:
   `%LOCALAPPDATA%\xyz.nextgen-lan.launcher\logs\launcher.log`, macOS:
   `~/Library/Logs/xyz.nextgen-lan.launcher/`; das ist Tauris App-Log-Ordner, nicht der
   Roaming-Datenordner mit `settings.json`). Die Statusleiste zeigt `v<version> (<commit>)`.

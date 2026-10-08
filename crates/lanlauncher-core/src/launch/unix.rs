@@ -206,12 +206,25 @@ fn trusted_wrapper(manifest: Option<&crate::manifest::Manifest>) -> Vec<String> 
 
 fn plan_without_wrapper(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
     let (exe, args, cwd, wanted) = resolve_exe(ctx)?;
-    if !exe.exists() {
-        return Err(Error::Launch(format!(
-            "executable not found: {}",
-            exe.display()
-        )));
-    }
+    // In whatever case it is on disk: Wine does not care, the file system
+    // does, and the names come from scripts written for Windows.
+    let on_disk = |path: &Path| {
+        path.strip_prefix(&ctx.paths.local_dir)
+            .ok()
+            .and_then(|rel| {
+                crate::paths::find_ignoring_case(&ctx.paths.local_dir, &rel.to_string_lossy())
+            })
+    };
+    let exe = match exe.exists() {
+        true => exe,
+        false => on_disk(&exe)
+            .ok_or_else(|| Error::Launch(format!("executable not found: {}", exe.display())))?,
+    };
+    let cwd = match cwd.exists() {
+        true => cwd,
+        false => on_disk(&cwd)
+            .ok_or_else(|| Error::Launch(format!("working folder not found: {}", cwd.display())))?,
+    };
     let args = expand_args(&args, ctx);
     let env: BTreeMap<String, String> = ctx
         .manifest

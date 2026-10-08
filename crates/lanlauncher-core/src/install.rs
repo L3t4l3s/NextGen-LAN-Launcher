@@ -313,9 +313,11 @@ impl Observation {
                     .map(|mut d| d.next().is_some())
                     .unwrap_or(false)
             } else {
+                // In whatever case: the scripts the names come from were
+                // written for Windows.
                 required_files
                     .iter()
-                    .all(|f| paths.local_dir.join(f.replace('\\', "/")).exists())
+                    .all(|f| crate::paths::find_ignoring_case(&paths.local_dir, f).is_some())
             };
         Self {
             catalog_revision: game.revision.clone(),
@@ -394,6 +396,9 @@ pub struct GameStatus {
 pub struct Tracker {
     pub game_id: String,
     pub phase: Phase,
+    /// What the last `tick:` log line said: written again only when it
+    /// changes, not every two seconds of a long setup.
+    logged: Option<(Phase, Action, bool)>,
     /// The user asked for this game (persisted by the manager as a queued share).
     pub wanted: bool,
     last_archive_len: Option<u64>,
@@ -438,6 +443,7 @@ impl Tracker {
         Self {
             game_id: game_id.to_string(),
             phase: Phase::NotInstalled,
+            logged: None,
             wanted: false,
             adopt_candidate: false,
             last_archive_len: None,
@@ -1698,7 +1704,8 @@ impl InstallManager {
             }
             let action = tracker.step(&obs, &self.policy, now);
             let busy = self.work.lock().await.contains_key(&id);
-            if action != Action::None {
+            let said = (tracker.phase, action.clone(), busy);
+            if action != Action::None && tracker.logged.as_ref() != Some(&said) {
                 log::info!(
                     "tick: {} phase={:?} action={:?} busy={}",
                     id,
@@ -1707,6 +1714,7 @@ impl InstallManager {
                     busy
                 );
             }
+            tracker.logged = Some(said);
             if !busy {
                 match action {
                     Action::Verify => self.spawn_verify(&id, &paths, obs.archive_len).await,
