@@ -272,9 +272,10 @@ impl ResilioClient {
             .get(url)
             .basic_auth(&self.login, Some(&self.password))
             .send()
-            .await?;
+            .await
+            .map_err(without_url)?;
         let status = resp.status();
-        let text = resp.text().await?;
+        let text = resp.text().await.map_err(without_url)?;
         if !status.is_success() {
             return Err(Error::Transport(format!(
                 "API {method}: HTTP {status}: {text}"
@@ -329,7 +330,8 @@ impl ResilioClient {
             .get(url)
             .basic_auth(&self.login, Some(&self.password))
             .send()
-            .await?;
+            .await
+            .map_err(without_url)?;
         // 400 belongs in this list: that is what the web UI answers when the
         // token no longer matches its session cookie. Without dropping the
         // cached token, a session that goes stale while the launcher runs
@@ -339,7 +341,12 @@ impl ResilioClient {
                 *g = None;
             }
         }
-        let text = resp.error_for_status()?.text().await?;
+        let text = resp
+            .error_for_status()
+            .map_err(without_url)?
+            .text()
+            .await
+            .map_err(without_url)?;
         let value: Value = serde_json::from_str(&text)
             .map_err(|e| Error::Transport(format!("GUI {action}: bad JSON: {e}")))?;
         if value
@@ -457,10 +464,13 @@ impl ResilioClient {
             params.extend(prefs.iter().copied());
             if let Err(e) = self.api("add_folder", &params).await {
                 // The engine keeps its folders across launcher restarts, so
-                // "already added" is the normal second start. It only counts
-                // as success when the folder carries the key we asked for:
-                // a changed catalog key has to surface.
-                if !(is_already_added(&e) && self.holds_folder(dir, key.expose()).await) {
+                // "already added" is the normal second start. A timeout can
+                // also hide a folder the engine did add: busy adding several
+                // shares, it answered after the client stopped waiting, and
+                // then synced a game the launcher had given up on. Either
+                // way it only counts as success when the folder carries the
+                // key we asked for: a changed catalog key has to surface.
+                if !self.holds_folder(dir, key.expose()).await {
                     return Err(e);
                 }
             }
@@ -1017,21 +1027,10 @@ pub fn counter_rate(previous: Option<(u64, Instant)>, value: u64, now: Instant) 
     ((value - before) as f64 / seconds).round() as u64
 }
 
-/// Resilio's "this folder is already added": the documented API answers 200,
-/// older builds 5. Matched on the parsed number, so `error 500` is not taken
-/// for `error 5`.
-fn is_already_added(e: &Error) -> bool {
-    let Error::Transport(m) = e else {
-        return false;
-    };
-    m.split("error ")
-        .nth(1)
-        .and_then(|rest| {
-            rest.split_whitespace()
-                .next()
-                .and_then(|n| n.parse::<i64>().ok())
-        })
-        .is_some_and(|code| code == 5 || code == 200)
+/// A request error without its URL: the URL carries the share's secret
+/// (and the web UI's token), and request errors end up in the log.
+fn without_url(e: reqwest::Error) -> reqwest::Error {
+    e.without_url()
 }
 
 /// Does a folder listing already contain `dir` with this secret?
@@ -3174,20 +3173,6 @@ mod tests {
         assert_eq!(parse_api_folder(&partial, 1).state, ShareState::Downloading);
     }
 
-    #[test]
-    fn already_added_is_recognised_by_code_not_by_substring() {
-        let err = |m: &str| Error::Transport(m.to_string());
-        // What the documented API answers for a folder it already has.
-        assert!(is_already_added(&err(
-            "API add_folder: error 200 Der ausgewählte Ordner wurde bereits zu Resilio Sync hinzugefügt."
-        )));
-        assert!(is_already_added(&err("API add_folder: error 5 exists")));
-        // Not a prefix match: 500 and 55 are different failures.
-        assert!(!is_already_added(&err("API add_folder: error 500 nope")));
-        assert!(!is_already_added(&err("API add_folder: error 55 nope")));
-        assert!(!is_already_added(&err("no code at all")));
-    }
-
     #[tokio::test]
     async fn an_added_folder_is_recognised_in_both_answer_shapes() {
         let secret = "BICDWADB4KCVNR6FCAGYTHEKZBYVUGTZX";
@@ -3265,6 +3250,49 @@ mod tests {
             .add_folder(&key, Path::new("/lan/eti_launcher"), true)
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn a_folder_added_despite_a_failed_answer_is_not_an_error() {
+        // Busy adding several shares, the engine answered `add_folder` after
+        // the client had stopped waiting — and synced the game anyway.
+        let base = mock_server_full(
+            vec![
+                ("method=add_folder", 500, "timed out"),
+                ("method=set_folder_prefs", 200, r#"{"error":0}"#),
+                (
+                    "method=get_folders",
+                    200,
+                    r#"[{"dir":"/lan/quake3","secret":"BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]"#,
+                ),
+            ],
+            None,
+            None,
+        )
+        .await;
+        let c = ResilioClient::new(base, "u", "p", Some("KEY".into()));
+        let key = ShareKey::parse("BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap();
+        c.add_folder(&key, Path::new("/lan/quake3"), true)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_failed_request_does_not_put_the_secret_in_its_error() {
+        let port = pick_free_port().unwrap();
+        let c = ResilioClient::new(
+            format!("http://127.0.0.1:{port}"),
+            "u",
+            "p",
+            Some("K".into()),
+        );
+        let secret = "BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let err = c
+            .api("add_folder", &[("secret", secret)])
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(!err.contains(secret), "{err}");
     }
 
     #[tokio::test]

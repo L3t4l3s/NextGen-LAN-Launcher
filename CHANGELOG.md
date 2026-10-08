@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Startet man mehrere Installationen kurz hintereinander, antwortet die Sync-Engine manchmal erst
+  nach Ablauf der Wartezeit. Die Installation galt dann als gescheitert, obwohl die Engine das
+  Spiel trotzdem herunterlud. Jetzt fragt der Launcher nach einem Fehler nach, ob die Freigabe
+  mit dem richtigen Schlüssel angelegt wurde. Fehlermeldungen der Engine-Anfragen enthalten
+  außerdem nicht mehr die URL samt Freigabeschlüssel, und der landete bisher im Protokoll.
 - **Spielername und Sprache im Spiel, auf allen Plattformen.** Vor jedem Start schreibt der
   Launcher den eingetragenen Spielernamen und die Spielsprache dorthin, wo das Spiel sie liest –
   zusätzlich zum ETI-Startskript, das das nicht immer richtig macht (Unreal Tournament 2004:
