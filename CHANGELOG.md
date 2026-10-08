@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Kompatibilitätsversion nur noch in der Startkonfiguration.** Die genaue Proton-/Wine-Version
+  stand doppelt: oben in den Spieldetails und (als Art) in der Startkonfiguration. Jetzt wählt man
+  beides in der Startkonfiguration, direkt untereinander; die Version wird mit „Speichern“
+  übernommen und bleibt eine Einstellung dieses Rechners. Die Spieldetails melden nur noch, wenn
+  die gewählte Version verschwunden ist.
+
 - **Spieldetails nennen, was ein Spiel braucht.** Unter dem Startprofil steht jetzt „Benötigt:“
   (Proton oder Wine, auf dem Mac CrossOver oder Wine, dazu Windows-Komponenten wie `d3dx9_30`)
   und, wo bekannt, „Getestet mit:“ (z. B. Proton 11.0). Hinweise zum Spielmenü (Among Us) sind

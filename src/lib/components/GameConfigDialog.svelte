@@ -6,10 +6,11 @@
 </script>
 
 <script lang="ts">
-  import type { ComponentsReport, ConfigReport, GameConfig, GameConfigView, GameView, RunnerKind } from "$lib/types";
+  import type { ComponentsReport, ConfigReport, GameConfig, GameConfigView, GameView, RunnerChoices, RunnerKind } from "$lib/types";
   import { app } from "$lib/stores/app.svelte";
   import { api, confirmDialog, copyText } from "$lib/api";
   import { t, userText } from "$lib/i18n";
+  import { runnerKey } from "$lib/format";
 
   let { game, onclose, onsaved }: { game: GameView; onclose: () => void; onsaved: () => void } = $props();
 
@@ -17,7 +18,26 @@
   let config = $state<GameConfig | null>(null);
   // What is stored, to tell whether the editor holds unsaved changes.
   let stored = $state("");
-  const dirty = $derived(!!config && JSON.stringify(config) !== stored);
+  // The exact Wine/Proton/CrossOver on this computer: a setting of this
+  // machine (`set_game_runner`), not part of the shared profile; saved with
+  // the rest. "" is automatic.
+  let runnerChoices = $state<RunnerChoices | null>(null);
+  let version = $state("");
+  let storedVersion = $state("");
+  const versionMissing = $derived(
+    !!storedVersion && !(runnerChoices?.options.some((o) => runnerKey(o.kind, o.program) === storedVersion) ?? false),
+  );
+  // Versions of the kind chosen above; automatic offers all of them.
+  const versions = $derived(
+    (runnerChoices?.options ?? []).filter((o) => !config || config.runner === "auto" || o.kind === config.runner),
+  );
+  const dirty = $derived((!!config && JSON.stringify(config) !== stored) || version !== storedVersion);
+  // A version of another kind than the one chosen above does not apply;
+  // only a saved one that is gone stays, shown as missing.
+  $effect(() => {
+    const gone = version === storedVersion && versionMissing;
+    if (version && !gone && !versions.some((o) => runnerKey(o.kind, o.program) === version)) version = "";
+  });
   const platformName = $derived(
     ({ linux: "Linux", macos: "macOS", windows: "Windows" } as Record<string, string>)[view?.platform ?? ""] ?? view?.platform ?? "",
   );
@@ -55,6 +75,22 @@
   $effect(() => {
     const id = gameId;
     view = null;
+    runnerChoices = null;
+    version = storedVersion = "";
+    // Windows starts games as they are; there is nothing to choose.
+    if (app.bootstrap?.platform !== "windows") {
+      api
+        .runnerOptions(id)
+        .then((choices) => {
+          if (id !== gameId) return;
+          runnerChoices = choices;
+          const saved = runnerKey(choices.selectedKind, choices.selected);
+          // The scan can be slow (SD cards): a pick made meanwhile stays.
+          if (version === storedVersion) version = saved;
+          storedVersion = saved;
+        })
+        .catch(() => {});
+    }
     api
       .gameConfig(id)
       .then((v) => {
@@ -73,10 +109,26 @@
     working = true;
     try {
       const snapshot = $state.snapshot(config);
-      const own = await api.saveGameConfig(game.id, snapshot);
-      stored = JSON.stringify(snapshot);
-      app.toast("success", t(own ? "config.saved" : "config.saved_as_profile"));
-      if (view) view.own = own;
+      // Only a changed configuration is written: saving stamps it with the
+      // installed package, and a version change alone must not do that.
+      if (JSON.stringify(snapshot) !== stored) {
+        const own = await api.saveGameConfig(game.id, snapshot);
+        stored = JSON.stringify(snapshot);
+        if (view) view.own = own;
+        app.toast("success", t(own ? "config.saved" : "config.saved_as_profile"));
+      }
+      if (version !== storedVersion) {
+        const option = runnerChoices?.options.find((o) => runnerKey(o.kind, o.program) === version);
+        try {
+          await api.setGameRunner(game.id, option?.program ?? null, option?.kind ?? null);
+        } finally {
+          // What was saved before shows in the details either way.
+          onsaved();
+        }
+        storedVersion = version;
+        app.toast("success", t("toast.runner_saved"));
+        return true;
+      }
       onsaved();
       return true;
     } catch (e) {
@@ -102,6 +154,10 @@
       view = await api.gameConfig(game.id);
       config = structuredClone(view.config);
       stored = JSON.stringify(view.config);
+      onsaved();
+      // Back to the default means the automatic version as well.
+      if (storedVersion) await api.setGameRunner(game.id, null, null);
+      version = storedVersion = "";
       app.toast("success", t("config.reset_done"));
       onsaved();
     } catch (e) {
@@ -212,6 +268,16 @@
           {#each runners as runner (runner)}<option value={runner}>{t(`config.runner.${runner}`)}</option>{/each}
         </select>
         <p class="hint field-hint">{t("config.runner_hint")}</p>
+
+        {#if runnerChoices && config.runner !== "native" && (runnerChoices.options.length || storedVersion)}
+          <label for="cfg-version">{t("detail.runner")}</label>
+          <select id="cfg-version" bind:value={version}>
+            <option value="">{t("detail.runner_auto")}</option>
+            {#if versionMissing}<option value={storedVersion} disabled>{t("detail.runner_missing")}</option>{/if}
+            {#each versions as o (runnerKey(o.kind, o.program))}<option value={runnerKey(o.kind, o.program)}>{o.label}</option>{/each}
+          </select>
+          <p class="hint field-hint">{t("detail.runner_hint")}</p>
+        {/if}
 
         <label for="cfg-wrapper">{t("config.wrapper")}</label>
         <input id="cfg-wrapper" bind:value={config.wrapper} placeholder="gamemoderun mangohud" />

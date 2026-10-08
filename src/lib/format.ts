@@ -78,3 +78,8 @@ export function stripHtml(html: string): string {
     .replace(/&quot;/g, '"')
     .trim();
 }
+
+/** One Wine/Proton/CrossOver choice as a single value (kind and program), "" for automatic. */
+export function runnerKey(kind: string | null | undefined, program: string | null | undefined): string {
+  return kind && program ? `${kind}\n${program}` : "";
+}
