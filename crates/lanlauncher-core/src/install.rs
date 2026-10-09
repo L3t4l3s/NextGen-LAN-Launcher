@@ -1528,8 +1528,6 @@ impl InstallManager {
             .lock()
             .map(|mut r| std::mem::take(&mut *r))
             .unwrap_or_default();
-        let progress_snapshot: HashMap<String, f64> =
-            self.progress.lock().map(|p| p.clone()).unwrap_or_default();
 
         let disks = crate::library::DiskTable::refresh();
         let mut out = Vec::new();
@@ -1541,6 +1539,13 @@ impl InstallManager {
             if current != Some(rgen) {
                 log::info!("tick: dropping stale work result for {rid} (gen {rgen})");
                 continue;
+            }
+            // The job is over, and so is its figure: left in the table, the
+            // last check's 100 % became the next step's figure until that
+            // job reported its first one, and the bar jumped from full back
+            // to a few percent.
+            if let Ok(mut p) = self.progress.lock() {
+                p.remove(rid);
             }
             match r {
                 WorkResult::Verified {
@@ -1719,6 +1724,10 @@ impl InstallManager {
                 }
             }
         }
+
+        // After the results: a finished job's figure has left the table.
+        let progress_snapshot: HashMap<String, f64> =
+            self.progress.lock().map(|p| p.clone()).unwrap_or_default();
 
         let ids: Vec<String> = trackers.keys().cloned().collect();
         for id in ids {
@@ -3020,6 +3029,50 @@ mod tests {
         assert_eq!(setups.load(Ordering::SeqCst), 1);
         assert!(paths.local_dir.join("game.exe").is_file());
         assert!(!Receipt::load(&paths.receipt).unwrap().adopted);
+    }
+
+    #[tokio::test]
+    async fn unpacking_does_not_start_at_the_check_s_last_figure() {
+        // Seen in a tester's log: "Extracting 100 % -> Extracting 7 %". The
+        // check's final 100 % stayed in the job table and was taken for the
+        // unpacking's figure until that job reported its first one.
+        let tmp = tempfile::tempdir().unwrap();
+        eti_install(tmp.path(), "amongus");
+        let setups = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let manager = adopt_manager(tmp.path(), "amongus", setups);
+        manager.adopt_existing().await;
+        if let Some(t) = manager.trackers.lock().await.get_mut("amongus") {
+            t.phase = Phase::Verifying;
+            t.adopt_candidate = false;
+        }
+        let generation = manager.next_generation();
+        manager.work.lock().await.insert(
+            "amongus".into(),
+            ActiveWork {
+                cancel: Arc::new(AtomicBool::new(false)),
+                handle: tokio::spawn(async {}),
+                generation,
+            },
+        );
+        manager
+            .progress
+            .lock()
+            .unwrap()
+            .insert("amongus".into(), 1.0);
+        manager.results.lock().unwrap().push(WorkResult::Verified {
+            game_id: "amongus".into(),
+            generation,
+            result: Ok(Verification::Ok(extract::ArchiveSummary {
+                files: 3,
+                directories: 0,
+                unpacked_bytes: 0,
+                unsafe_entries: Vec::new(),
+            })),
+            archive_len: None,
+        });
+        let status = manager.tick().await.remove(0);
+        assert_eq!(status.phase, Phase::Extracting);
+        assert_eq!(status.progress, 0.0);
     }
 
     #[tokio::test]

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.3.5
+
+- **Fortschrittsbalken springt nicht mehr zurück.** Beim Wechsel vom Prüfen zum Entpacken stand der
+  Balken kurz auf „Entpacken 100 %“ – dem Endstand der Prüfung – und fiel dann auf den echten
+  Wert zurück. Jeder Schritt beginnt jetzt bei null.
+
 ## 0.3.4
 
 - **Alien Swarm: Reactive Drop: Hinweis, dass das Paket unter macOS/Linux nicht startet.** Der
