@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Spielername und Sprache auch bei neueren Steam-Emulatoren.** Pakete mit Goldbergs
+  ColdClientLoader (`steamclient64.ccl.dll`, z. B. 7 Days to Die) und mit gbe_fork, Goldbergs
+  Nachfolger (`steam_settings/configs.user.ini`, z. B. 9-Bit Armies), bekommen Namen und Sprache
+  jetzt ohne eigenes Profil.
+- **Neue Startprofile, unter Linux mit Proton 11 geprüft:** 1nsane, 7 Days to Die (EULA wird
+  vorab bestätigt), 8-Bit Hordes, 9-Bit Armies, Armies of Exigo.
+
 ## 0.3.1
 
 - **Installierte Spiele mit Haken statt Badge.** „Spielbereit“ lag auf jedem installierten Cover.

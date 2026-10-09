@@ -281,7 +281,9 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   Spielerprofil sonst erst auf Nachfrage an); ein vorhandener Schlüssel behält Schreibweise und
   Abstände. Kodierung wie beim fnr-Ersatz, ASCII gilt als ANSI (Quake 3, UT2004 lesen Latin-1) —
   außer Goldbergs Dateien, die es als UTF-8 liest. Ohne Profil: Goldberg (DLL nennt
-  `force_account_name.txt` → `steam_settings/force_*.txt`) und SmartSteamEmu (jede
+  `force_account_name.txt` → `steam_settings/force_*.txt`; auch als `steamclient(64)(.ccl).dll`
+  hinter dem ColdClientLoader), gbe_fork (DLL nennt `configs.user.ini` → `[user::general]
+  account_name/language`, UTF-8) und SmartSteamEmu (jede
   `SmartSteamEmu.ini`: `[SmartSteamEmu] PersonaName/Language`). Fehlt die Sprache in der Tabelle
   eines Profils, bleibt der Wert stehen. Der Ort, wo ein Spiel den Namen liest, steht oft woanders,
   als das ETI-Skript schreibt (UT2004 `User.ini`), also am Paket nachsehen, nicht abschreiben.

@@ -1,0 +1,17 @@
+schema = 1
+id = "aexigo"
+title = "Armies of Exigo"
+revisions = ["20250125"]
+source = "NextGen LAN Launcher: start script checked with Proton 11 (2026-10)"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's start script sets the language in the registry and starts
+# Exigo_fullscreen.exe (German menu). The game asks for a profile name on
+# the first start, offering the Windows user ("steamuser" under Proton);
+# the profile is a binary file with an id of its own, nothing to preset.
+exe = ""
+args = []

@@ -1,0 +1,16 @@
+schema = 1
+id = "8bit"
+title = "8-Bit Hordes"
+revisions = ["20161024"]
+source = "NextGen LAN Launcher: start script checked with Proton 11 (2026-10)"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's start script starts SmartSteamLoader.exe; the launcher sets
+# name and language in its SmartSteamEmu.ini (German menu, the LAN game is
+# named after the player).
+exe = ""
+args = []

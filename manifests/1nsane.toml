@@ -1,0 +1,25 @@
+schema = 1
+id = "1nsane"
+title = "1nsane"
+revisions = ["20260410"]
+source = "NextGen LAN Launcher: start script checked with Proton 11 (2026-10)"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's start script opens InsaneConfigurator.exe, whose
+# "Save & Run" starts Game.exe; it keeps doing so. The package is English
+# only (Data/Lang00), the script's LangID is 00 for every language.
+# The player's name lives in a binary Player00.chp, and the game does not
+# remember which player is active: every start begins with "Player", so
+# there is nothing worth presetting.
+exe = ""
+args = []
+
+[setup]
+# Checked: with the configurator's 1920 x 1080 windowed on a smaller screen
+# the game stops at its logo; a resolution that fits starts it.
+notes.de = "Im Konfigurator eine Auflösung wählen, die auf den Bildschirm passt; ist das Fenster größer als der Bildschirm, bleibt das Spiel beim Logo stehen."
+notes.en = "Pick a resolution in the configurator that fits the screen; with a window larger than the screen the game stops at its logo."

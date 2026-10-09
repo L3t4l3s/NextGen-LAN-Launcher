@@ -1,0 +1,26 @@
+schema = 1
+id = "7days"
+title = "7 Days to Die"
+revisions = ["20260410"]
+source = "NextGen LAN Launcher: start script checked with Proton 11 (2026-10)"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's start script starts steamclient_loader.exe, Goldberg's
+# ColdClientLoader; the launcher sets name and language in its
+# steam_settings like for any Goldberg package (German, name in the menu).
+exe = ""
+args = []
+
+# The game asks to scroll through and accept its EULA on the first start.
+# Accepting it stores this value (Unity's PlayerPrefs, seen in the
+# registry); set beforehand, the game goes straight to its title screen.
+# Name and number belong to this EULA version: re-check with a new package.
+[[settings]]
+registry = 'HKCU\Software\The Fun Pimps\7 Days To Die'
+key = "EulaVersionAccepted_h2260412963"
+type = "dword"
+value = "2"

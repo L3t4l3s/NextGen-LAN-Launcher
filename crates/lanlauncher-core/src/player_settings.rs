@@ -756,8 +756,10 @@ fn join(lines: &[String], before: &str, eol: &str) -> String {
 }
 
 /// The Goldberg Steam emulator's own way of being told the player's name
+/// (and gbe_fork's `configs.user.ini`, see [`emulators`])
 /// and language: `steam_settings/force_account_name.txt` and
-/// `force_language.txt` next to its `steam_api(64).dll`, over whatever its
+/// `force_language.txt` next to its `steam_api(64).dll` (or `steamclient`
+/// behind its ColdClientLoader), over whatever its
 /// other settings say. Packages built on it get them without a profile;
 /// which DLL is Goldberg's its text says (it names those files). Goldberg
 /// reads them as UTF-8.
@@ -780,19 +782,68 @@ pub fn smart_steam_emu(local: &Path, player: &Player) -> Vec<Applied> {
 pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>) {
     let language = steam_language(&player.lang);
     let found = find_files(local, 5, |name| {
+        // Goldberg as `steam_api`, or as `steamclient` behind its
+        // ColdClientLoader (`steamclient64.ccl.dll` in 7 Days to Die):
+        // both read `steam_settings/` next to themselves.
         matches!(
             name,
-            "steam_api.dll" | "steam_api64.dll" | "smartsteamemu.ini"
+            "steam_api.dll"
+                | "steam_api64.dll"
+                | "steamclient.dll"
+                | "steamclient64.dll"
+                | "steamclient.ccl.dll"
+                | "steamclient64.ccl.dll"
+                | "smartsteamemu.ini"
         )
     });
     let (mut goldberg, mut sse) = (Vec::new(), Vec::new());
-    let mut dirs: Vec<PathBuf> = found
-        .iter()
-        .filter(|path| !is_ini(path) && is_goldberg(path))
-        .filter_map(|dll| dll.parent().map(Path::to_path_buf))
-        .collect();
-    dirs.dedup();
-    for dir in dirs {
+    // Which emulator each DLL is, one read per file; a folder once.
+    let mut gbe_dirs = std::collections::BTreeSet::new();
+    let mut classic_dirs = std::collections::BTreeSet::new();
+    for dll in found.iter().filter(|path| !is_ini(path)) {
+        let (gbe, classic) = emulator_marks(dll);
+        let Some(dir) = dll.parent() else { continue };
+        // gbe_fork only where its own config files are: the text alone is
+        // no proof, and the classic files below create `steam_settings/`.
+        let configs = ["configs.user.ini", "configs.main.ini", "configs.app.ini"];
+        if gbe
+            && configs
+                .iter()
+                .any(|c| dir.join("steam_settings").join(c).is_file())
+        {
+            gbe_dirs.insert(dir.to_path_buf());
+        } else if classic {
+            classic_dirs.insert(dir.to_path_buf());
+        }
+    }
+    // A build that names both is gbe_fork (it mentions the old files).
+    classic_dirs.retain(|dir| !gbe_dirs.contains(dir));
+    // gbe_fork, Goldberg's successor, reads `[user::general]` in
+    // `steam_settings/configs.user.ini` instead (9-Bit Armies); as UTF-8.
+    for dir in gbe_dirs {
+        let file = dir.join("steam_settings").join("configs.user.ini");
+        for (key, value) in [
+            ("account_name", Some(player.name.as_str())),
+            ("language", language),
+        ] {
+            if let Some(value) = value {
+                let kind = Kind::Ini {
+                    file: "configs.user.ini",
+                    section: Some("user::general"),
+                    key,
+                };
+                goldberg.push(set_inside(
+                    local,
+                    file.clone(),
+                    &kind,
+                    value,
+                    true,
+                    ValueType::Text,
+                ));
+            }
+        }
+    }
+    for dir in classic_dirs {
         let settings = dir.join("steam_settings");
         for (name, value) in [
             ("force_account_name.txt", Some(player.name.as_str())),
@@ -855,14 +906,16 @@ fn is_ini(path: &Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("ini"))
 }
 
-/// Whether the DLL at `path` is Goldberg's, remembered by size and time:
-/// reading a megabyte and a half before every start is not needed when the
-/// package did not change.
-fn is_goldberg(path: &Path) -> bool {
-    type Seen = std::collections::HashMap<PathBuf, (u64, Option<std::time::SystemTime>, bool)>;
+/// Whether the DLL at `path` names gbe_fork's settings file
+/// (`configs.user.ini`) and Goldberg's (`force_account_name.txt`), from one
+/// read, remembered by size and time: reading the file before every start
+/// is not needed when the package did not change.
+fn emulator_marks(path: &Path) -> (bool, bool) {
+    type Seen =
+        std::collections::HashMap<PathBuf, (u64, Option<std::time::SystemTime>, (bool, bool))>;
     static SEEN: std::sync::Mutex<Option<Seen>> = std::sync::Mutex::new(None);
     let Ok(meta) = std::fs::metadata(path) else {
-        return false;
+        return (false, false);
     };
     let stamp = (meta.len(), meta.modified().ok());
     let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
@@ -872,8 +925,19 @@ fn is_goldberg(path: &Path) -> bool {
             return *answer;
         }
     }
-    let answer = meta.len() < 32 << 20
-        && std::fs::read(path).is_ok_and(|b| b.windows(22).any(|w| w == b"force_account_name.txt"));
+    let has = |bytes: &[u8], marker: &[u8]| bytes.windows(marker.len()).any(|w| w == marker);
+    let answer = if meta.len() < 32 << 20 {
+        std::fs::read(path)
+            .map(|b| {
+                (
+                    has(&b, b"configs.user.ini"),
+                    has(&b, b"force_account_name.txt"),
+                )
+            })
+            .unwrap_or((false, false))
+    } else {
+        (false, false)
+    };
     seen.insert(path.to_path_buf(), (stamp.0, stamp.1, answer));
     answer
 }
@@ -1270,6 +1334,81 @@ mod tests {
                 b"[Launcher]\r\nTarget = hl.exe\r\n\r\n[SmartSteamEmu]\r\nLanguage = german\r\nPersonaName = J\xFCrgen\r\n\r\n[DLC]\r\n"
             );
         }
+    }
+
+    #[test]
+    fn gbe_fork_gets_the_name_in_its_user_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("steam_api64.dll"),
+            b"MZ...configs.user.ini...",
+        )
+        .unwrap();
+        let settings = tmp.path().join("steam_settings");
+        std::fs::create_dir_all(&settings).unwrap();
+        std::fs::write(
+            settings.join("configs.user.ini"),
+            "[user::general]\n# user account name\naccount_name=ChangeMe\nlanguage=english\n\n[user::saves]\nlocal_save_path=saves\n",
+        )
+        .unwrap();
+        let player = Player {
+            name: "Jürgen".into(),
+            lang: "de".into(),
+        };
+        let done = goldberg(tmp.path(), &player);
+        assert_eq!(done.len(), 2);
+        let text = std::fs::read_to_string(settings.join("configs.user.ini")).unwrap();
+        assert!(text.contains("account_name=Jürgen\n"), "{text}");
+        assert!(text.contains("language=german\n"));
+        assert!(text.contains("local_save_path=saves"));
+        // Not the classic Goldberg files.
+        assert!(!settings.join("force_account_name.txt").exists());
+        // A build naming both is gbe_fork alone; without its config files
+        // it is taken for classic Goldberg, also on the next start.
+        let both = tempfile::tempdir().unwrap();
+        std::fs::write(
+            both.path().join("steam_api64.dll"),
+            b"MZ...configs.user.ini...force_account_name.txt...",
+        )
+        .unwrap();
+        assert_eq!(goldberg(both.path(), &player).len(), 2);
+        assert!(!both.path().join("steam_settings/configs.user.ini").exists());
+        let again = goldberg(both.path(), &player);
+        assert!(again.iter().all(|a| matches!(a, Applied::Unchanged(_))));
+        let settings = both.path().join("steam_settings");
+        std::fs::remove_dir_all(&settings).unwrap();
+        std::fs::create_dir_all(&settings).unwrap();
+        std::fs::write(settings.join("configs.main.ini"), "").unwrap();
+        assert_eq!(goldberg(both.path(), &player).len(), 2);
+        assert!(settings.join("configs.user.ini").exists());
+        assert!(!settings.join("force_account_name.txt").exists());
+    }
+
+    #[test]
+    fn goldbergs_cold_client_loader_gets_the_name_too() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("steamclient64.ccl.dll"),
+            b"MZ...force_account_name.txt...",
+        )
+        .unwrap();
+        // A real Steam client next to it does not count.
+        std::fs::write(tmp.path().join("steamclient64.dll"), b"MZ...valve...").unwrap();
+        let player = Player {
+            name: "Jürgen".into(),
+            lang: "de".into(),
+        };
+        let done = goldberg(tmp.path(), &player);
+        assert_eq!(done.len(), 2);
+        let settings = tmp.path().join("steam_settings");
+        assert_eq!(
+            std::fs::read_to_string(settings.join("force_account_name.txt")).unwrap(),
+            "Jürgen"
+        );
+        assert_eq!(
+            std::fs::read_to_string(settings.join("force_language.txt")).unwrap(),
+            "german"
+        );
     }
 
     #[test]

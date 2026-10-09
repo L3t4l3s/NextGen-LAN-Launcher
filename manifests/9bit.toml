@@ -1,0 +1,22 @@
+schema = 1
+id = "9bit"
+title = "9-Bit Armies: A Bit Too Far"
+revisions = ["20260627"]
+source = "NextGen LAN Launcher: start script checked with Proton 11 (2026-10)"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's start script starts ClientG64.exe. The package runs on
+# gbe_fork (Goldberg's successor); the launcher sets name and language in
+# its steam_settings/configs.user.ini (German menu, name in the lobby).
+exe = ""
+args = []
+
+[setup]
+# Checked: the picture closes by itself after a while, and its X ends the
+# game.
+notes.de = "Beim Start erscheint eine Auswahl: links das Hauptspiel, rechts die Erweiterung „Going Rogue“. Ohne Auswahl beendet sich das Spiel nach kurzer Zeit."
+notes.en = "At start a picker appears: the main game on the left, the 'Going Rogue' expansion on the right. Without a choice the game ends after a short while."
