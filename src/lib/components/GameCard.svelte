@@ -7,12 +7,19 @@
   import { stepLabel } from "$lib/steps";
   import InstallProgress from "./InstallProgress.svelte";
   import { t, userText } from "$lib/i18n";
-  import { phaseBadge } from "$lib/phase";
+  import { isPlayable, phaseBadge } from "$lib/phase";
 
   let { game, selected = false, onselect }: { game: GameView; selected?: boolean; onselect: (id: string) => void } = $props();
 
   const status = $derived(app.statusOf(game.id));
-  const badge = $derived(phaseBadge(status));
+  // "Ready" is the usual state of an installed game; on the cover it hid
+  // the artwork on every tile. The check mark beside the player count says
+  // the same, and the cover keeps its badge for the states worth a look.
+  const badge = $derived.by(() => {
+    const b = phaseBadge(status);
+    return b?.cls === "ready" ? null : b;
+  });
+  const installed = $derived(isPlayable(status));
   const busy = $derived(status ? ["queued", "syncing", "verifying", "extracting", "setup"].includes(status.phase) : false);
   // A tile is narrow, so the label carries what a bar alone cannot say: how
   // far along it is, and — the case that looks like a hung download — that
@@ -86,7 +93,14 @@
   </div>
   <div class="meta">
     <strong title={game.title}>{game.title}</strong>
-    <small class="muted">{game.genre ?? ""}{game.maxPlayers ? ` · ${game.maxPlayers} ${t("detail.players")}` : ""}</small>
+    <div class="facts">
+      <small class="muted">{game.genre ?? ""}{game.maxPlayers ? ` · ${game.maxPlayers} ${t("detail.players")}` : ""}</small>
+      {#if installed}
+        <span class="installed" title={t("phase.ready")} aria-label={t("phase.ready")} role="img">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 8.3l2.5 2.5 5-5.3" /></svg>
+        </span>
+      {/if}
+    </div>
     {#if busy && status}
       <div class="bar"><InstallProgress {status} /></div>
       <small class="muted label" class:warn-text={!!trouble} title={trouble ? t(trouble.title) : undefined}>{label}</small>
@@ -228,6 +242,37 @@
   }
   .meta small {
     font-size: 0.78rem;
+  }
+  .facts {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 18px;
+  }
+  .facts small {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .installed {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--color-success);
+    display: grid;
+    place-items: center;
+  }
+  .installed svg {
+    width: 12px;
+    height: 12px;
+    fill: none;
+    stroke: #fff;
+    stroke-width: 2.2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
   .bar {
     margin-top: 0.35rem;

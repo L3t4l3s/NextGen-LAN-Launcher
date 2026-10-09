@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.3.1
+
+- **Installierte Spiele mit Haken statt Badge.** „Spielbereit“ lag auf jedem installierten Cover.
+  Jetzt zeigt ein grüner Kreis mit Haken unten rechts neben der Spielerzahl, welche Spiele
+  installiert sind; das Cover bleibt frei. Andere Zustände („Update verfügbar“, „Wird geladen“,
+  „Fehler“) stehen weiter auf dem Bild.
+
 ## 0.3.0
 
 - **Startpunkt in der Startkonfiguration.** „Anderen Startpunkt wählen“ stand in den
