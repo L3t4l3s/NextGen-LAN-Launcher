@@ -673,6 +673,25 @@ mehreren echten Rechnern (Broadcasts über Switches/WLAN, Windows-Firewall). Än
 im Commit als „ungetestet, auf der LAN prüfen“ kennzeichnen und in `README.md` unter
 „Offene Punkte“ nachhalten.
 
+## Versionierung
+
+`0.<feature>.<korrektur>`; die 0 bleibt, bis der Launcher als fertig gilt (diesen Schritt nur auf
+ausdrückliche Ansage, mit `node tools/bump-version.mjs 1.0.0`). **Jeder Commit, der etwas
+Sichtbares ändert, hebt die Version mit an:**
+
+- neues Feature → `node tools/bump-version.mjs minor` (0.3.4 → 0.4.0)
+- Korrektur, neues oder geändertes Startprofil, Text-/Stilkorrektur → `node tools/bump-version.mjs patch`
+  (0.3.0 → 0.3.1)
+- reine Interna (Refactoring, Tests, CI, Doku) → keine neue Version
+
+Das Skript ändert `package.json`, `package-lock.json`, `tauri.conf.json`, `Cargo.toml` und
+`Cargo.lock` zusammen und macht aus „## Unreleased“ im `CHANGELOG.md` den Abschnitt der neuen
+Version (optional mit Titel als zweitem Argument). Der CHANGELOG-Eintrag gehört also vorher unter
+„Unreleased“. `src/lib/version.test.ts` (Teil von `npm test`) scheitert, wenn die Dateien
+auseinanderlaufen oder der CHANGELOG keinen Abschnitt für die Version hat. Mehrere Commits einer
+Aufgabe heben die Version nur einmal an. Ein Release-Tag `v<version>` entspricht der Version im
+Repo.
+
 ## Commits
 
 Aussagekräftige Commit-Nachrichten in Englisch, die das *Warum* nennen. Keine Modellnamen im

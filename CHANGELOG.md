@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0
+
 - **Startpunkt in der Startkonfiguration.** „Anderen Startpunkt wählen“ stand in den
   Spieldetails und galt nur für den nächsten Start. Die Startpunkte des Profils (z. B. CS 1.6 oder
   Half-Life) wählt man jetzt in der Startkonfiguration; die Auswahl füllt Startdatei, Argumente und
