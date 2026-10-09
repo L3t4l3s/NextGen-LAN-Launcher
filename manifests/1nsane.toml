@@ -17,6 +17,10 @@ linux = ["Proton 11.0"]
 # there is nothing worth presetting.
 exe = ""
 args = []
+# Multiplayer runs on DirectPlay. With Wine's own dplayx, hosting shows
+# "starting session" and drops back to the network menu (DPL_ConnectEx is
+# a stub); Microsoft's DirectPlay hosts (checked with Proton 11: host lobby).
+winetricks = ["directplay"]
 
 [setup]
 # Checked: with the configurator's 1920 x 1080 windowed on a smaller screen

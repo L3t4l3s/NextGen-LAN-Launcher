@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.3.3
+
+- **Mehrspieler in 1nsane unter macOS/Linux.** Das Spiel nutzt DirectPlay; mit Wines eigener
+  Fassung sprang „Host“ nach „starting session“ ins Menü zurück. Das Profil nennt jetzt die
+  Komponente `directplay`, der Launcher bietet sie vor dem Start an.
+- **Windows-Komponenten in Proton-Prefixen, die direkt entpackt werden** (`directplay`), ließen
+  sich nicht installieren: Im Prefix sind Wines DLLs Verweise auf Protons eigene Dateien, und das
+  mitgelieferte cabextract schrieb durch den Verweis hindurch (schreibgeschützt, Abbruch). Es
+  ersetzt jetzt den Verweis.
+
 ## 0.3.2
 
 - **Fortschrittsbalken neu aufgeteilt:** Herunterladen 70 %, Prüfen, Entpacken und Einrichten je

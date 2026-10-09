@@ -538,7 +538,13 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
     (`Downloading … failed` = offline, `Cannot find cabextract`).
   - *Mitgeliefert:* winetricks fest auf `winetricks.lock.json`, unter Linux cabextract samt
     libmspack hinter einem Wrapper (`tools/fetch-winetricks.mjs`, SteamOS hat kein cabextract).
-    Vor dem Lauf nach `<data>/tools/winetricks` kopiert, weil Ressourcen das Exec-Bit verlieren und
+    Der Wrapper (`tools/cabextract-wrapper.sh`) entpackt `-d` über einen Zwischenordner im Ziel
+    und verschiebt nur bei Erfolg: In einem Proton-Prefix sind die eingebauten DLLs in
+    `system32`/`syswow64` Symlinks in die Proton-Installation, cabextract schrieb hindurch
+    (dort schreibgeschützt, `directplay` brach bei `dplaysvr.exe` ab); `mv` ersetzt den Link wie
+    winetricks' `w_try_cp_dll`. Proton lässt ersetzte DLLs bei Updates stehen
+    (`update_builtin_libs`: „builtin library was replaced“), nur ein Wechsel auf eine ältere
+    Version räumt sie ab. Vor dem Lauf nach `<data>/tools/winetricks` kopiert, weil Ressourcen das Exec-Bit verlieren und
     ein AppImage schreibgeschützt ist; unveränderte Dateien bleiben stehen (ein laufender Job führt
     sie aus), was das Paket nicht mehr mitbringt, fliegt raus. Läuft per `sh`.
   - *Abbruch:* eigene Prozessgruppe je Aufruf; nach 45 Minuten (für alle Verben zusammen) wird die

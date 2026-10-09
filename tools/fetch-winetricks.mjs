@@ -70,13 +70,9 @@ if (platform.startsWith("linux")) {
   chmodSync(path.join(bin, "cabextract.bin"), 0o755);
   copyFileSync(mspack, path.join(bin, "lib", "libmspack.so.0"));
   const wrapper = path.join(bin, "cabextract");
-  writeFileSync(
-    wrapper,
-    '#!/bin/sh\n' +
-      '# Bundled cabextract with its libmspack (see tools/fetch-winetricks.mjs).\n' +
-      'here=$(dirname "$0")\n' +
-      'LD_LIBRARY_PATH="$here/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" exec "$here/cabextract.bin" "$@"\n',
-  );
+  // The wrapper also keeps cabextract from writing through the symlinks of
+  // a Proton prefix (see the script).
+  copyFileSync(new URL("cabextract-wrapper.sh", import.meta.url), wrapper);
   chmodSync(wrapper, 0o755);
   const version = execSync(`${JSON.stringify(wrapper)} --version`).toString().trim();
   console.log(`${version} (+ ${path.basename(mspack)}) -> ${bin}`);
