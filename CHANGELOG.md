@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Startpunkt in der Startkonfiguration.** „Anderen Startpunkt wählen“ stand in den
+  Spieldetails und galt nur für den nächsten Start. Die Startpunkte des Profils (z. B. CS 1.6 oder
+  Half-Life) wählt man jetzt in der Startkonfiguration; die Auswahl füllt Startdatei, Argumente und
+  Arbeitsordner und gilt nach dem Speichern. Unter Windows, wo es keine Startkonfiguration gibt,
+  bleibt die Auswahl in den Spieldetails.
+
 - **Ein Fortschrittsbalken für die ganze Installation.** Bisher lief der Balken für Laden, Prüfen,
   Entpacken und Einrichten jeweils von vorn voll. Jetzt hat jeder Schritt einen eigenen Abschnitt,
   von Anfang an sichtbar; das Laden bekommt den größten Teil, jeder Schritt mindestens 10 %. Beim

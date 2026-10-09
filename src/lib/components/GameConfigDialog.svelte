@@ -235,6 +235,24 @@
     }
   }
 
+  // Which of the profile's starts the fields hold, -1 for one of their own.
+  // Compared as saving writes them: forward slashes, no trailing slash.
+  const norm = (path: string) => path.trim().replaceAll("\\", "/").replace(/\/+$/, "");
+  const entryIndex = $derived(
+    view && config
+      ? view.entryPoints.findIndex(
+          (p) => norm(p.exe) === norm(config!.exe) && p.args.trim() === config!.args.trim() && norm(p.workdir) === norm(config!.workdir),
+        )
+      : -1,
+  );
+  function chooseEntry(event: Event) {
+    const point = view?.entryPoints[Number((event.currentTarget as HTMLSelectElement).value)];
+    if (!point || !config) return;
+    config.exe = point.exe;
+    config.args = point.args;
+    config.workdir = point.workdir;
+  }
+
   const addEnv = () => config?.env.push({ name: "", value: "" });
   const removeEnv = (i: number) => config?.env.splice(i, 1);
 </script>
@@ -251,6 +269,17 @@
       {#if view.configError}<p class="hint warn">{t("config.unreadable", { detail: view.configError })}</p>{/if}
 
       <div class="fields">
+        {#if view.entryPoints.length}
+          <label for="cfg-entry">{t("config.entry")}</label>
+          <select id="cfg-entry" value={entryIndex} onchange={chooseEntry}>
+            {#if entryIndex === -1}<option value={-1}>{t("config.entry_own")}</option>{/if}
+            {#each view.entryPoints as point, i (i)}
+              <option value={i}>{point.name ?? t("config.entry_profile", { exe: point.exe })}</option>
+            {/each}
+          </select>
+          <p class="hint field-hint">{t("config.entry_hint")}</p>
+        {/if}
+
         <label for="cfg-exe">{t("config.exe")}</label>
         <input id="cfg-exe" list="cfg-exes" bind:value={config.exe} placeholder="Game.exe" />
         <datalist id="cfg-exes">

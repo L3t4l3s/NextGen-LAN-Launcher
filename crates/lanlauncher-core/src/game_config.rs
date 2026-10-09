@@ -48,6 +48,62 @@ pub struct GameConfig {
     pub winetricks: String,
 }
 
+/// One of the starts a profile offers (its own and its alternatives), in
+/// the editor's form: choosing it fills executable, arguments and folder.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryPoint {
+    /// The alternative's name; `None` for the profile's own start.
+    pub name: Option<String>,
+    pub exe: String,
+    pub args: String,
+    pub workdir: String,
+}
+
+/// A profile's working folder as the editor shows it: `""` from a profile
+/// is `local/` itself, shown as `.`; none is the exe's own folder, `""`.
+fn editor_workdir(workdir: Option<&str>) -> String {
+    match workdir {
+        Some("") => ".".to_string(),
+        other => other.unwrap_or_default().to_string(),
+    }
+}
+
+/// The starts `profile` offers on `platform`, its own first; empty when it
+/// has no alternatives, there is nothing to choose then. A start without an
+/// executable (the profile starts through the script) is left out — the
+/// editor cannot save one — and so is one that repeats an earlier start.
+pub fn entry_points(profile: Option<&Manifest>, platform: &str) -> Vec<EntryPoint> {
+    let Some(spec) = profile.map(|m| m.launch_for(platform)) else {
+        return Vec::new();
+    };
+    if spec.alternatives.is_empty() {
+        return Vec::new();
+    }
+    let mut points: Vec<EntryPoint> = Vec::new();
+    let own = EntryPoint {
+        name: None,
+        exe: spec.exe.clone(),
+        args: join_words(&spec.args),
+        workdir: editor_workdir(spec.workdir.as_deref()),
+    };
+    let alternatives = spec.alternatives.iter().map(|a| EntryPoint {
+        name: Some(a.name.clone()),
+        exe: a.exe.clone(),
+        args: join_words(&a.args),
+        workdir: editor_workdir(a.workdir.as_deref()),
+    });
+    for point in std::iter::once(own).chain(alternatives) {
+        let same = |p: &EntryPoint| {
+            p.exe == point.exe && p.args == point.args && p.workdir == point.workdir
+        };
+        if !point.exe.is_empty() && !points.iter().any(same) {
+            points.push(point);
+        }
+    }
+    points
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvVar {
@@ -86,10 +142,7 @@ impl GameConfig {
         // An empty working folder left in the spec can only be `[launch]`'s,
         // and there `resolve_exe` takes it as `local/` itself: shown as `.`,
         // since empty in the editor means the exe's folder.
-        let workdir = match spec.workdir.as_deref() {
-            Some("") => ".".to_string(),
-            other => other.unwrap_or_default().to_string(),
-        };
+        let workdir = editor_workdir(spec.workdir.as_deref());
         let (exe, args, workdir) = match exe_override {
             Some(exe) => (exe.to_string(), String::new(), String::new()),
             None => (spec.exe, join_words(&spec.args), workdir),
@@ -765,6 +818,36 @@ pub fn percent_encode(text: &str) -> String {
 mod tests {
     use super::*;
     use crate::manifest::{LaunchSpec, ManifestOrigin};
+
+    #[test]
+    fn the_entry_points_are_the_profiles_start_and_its_alternatives() {
+        let m = Manifest::parse(
+            "schema = 1\nid = \"g\"\n[launch]\nexe = \"hl.exe\"\nargs = [\"-game\", \"cstrike\"]\n\
+             required_files = [\"hl.exe\"]\n\
+             [[launch.alternatives]]\nname = \"Half-Life\"\nexe = \"hl.exe\"\nargs = []\nworkdir = \"hl\"\n",
+            Path::new("g.toml"),
+        )
+        .unwrap();
+        let points = entry_points(Some(&m), "linux");
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[0].name, None);
+        assert_eq!(points[0].args, "-game cstrike");
+        assert_eq!(points[1].name.as_deref(), Some("Half-Life"));
+        assert_eq!(points[1].workdir, "hl");
+        // A start without an executable cannot be chosen; a repeat neither.
+        let mut scripted = m.clone();
+        scripted.launch.exe.clear();
+        scripted
+            .launch
+            .alternatives
+            .push(scripted.launch.alternatives[0].clone());
+        let points = entry_points(Some(&scripted), "linux");
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0].name.as_deref(), Some("Half-Life"));
+        let mut plain = m.clone();
+        plain.launch.alternatives.clear();
+        assert!(entry_points(Some(&plain), "linux").is_empty());
+    }
 
     #[test]
     fn a_bug_report_keeps_the_log_out_of_its_links() {

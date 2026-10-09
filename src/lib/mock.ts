@@ -349,6 +349,13 @@ export function createMock() {
           executables: ["Game.exe", "bin/Launcher.exe", "tools/Config.exe"],
           platform: bootstrap.platform,
           reportEmail: "launcher@schimnick.de",
+          entryPoints:
+            id === "goldsrc"
+              ? [
+                  { name: null, exe: "hl-cs16/SmartSteamLoader.exe", args: "-game cstrike", workdir: "hl-cs16" },
+                  { name: "Half-Life", exe: "hl-cs16/SmartSteamLoader.exe", args: "", workdir: "hl-cs16" },
+                ]
+              : [],
         };
       case "save_game_config": {
         const config = args.config as GameConfig;

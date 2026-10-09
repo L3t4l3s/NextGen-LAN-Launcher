@@ -368,6 +368,16 @@ export interface GameConfigView {
   executables: string[];
   platform: string;
   reportEmail: string;
+  /** The starts the profile offers (its own first), to fill the fields from; empty without alternatives. */
+  entryPoints: EntryPoint[];
+}
+
+export interface EntryPoint {
+  /** The alternative's name; null for the profile's own start. */
+  name: string | null;
+  exe: string;
+  args: string;
+  workdir: string;
 }
 
 export interface ConfigReport {

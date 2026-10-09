@@ -29,6 +29,9 @@
   let showExeChooser = $state(false);
   let showConfig = $state(false);
   let showReport = $state(false);
+  // Windows has no start configuration: the profile's other entry points
+  // are chosen here, for the next start.
+  let alternative = $state<number | null>(null);
   let executables = $state<string[]>([]);
   let plan = $state<LaunchPlan | null>(null);
   let runnerChoices = $state<RunnerChoices | null>(null);
@@ -53,7 +56,6 @@
     videoFailed = false;
   });
   const showVideo = $derived(!!game.video && !videoFailed);
-  let alternative = $state<number | null>(null);
 
   let runnerRequest = 0;
   $effect(() => {
@@ -78,8 +80,8 @@
     // reset per game
     game.id;
     plan = null;
-    shareKey = null;
     alternative = null;
+    shareKey = null;
     showExeChooser = false;
     if (folderMode) api.shareKey(game.id).then((k) => (shareKey = k)).catch(() => (shareKey = null));
   });
@@ -174,7 +176,6 @@
   async function offerComponents(verbs: string) {
     const id = game.id;
     const title = game.title;
-    const chosen = alternative ?? undefined;
     const choice = await chooseDialog(t("detail.components.ask", { title, verbs }), {
       yes: t("detail.components.install"),
       no: t("detail.components.without"),
@@ -192,7 +193,7 @@
     // only meet the busy prefix.
     working = true;
     try {
-      const result = await api.installComponents(id, false, chosen);
+      const result = await api.installComponents(id, false);
       componentRuns.results[id] = result;
       if (result.failed.length) {
         app.toast("error", t("config.components.failed_toast", { title, verbs: result.failed.join(" ") }));
@@ -226,7 +227,6 @@
   let planRequest = 0;
   $effect(() => {
     const id = gameId;
-    const alt = alternative;
     runnerRevision;
     const token = ++planRequest;
     if (!playable) {
@@ -236,7 +236,7 @@
     // Only the newest request may set the plan; a slow answer for a game
     // the user has already left is dropped.
     api
-      .launchPlan(id, alt ?? undefined)
+      .launchPlan(id)
       .then((p) => {
         if (token === planRequest) plan = p;
       })
@@ -352,6 +352,15 @@
     {/if}
 
     <section class="launch-info">
+      {#if platform === "windows" && game.manifest?.alternatives.length}
+        <label for="alt">{t("config.entry")}</label>
+        <select id="alt" bind:value={alternative}>
+          <option value={null}>{game.manifest.exe || t("config.entry_script")}</option>
+          {#each game.manifest.alternatives as alt, i (alt)}
+            <option value={i}>{alt}</option>
+          {/each}
+        </select>
+      {/if}
       {#if selectedRunnerMissing}
         <p class="hint warn-text">{t("detail.runner_missing_hint")}</p>
       {/if}
@@ -370,15 +379,6 @@
           {#if game.manifest.testedWith.length && game.manifest.verifiedForRevision}<br /><strong>{t("detail.tested_with")}:</strong> {game.manifest.testedWith.join(", ")}{/if}
           {#if game.manifest.notes}<br />{game.manifest.notes}{/if}
         </p>
-        {#if game.manifest.alternatives.length}
-          <label for="alt">{t("action.play_alt")}</label>
-          <select id="alt" bind:value={alternative}>
-            <option value={null}>{game.manifest.exe}</option>
-            {#each game.manifest.alternatives as alt, i (alt)}
-              <option value={i}>{alt}</option>
-            {/each}
-          </select>
-        {/if}
       {:else if platform !== "windows"}
         <p class="hint">{t("detail.manifest.none", { platform })}</p>
       {/if}

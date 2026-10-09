@@ -1695,6 +1695,8 @@ pub struct GameConfigView {
     pub platform: &'static str,
     /// The address the "send by mail" button writes to.
     pub report_email: &'static str,
+    /// The starts the profile offers, to fill the fields from.
+    pub entry_points: Vec<lanlauncher_core::game_config::EntryPoint>,
 }
 
 /// The game and its paths, from one settings copy.
@@ -1760,6 +1762,14 @@ pub async fn get_game_config(
     let (_, paths, manifest) = config_basis(&state, &game_id).await?;
     let state_manifests = state.manifests.clone();
     tauri::async_runtime::spawn_blocking(move || GameConfigView {
+        // From the profile without the tester's configuration: its own
+        // start is what "back to the profile's start" means.
+        entry_points: lanlauncher_core::game_config::entry_points(
+            state_manifests
+                .resolve_profile_for(&game_id, &paths)
+                .as_ref(),
+            Manifest::current_platform(),
+        ),
         config: config_in_force(manifest.as_ref(), &paths),
         own: manifest.as_ref().is_some_and(|m| m.user_config),
         config_error: state_manifests
