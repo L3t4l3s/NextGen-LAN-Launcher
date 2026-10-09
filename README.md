@@ -178,6 +178,10 @@ again.
 
 ## Open items
 
+- **Alien Swarm: Reactive Drop on macOS — untested:** package 20190317 hangs at the menu
+  background under Proton 11 (its SmartSteamEmu waits on `recvfrom` of an unbound UDP socket, which
+  Windows fails at once); `manifests/alienswarm.toml` notes that. The macOS note only assumes
+  CrossOver behaves the same.
 - **GoldSrc menu on macOS — untested:** the profile now starts the package's start script with its
   menu on every platform; under CrossOver only the direct CS 1.6 start was verified (kept as the
   alternative "Counter-Strike 1.6 (direkt)").

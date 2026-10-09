@@ -1,0 +1,29 @@
+schema = 1
+id = "alienswarm"
+title = "Alien Swarm: Reactive Drop"
+revisions = ["20190317"]
+source = "NextGen LAN Launcher: start script tried with Proton 11 (2026-10), does not start"
+
+[launch]
+# The package's start script starts SmartSteamLoader_x64.exe, which starts
+# reactivedrop.exe with SmartSteamEmu. The game stops at the menu
+# background: its main thread waits in SmartSteamEmu on recvfrom() of a UDP
+# socket that was never bound. Windows fails that call at once (WSAEINVAL)
+# and the game goes on; Wine waits for ever (checked with winedbg and a
+# winsock trace). Turning off SSE's overlay, leaderboards, online mode or
+# going offline does not change it. Without the emulator the menu comes
+# up ("no Steam connection"), which is no use on a LAN. Newer releases of
+# the game are reported to run under Proton (not tried); that needs a new
+# package on the sync server. The notes name the package revision because
+# notes are shown for every revision.
+# macOS: CrossOver is Wine as well (not tried).
+exe = ""
+args = []
+
+[setup.platform_notes.linux]
+de = "Dieses Paket (Stand 20190317) startet unter Linux nicht: Das Spiel bleibt im Hintergrundbild des Menüs stehen. Der Steam-Emulator dieses Pakets wartet unter Wine/Proton ewig auf eine Netzwerkantwort, die unter Windows sofort mit einem Fehler zurückkommt. Abhilfe bringt vermutlich erst ein neueres Paket des Spiels auf dem Sync-Server."
+en = "This package (20190317) does not start on Linux: the game stops at the menu background. This package's Steam emulator waits for ever under Wine/Proton for a network call that fails at once on Windows. Probably only a newer package of the game on the sync server helps."
+
+[setup.platform_notes.macos]
+de = "Dieses Paket (Stand 20190317) startet unter macOS vermutlich nicht: Unter Linux bleibt das Spiel im Hintergrundbild des Menüs stehen, weil der Steam-Emulator dieses Pakets unter Wine ewig auf eine Netzwerkantwort wartet. CrossOver beruht ebenfalls auf Wine. Abhilfe bringt vermutlich erst ein neueres Paket des Spiels auf dem Sync-Server."
+en = "This package (20190317) probably does not start on macOS: on Linux the game stops at the menu background because this package's Steam emulator waits for ever under Wine for a network call. CrossOver is Wine as well. Probably only a newer package of the game on the sync server helps."

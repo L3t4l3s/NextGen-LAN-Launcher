@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.3.4
+
+- **Alien Swarm: Reactive Drop: Hinweis, dass das Paket unter macOS/Linux nicht startet.** Der
+  Steam-Emulator des Pakets wartet unter Wine/Proton ewig auf eine Netzwerkantwort, die unter
+  Windows sofort mit einem Fehler zurückkommt; das Spiel bleibt im Hintergrundbild des Menüs
+  stehen. Abhilfe bringt vermutlich erst ein neueres Paket auf dem Sync-Server.
+
 ## 0.3.3
 
 - **Mehrspieler in 1nsane unter macOS/Linux.** Das Spiel nutzt DirectPlay; mit Wines eigener
