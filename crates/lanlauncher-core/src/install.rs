@@ -436,6 +436,9 @@ pub struct Tracker {
     /// Archive and `local/` were found on disk without a receipt (an ETI
     /// install): try to adopt before falling back to verify + extract.
     pub adopt_candidate: bool,
+    /// The step and figure the last status showed, to notice the bar going
+    /// backwards (`fell_back`).
+    shown: Option<(u8, f64, Phase)>,
 }
 
 impl Tracker {
@@ -463,7 +466,37 @@ impl Tracker {
             problem: None,
             work_progress: 0.0,
             work_started_at: None,
+            shown: None,
         }
+    }
+
+    /// Says whether this status moves the progress bar backwards: an earlier
+    /// step than the last status, or the same step more than five points
+    /// lower. The bar covers every step of an install, so a fall back is
+    /// plain to see; testers reported one now and then, and the log is
+    /// where its cause has to come from.
+    pub fn fell_back(&mut self, status: &GameStatus) -> Option<String> {
+        let step = match status.phase {
+            Phase::Queued | Phase::Syncing | Phase::Paused => 0,
+            Phase::Verifying => 1,
+            Phase::Extracting => 2,
+            Phase::Setup => 3,
+            _ => {
+                self.shown = None;
+                return None;
+            }
+        };
+        let before = self.shown.replace((step, status.progress, status.phase));
+        let (was_step, was, was_phase) = before?;
+        (step < was_step || (step == was_step && status.progress + 0.05 < was)).then(|| {
+            format!(
+                "{:?} {:.0} % -> {:?} {:.0} %",
+                was_phase,
+                was * 100.0,
+                status.phase,
+                status.progress * 100.0
+            )
+        })
     }
 
     pub fn request_install(&mut self) {
@@ -570,6 +603,10 @@ impl Tracker {
     }
 
     pub fn verification_failed(&mut self, detail: String, archive_len: Option<u64>) {
+        log::warn!(
+            "verify: {} archive incomplete, back to the download ({detail})",
+            self.game_id
+        );
         self.phase = Phase::Syncing;
         self.verify_failed_at = Some(Instant::now());
         self.verify_failed_len = archive_len;
@@ -1757,6 +1794,22 @@ impl InstallManager {
                     .and_then(|r| r.exe_override.as_ref())
                     .is_none();
             let status = tracker.status(&obs, &self.policy, now, needs_exe_choice);
+            if let Some(change) = tracker.fell_back(&status) {
+                let engine = obs.transport.as_ref().map(|t| {
+                    format!(
+                        "{:?} {}/{} known={}",
+                        t.state, t.bytes_received, t.bytes_total, t.bytes_known
+                    )
+                });
+                log::warn!(
+                    "progress: {id} fell back, {change}; engine {}, managed={}, folder {} B, archive {:?}, problem {:?}",
+                    engine.as_deref().unwrap_or("none"),
+                    obs.managed_sync,
+                    obs.share_bytes,
+                    obs.archive_len,
+                    tracker.problem.as_ref().map(|p| p.code.as_str()),
+                );
+            }
             let _ = self.events.send(InstallEvent::Status(status.clone()));
             out.push(status);
         }
@@ -2696,6 +2749,44 @@ mod tests {
             t.problem.is_none(),
             "space warnings must clear after freeing space"
         );
+    }
+
+    #[test]
+    fn a_bar_going_backwards_is_noticed() {
+        let mut t = Tracker::new("g");
+        let mut at = |phase, progress| {
+            let mut s = t.status(
+                &obs(None, None, None, Some(0)),
+                &policy(),
+                Instant::now(),
+                false,
+            );
+            s.phase = phase;
+            s.progress = progress;
+            t.fell_back(&s)
+        };
+        assert_eq!(at(Phase::Syncing, 0.5), None);
+        assert_eq!(
+            at(Phase::Syncing, 0.48),
+            None,
+            "a little noise is not a fall back"
+        );
+        assert_eq!(
+            at(Phase::Verifying, 0.3),
+            None,
+            "a later step starts at its own zero"
+        );
+        assert_eq!(
+            at(Phase::Syncing, 0.2).as_deref(),
+            Some("Verifying 30 % -> Syncing 20 %")
+        );
+        assert_eq!(at(Phase::Syncing, 0.9), None);
+        assert!(
+            at(Phase::Syncing, 0.1).is_some(),
+            "the engine's figure dropping"
+        );
+        assert_eq!(at(Phase::Ready, 1.0), None);
+        assert_eq!(at(Phase::Syncing, 0.0), None, "a new install starts afresh");
     }
 
     #[test]
