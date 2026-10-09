@@ -28,6 +28,10 @@ describe("install steps", () => {
     expect(sum(s)).toBeCloseTo(1);
     for (const step of steps) expect(s[step]).toBeGreaterThanOrEqual(MIN_SHARE - 1e-9);
     for (const step of steps) if (step !== "download") expect(s.download).toBeGreaterThan(s[step]);
+    expect(s.download).toBeCloseTo(0.7);
+    expect(s.verify).toBeCloseTo(0.1);
+    expect(s.extract).toBeCloseTo(0.1);
+    expect(s.setup).toBeCloseTo(0.1);
   });
 
   it("lifts small steps to the floor and keeps the ratio among the rest", () => {

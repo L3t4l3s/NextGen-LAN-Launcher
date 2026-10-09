@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.3.2
+
+- **Fortschrittsbalken neu aufgeteilt:** Herunterladen 70 %, Prüfen, Entpacken und Einrichten je
+  10 %. Im LAN mit Gigabit ist das Laden fast die ganze Wartezeit.
 - **Spielername und Sprache auch bei neueren Steam-Emulatoren.** Pakete mit Goldbergs
   ColdClientLoader (`steamclient64.ccl.dll`, z. B. 7 Days to Die) und mit gbe_fork, Goldbergs
   Nachfolger (`steam_settings/configs.user.ini`, z. B. 9-Bit Armies), bekommen Namen und Sprache

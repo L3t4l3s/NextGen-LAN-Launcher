@@ -13,10 +13,11 @@ export const steps: Step[] = ["download", "verify", "extract", "setup"];
 
 /**
  * How much of the bar each step gets, before the floor below. The download
- * is usually most of the wait: it comes over the network, while checking and
- * unpacking read a local disk, and most setup scripts finish in a second.
+ * is most of the wait: most players are on gigabit Ethernet, while checking
+ * and unpacking read a local disk and most setup scripts finish in a second.
+ * The other three get the floor.
  */
-const weights: Record<Step, number> = { download: 60, verify: 12, extract: 18, setup: 10 };
+const weights: Record<Step, number> = { download: 70, verify: 10, extract: 10, setup: 10 };
 
 /** No section is narrower than this, so a quick step can still be seen and hovered. */
 export const MIN_SHARE = 0.1;
