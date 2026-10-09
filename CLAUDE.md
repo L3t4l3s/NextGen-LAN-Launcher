@@ -289,11 +289,14 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   außer Goldbergs Dateien, die es als UTF-8 liest. Ohne Profil: Goldberg (DLL nennt
   `force_account_name.txt` → `steam_settings/force_*.txt`; auch als `steamclient(64)(.ccl).dll`
   hinter dem ColdClientLoader), gbe_fork (DLL nennt `configs.user.ini` → `[user::general]
-  account_name/language`, UTF-8) und SmartSteamEmu (jede
+  account_name/language`, UTF-8; nur wo dessen `configs.*.ini` liegen), älteres Goldberg ohne
+  `force_*` (DLL nennt nur `account_name.txt` → nur `settings/`, AvP), RELOADED (`steam_rld.ini`
+  `[Settings] UserName/Language`) und SmartSteamEmu (jede
   `SmartSteamEmu.ini`: `[SmartSteamEmu] PersonaName/Language`). Fehlt die Sprache in der Tabelle
   eines Profils, bleibt der Wert stehen. Der Ort, wo ein Spiel den Namen liest, steht oft woanders,
   als das ETI-Skript schreibt (UT2004 `User.ini`), also am Paket nachsehen, nicht abschreiben.
-  Registry-Werte als Text oder `type = "dword"` (Zahl, beim Laden geprüft). `xml = "element"`
+  Registry-Werte als Text oder `type = "dword"` (Zahl, beim Laden geprüft). `quote = false`
+  schreibt eine Zeile `KEY Wert` ohne Anführungszeichen (Armagetron `user.cfg`). `xml = "element"`
   setzt den Text eines vorhandenen Elements (Groß-/Kleinschreibung egal, Anno schreibt
   `<LanguageTAG>…</LanguageTag>`); eine Datei ohne das Element bleibt, wie sie ist, und wird nie
   angelegt (AoM Titans: `<profilelanname>` in `Default.prf`, UTF-16). Lizenzdialoge alter

@@ -177,6 +177,13 @@ key = "FIRSTRUN"
 type = "dword"
 value = "1"
 
+[[settings]]                           # a config line without quotes: PLAYER_1 Bazzite
+folder = "appdata"
+file = "Armagetron/var/user.cfg"
+line = "PLAYER_1"
+quote = false
+value = "%player%"
+
 [[settings]]                           # the text of an XML element (the file must have it)
 folder = "documents"
 file = "My Games/Age of Mythology/Users/Default.prf"

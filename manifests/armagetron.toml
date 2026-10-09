@@ -1,0 +1,38 @@
+schema = 1
+id = "armagetron"
+title = "Armagetron Advanced"
+revisions = ["20250125"]
+source = "NextGen LAN Launcher: start script checked with Proton 11 (2026-10)"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's start script starts armagetronad.exe. The game keeps its
+# settings in user.cfg in the Windows user's folder, one "KEY value" per
+# line, values bare. Without it the first start asks for a language and a
+# player (offering the login name); set beforehand, it goes to the menu.
+exe = ""
+args = []
+
+[[settings]]
+folder = "appdata"
+file = "Armagetron/var/user.cfg"
+line = "PLAYER_1"
+quote = false
+value = "%player%"
+
+[[settings]]
+folder = "appdata"
+file = "Armagetron/var/user.cfg"
+line = "LANGUAGE_FIRST"
+quote = false
+value = { de = 'Deutsch', en = 'British\ English', fr = 'Francais' }
+
+[[settings]]
+folder = "appdata"
+file = "Armagetron/var/user.cfg"
+line = "FIRST_USE"
+quote = false
+value = "0"

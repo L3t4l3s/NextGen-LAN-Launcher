@@ -1,0 +1,16 @@
+schema = 1
+id = "avp"
+title = "Aliens vs. Predator"
+revisions = ["20191001"]
+source = "NextGen LAN Launcher: start script checked with Proton 11 (2026-10)"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's start script copies the language's files and starts
+# AvP_DX11.exe (German menu). Its Goldberg build is an older one that reads
+# only settings/account_name.txt; the launcher sets the name there.
+exe = ""
+args = []

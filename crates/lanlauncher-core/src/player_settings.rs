@@ -72,6 +72,11 @@ pub struct PlayerSetting {
     pub key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line: Option<String>,
+    /// `false`: the config line takes its value without quotes
+    /// (`PLAYER_1 Bazzite` in Armagetron's user.cfg); quoted by default
+    /// (`seta name "Bazzite"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quote: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub registry: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -184,6 +189,7 @@ pub enum Kind<'a> {
     Line {
         file: &'a str,
         line: &'a str,
+        quoted: bool,
     },
     WholeFile {
         file: &'a str,
@@ -247,6 +253,9 @@ impl PlayerSetting {
                 return Err("settings: json needs a file and a dotted key, nothing else");
             }
         }
+        if self.quote.is_some() && self.line.is_none() {
+            return Err("settings: quote is for config lines");
+        }
         if let Some(tag) = &self.xml {
             if self.file.is_none()
                 || self.section.is_some()
@@ -282,9 +291,11 @@ impl PlayerSetting {
                 file,
                 path: self.json.as_deref().unwrap_or_default(),
             }),
-            (Some(file), None, Some(line), None) if self.section.is_none() => {
-                Ok(Kind::Line { file, line })
-            }
+            (Some(file), None, Some(line), None) if self.section.is_none() => Ok(Kind::Line {
+                file,
+                line,
+                quoted: self.quote.unwrap_or(true),
+            }),
             (Some(file), None, None, Some(key)) => Ok(Kind::Ini {
                 file,
                 section: self.section.as_deref(),
@@ -564,7 +575,7 @@ fn write(
     let new = match kind {
         Kind::WholeFile { .. } => value.to_string(),
         Kind::Ini { section, key, .. } => set_ini(&old.text, *section, key, value, old.eol),
-        Kind::Line { line, .. } => set_line(&old.text, line, value, old.eol),
+        Kind::Line { line, quoted, .. } => set_line(&old.text, line, value, *quoted, old.eol),
         Kind::Json { path: key, .. } => match set_json(&old.text, key, value, typed) {
             Some(Some(new)) => new,
             // The key holds that value already: the file stays as it is,
@@ -824,18 +835,26 @@ fn set_ini(text: &str, section: Option<&str>, key: &str, value: &str, eol: &str)
     join(&out, text, eol)
 }
 
-/// `line "value"` (`seta name "Player"`): the line starting with `line`,
+/// `line "value"` (`seta name "Player"`), or `line value` unquoted: the line
+/// starting with `line`,
 /// any spacing between its words, replaced, or added at the end.
-fn set_line(text: &str, line: &str, value: &str, eol: &str) -> String {
+fn set_line(text: &str, line: &str, value: &str, quoted: bool, eol: &str) -> String {
     let words: Vec<String> = line
         .split_whitespace()
         .map(str::to_ascii_lowercase)
         .collect();
     let starts = |l: &str| {
         let have: Vec<String> = l.split_whitespace().map(str::to_ascii_lowercase).collect();
-        have.len() > words.len() && have[..words.len()] == words[..]
+        have.len() >= words.len() && have[..words.len()] == words[..]
     };
-    let wanted = format!("{line} \"{}\"", value.replace('"', ""));
+    let value = value.replace('"', "");
+    let wanted = if quoted {
+        format!("{line} \"{value}\"")
+    } else {
+        // A space in a bare value is escaped, as Armagetron writes
+        // `LANGUAGE_FIRST British\ English`.
+        format!("{line} {}", value.replace(' ', "\\ "))
+    };
     let mut out: Vec<String> = text.lines().map(|l| l.to_string()).collect();
     match out.iter().position(|l| starts(l)) {
         Some(at) => out[at] = wanted,
@@ -865,6 +884,7 @@ pub fn goldberg(local: &Path, player: &Player) -> Vec<Applied> {
 }
 
 /// The SmartSteamEmu Steam emulator (started through `SmartSteamLoader.exe`,
+/// and RELOADED's with its `steam_rld.ini`, see [`emulators`]),
 /// the entry point of many ETI packages) reads the player's name and language
 /// from `[SmartSteamEmu]` in its `SmartSteamEmu.ini`: `PersonaName`,
 /// `Language`. Every such file in the package gets them, without a profile
@@ -874,8 +894,8 @@ pub fn smart_steam_emu(local: &Path, player: &Player) -> Vec<Applied> {
     emulators(local, player).1
 }
 
-/// Both emulators from one walk through the package: [`goldberg`] and
-/// [`smart_steam_emu`].
+/// Both emulator families from one walk through the package: [`goldberg`]
+/// (with gbe_fork) and [`smart_steam_emu`] (with RELOADED's `steam_rld.ini`).
 pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>) {
     let language = steam_language(&player.lang);
     let found = find_files(local, 5, |name| {
@@ -891,12 +911,13 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>) 
                 | "steamclient.ccl.dll"
                 | "steamclient64.ccl.dll"
                 | "smartsteamemu.ini"
+                | "steam_rld.ini"
         )
     });
     let (mut goldberg, mut sse) = (Vec::new(), Vec::new());
     // Which emulator each DLL is, one read per file; a folder once.
     let mut gbe_dirs = std::collections::BTreeSet::new();
-    let mut classic_dirs = std::collections::BTreeSet::new();
+    let mut classic_dirs = std::collections::BTreeMap::new();
     for dll in found.iter().filter(|path| !is_ini(path)) {
         let (gbe, classic) = emulator_marks(dll);
         let Some(dir) = dll.parent() else { continue };
@@ -909,12 +930,15 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>) 
                 .any(|c| dir.join("steam_settings").join(c).is_file())
         {
             gbe_dirs.insert(dir.to_path_buf());
-        } else if classic {
-            classic_dirs.insert(dir.to_path_buf());
+        } else if classic != Classic::No {
+            // Two builds side by side (32 and 64 bit): the one that reads
+            // more decides.
+            let mark = classic_dirs.entry(dir.to_path_buf()).or_insert(classic);
+            *mark = (*mark).max(classic);
         }
     }
     // A build that names both is gbe_fork (it mentions the old files).
-    classic_dirs.retain(|dir| !gbe_dirs.contains(dir));
+    classic_dirs.retain(|dir, _| !gbe_dirs.contains(dir));
     // gbe_fork, Goldberg's successor, reads `[user::general]` in
     // `steam_settings/configs.user.ini` instead (9-Bit Armies); as UTF-8.
     for dir in gbe_dirs {
@@ -940,13 +964,15 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>) 
             }
         }
     }
-    for dir in classic_dirs {
+    for (dir, classic) in classic_dirs {
         let settings = dir.join("steam_settings");
         for (name, value) in [
             ("force_account_name.txt", Some(player.name.as_str())),
             ("force_language.txt", language),
         ] {
-            if let Some(value) = value {
+            // Older builds know no `force_*` files (Aliens vs. Predator):
+            // only their `settings/` below counts.
+            if let (Some(value), Classic::Force) = (value, classic) {
                 let kind = Kind::WholeFile { file: name };
                 goldberg.push(set_inside(
                     local,
@@ -974,14 +1000,24 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>) 
         }
     }
     for ini in found.iter().filter(|path| is_ini(path)) {
+        // RELOADED's emulator (Aliens versus Predator Classic 2000) keeps
+        // the same in `[Settings]` of its `steam_rld.ini`.
+        let rld = ini
+            .file_name()
+            .is_some_and(|n| n.eq_ignore_ascii_case("steam_rld.ini"));
+        let (file, section, name_key) = if rld {
+            ("steam_rld.ini", "Settings", "UserName")
+        } else {
+            ("SmartSteamEmu.ini", "SmartSteamEmu", "PersonaName")
+        };
         for (key, value) in [
-            ("PersonaName", Some(player.name.as_str())),
+            (name_key, Some(player.name.as_str())),
             ("Language", language),
         ] {
             if let Some(value) = value {
                 let kind = Kind::Ini {
-                    file: "SmartSteamEmu.ini",
-                    section: Some("SmartSteamEmu"),
+                    file,
+                    section: Some(section),
                     key,
                 };
                 sse.push(set_inside(
@@ -1003,16 +1039,26 @@ fn is_ini(path: &Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("ini"))
 }
 
+/// Which classic Goldberg a DLL is: one that reads the `force_*` files, an
+/// older one that knows only `settings/account_name.txt` (its local-save
+/// mode), or none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Classic {
+    No,
+    LocalSave,
+    Force,
+}
+
 /// Whether the DLL at `path` names gbe_fork's settings file
-/// (`configs.user.ini`) and Goldberg's (`force_account_name.txt`), from one
-/// read, remembered by size and time: reading the file before every start
-/// is not needed when the package did not change.
-fn emulator_marks(path: &Path) -> (bool, bool) {
+/// (`configs.user.ini`), and which classic Goldberg it is ([`Classic`]),
+/// from one read, remembered by size and time: reading the file before
+/// every start is not needed when the package did not change.
+fn emulator_marks(path: &Path) -> (bool, Classic) {
     type Seen =
-        std::collections::HashMap<PathBuf, (u64, Option<std::time::SystemTime>, (bool, bool))>;
+        std::collections::HashMap<PathBuf, (u64, Option<std::time::SystemTime>, (bool, Classic))>;
     static SEEN: std::sync::Mutex<Option<Seen>> = std::sync::Mutex::new(None);
     let Ok(meta) = std::fs::metadata(path) else {
-        return (false, false);
+        return (false, Classic::No);
     };
     let stamp = (meta.len(), meta.modified().ok());
     let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
@@ -1026,14 +1072,18 @@ fn emulator_marks(path: &Path) -> (bool, bool) {
     let answer = if meta.len() < 32 << 20 {
         std::fs::read(path)
             .map(|b| {
-                (
-                    has(&b, b"configs.user.ini"),
-                    has(&b, b"force_account_name.txt"),
-                )
+                let classic = if has(&b, b"force_account_name.txt") {
+                    Classic::Force
+                } else if has(&b, b"account_name.txt") && has(&b, b"local_save.txt") {
+                    Classic::LocalSave
+                } else {
+                    Classic::No
+                };
+                (has(&b, b"configs.user.ini"), classic)
             })
-            .unwrap_or((false, false))
+            .unwrap_or((false, Classic::No))
     } else {
-        (false, false)
+        (false, Classic::No)
     };
     seen.insert(path.to_path_buf(), (stamp.0, stamp.1, answer));
     answer
@@ -1434,6 +1484,29 @@ mod tests {
     }
 
     #[test]
+    fn an_unquoted_config_line_keeps_the_value_bare() {
+        assert_eq!(
+            set_line(
+                "A 1\n                    PLAYER_1 kevin\n",
+                "PLAYER_1",
+                "Bazzite",
+                false,
+                "\n"
+            ),
+            "A 1\nPLAYER_1 Bazzite\n"
+        );
+        assert_eq!(
+            set_line("", "seta name", "B", true, "\n"),
+            "seta name \"B\"\n"
+        );
+        assert!(
+            setting("file = 'a.cfg'\nkey = 'k'\nquote = false\nvalue = 'x'")
+                .kind()
+                .is_err()
+        );
+    }
+
+    #[test]
     fn an_xml_element_gets_the_name_in_its_own_encoding() {
         let tmp = tempfile::tempdir().unwrap();
         let docs = tmp.path().join("Documents/My Games/Age of Mythology/Users");
@@ -1506,6 +1579,80 @@ mod tests {
             std::fs::read_to_string(&plain).unwrap(),
             "<p><name>Jürgen</name></p>"
         );
+    }
+
+    #[test]
+    fn reloadeds_emulator_gets_the_name_in_its_settings() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("steam_rld.ini"),
+            "[Steam]\r\nAppId=3730\r\n[Settings]\r\nUserName=ChangeMe\r\nLanguage=english\r\n",
+        )
+        .unwrap();
+        let player = Player {
+            name: "Bazzite".into(),
+            lang: "de".into(),
+        };
+        smart_steam_emu(tmp.path(), &player);
+        let text = std::fs::read_to_string(tmp.path().join("steam_rld.ini")).unwrap();
+        assert!(text.contains("UserName=Bazzite\r\n"), "{text}");
+        assert!(text.contains("Language=german\r\n"));
+        assert!(!text.contains("PersonaName"));
+    }
+
+    #[test]
+    fn a_bare_value_escapes_its_spaces_and_an_empty_key_is_filled() {
+        assert_eq!(
+            set_line("PLAYER_1\n", "PLAYER_1", "Max Mustermann", false, "\n"),
+            "PLAYER_1 Max\\ Mustermann\n"
+        );
+    }
+
+    #[test]
+    fn the_goldberg_that_reads_more_decides_for_its_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("steam_api64.dll"),
+            b"MZ...account_name.txt...local_save.txt",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("steam_api.dll"),
+            b"MZ...force_account_name.txt...",
+        )
+        .unwrap();
+        let player = Player {
+            name: "B".into(),
+            lang: "de".into(),
+        };
+        goldberg(tmp.path(), &player);
+        assert!(tmp
+            .path()
+            .join("steam_settings/force_account_name.txt")
+            .exists());
+    }
+
+    #[test]
+    fn an_older_goldberg_gets_the_name_in_its_local_save_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("steam_api64.dll"),
+            b"MZ...settings\\account_name.txt...local_save.txt",
+        )
+        .unwrap();
+        std::fs::create_dir_all(tmp.path().join("settings")).unwrap();
+        std::fs::write(tmp.path().join("settings/account_name.txt"), "ChangeMe").unwrap();
+        let player = Player {
+            name: "Jürgen".into(),
+            lang: "de".into(),
+        };
+        let done = goldberg(tmp.path(), &player);
+        assert_eq!(done.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("settings/account_name.txt")).unwrap(),
+            "Jürgen"
+        );
+        assert!(!tmp.path().join("steam_settings").exists());
     }
 
     #[test]

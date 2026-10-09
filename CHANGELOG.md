@@ -15,7 +15,13 @@
   Auflösung und brach ab („Initialization Failed“, AoM Titans). Der Launcher fragt die Auflösung
   jetzt in einer Form ab, die Wine beantwortet.
 - **Profile können Text in XML-Dateien setzen** (`xml = "element"`), etwa den LAN-Namen in AoMs
-  Spielerprofil.
+  Spielerprofil, und Konfigurationszeilen ohne Anführungszeichen schreiben (`quote = false`,
+  Armagetron: `PLAYER_1 Bazzite`).
+- **Namen auch bei älterem Goldberg und beim RELOADED-Emulator.** Goldberg-Versionen, die nur
+  `settings/account_name.txt` kennen (Aliens vs. Predator), und `steam_rld.ini` (Aliens versus
+  Predator Classic 2000) bekommen Namen und Sprache jetzt ohne eigenes Profil.
+- **Weitere Startprofile:** Armagetron Advanced (Name und Sprache gesetzt, kein Erststart-Dialog
+  mehr), Aliens vs. Predator, Aliens versus Predator Classic 2000.
 
 ## 0.3.1
 
