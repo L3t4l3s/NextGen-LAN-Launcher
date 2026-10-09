@@ -80,8 +80,8 @@ therefore needs step 1 once.
 
 ## Installing a build
 
-CI and releases publish one artifact per operating system (`bundles-<os>` on the run page); the
-installers sit at the top of the downloaded zip.
+CI and releases publish one artifact per operating system (`bundles-windows`, `bundles-macos`,
+`bundles-linux-x64` on the run page); the installers sit at the top of the downloaded zip.
 
 * **Windows:** `NextGen LAN Launcher_<version>_x64-setup.exe` (NSIS). The build is not signed, so
   SmartScreen shows "unknown publisher" — *More info → Run anyway*.
@@ -97,7 +97,7 @@ SteamOS's system partition is read-only, so `.deb` and `.rpm` cannot be installe
 
 ```bash
 cd ~/Downloads
-unzip bundles-ubuntu-22.04.zip -d nextgen      # Dolphin: right-click → Extract → Extract archive here
+unzip bundles-linux-x64.zip -d nextgen      # Dolphin: right-click → Extract → Extract archive here
 chmod +x nextgen/*.AppImage
 ./nextgen/NextGen\ LAN\ Launcher_*.AppImage
 ```

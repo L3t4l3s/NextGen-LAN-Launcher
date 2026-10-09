@@ -22,12 +22,15 @@ jobs:
         include:
           - os: ubuntu-22.04
             platform: linux-x64
+            artifact: linux-x64
             args: ""
           - os: windows-latest
             platform: windows
+            artifact: windows
             args: ""
           - os: macos-latest
             platform: osx
+            artifact: macos
             args: "--target universal-apple-darwin"
     steps:
       - uses: actions/checkout@v5
@@ -115,6 +118,8 @@ jobs:
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v6
         with:
-          name: bundles-${{ matrix.os }}
+          # Named for what the files run on, not the runner that built them:
+          # "ubuntu-22.04" read as if the Linux files were for Ubuntu only.
+          name: bundles-${{ matrix.artifact }}
           if-no-files-found: warn
           path: installers/*
