@@ -271,7 +271,13 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   bleibt bis zum Prozessende. Startplan und Vorbereitung kommen aus einer Auflösung
   (`build_start`, jede sucht alle Steam-Bibliotheken ab). Die Skriptdateien werden nur bei
   geändertem Inhalt neu geschrieben (`write_if_changed`): cmd liest per Offset weiter, ein
-  zweiter Start darf die Datei des ersten nicht verschieben.
+  zweiter Start darf die Datei des ersten nicht verschieben. Fragt ein Skript die Auflösung per
+  `wmic path Win32_VideoController get CurrentHorizontalResolution,… /format:value` ab (AoM
+  Titans), setzt `with_screen_query` vor die erste Zeile dieselbe Abfrage in Tabellenform
+  (nur beim ganzen Startskript): Wines `wmic` kennt `/format:value` nicht („Ungültige Anfrage“), die Schleife setzt dann
+  nichts, und das Spiel bekam `xres=`. Die Tabellenform liefert, was das Spiel sieht; die
+  bevorzugte Auflösung des Bildschirms aus `/sys/class/drm` war auf einem kleineren Desktop
+  falsch (nachgestellt: 1280×800 statt 1280×731, „Initialization Failed“).
 - **Spielername und Sprache (`player_settings`):** vor jedem Start, auf allen Plattformen,
   zusätzlich zum ETI-Skript (`player::apply` in `play_game`, nach Setup/Vorbereitung, vor dem
   Spawn). `[[settings]]` im Profil: INI-Schlüssel im Abschnitt, `line = "seta name"`, ganze Datei,
@@ -287,7 +293,10 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   `SmartSteamEmu.ini`: `[SmartSteamEmu] PersonaName/Language`). Fehlt die Sprache in der Tabelle
   eines Profils, bleibt der Wert stehen. Der Ort, wo ein Spiel den Namen liest, steht oft woanders,
   als das ETI-Skript schreibt (UT2004 `User.ini`), also am Paket nachsehen, nicht abschreiben.
-  Registry-Werte als Text oder `type = "dword"` (Zahl, beim Laden geprüft). Lizenzdialoge alter
+  Registry-Werte als Text oder `type = "dword"` (Zahl, beim Laden geprüft). `xml = "element"`
+  setzt den Text eines vorhandenen Elements (Groß-/Kleinschreibung egal, Anno schreibt
+  `<LanguageTAG>…</LanguageTag>`); eine Datei ohne das Element bleibt, wie sie ist, und wird nie
+  angelegt (AoM Titans: `<profilelanname>` in `Default.prf`, UTF-16). Lizenzdialoge alter
   Microsoft-Spiele schreiben beim Annehmen ein DWORD `FIRSTRUN=1` (AoE III unter
   `…\Age of Empires 3 Expansion Pack 2\1.0`, AoE II Conquerors unter `…\1.0\EULA`; bei AoE III
   beidseitig geprüft) — gesetzt vorab, erscheint der Dialog nicht, der sonst gern hinter dem

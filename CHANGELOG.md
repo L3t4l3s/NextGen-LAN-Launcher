@@ -7,7 +7,15 @@
   Nachfolger (`steam_settings/configs.user.ini`, z. B. 9-Bit Armies), bekommen Namen und Sprache
   jetzt ohne eigenes Profil.
 - **Neue Startprofile, unter Linux mit Proton 11 geprüft:** 1nsane, 7 Days to Die (EULA wird
-  vorab bestätigt), 8-Bit Hordes, 9-Bit Armies, Armies of Exigo.
+  vorab bestätigt), 8-Bit Hordes, 9-Bit Armies, Armies of Exigo, Anno 1701 (braucht die
+  Komponente `vcrun2022`, der Launcher bietet sie an), Age of Mythology: The Titans (Lizenz vorab
+  bestätigt, Nickname für LAN-Spiele gesetzt).
+- **Startskripte, die die Bildschirmauflösung per `wmic` abfragen, funktionieren unter
+  macOS/Linux.** Wines `wmic` kennt das Format `/format:value` nicht; das Spiel bekam eine leere
+  Auflösung und brach ab („Initialization Failed“, AoM Titans). Der Launcher fragt die Auflösung
+  jetzt in einer Form ab, die Wine beantwortet.
+- **Profile können Text in XML-Dateien setzen** (`xml = "element"`), etwa den LAN-Namen in AoMs
+  Spielerprofil.
 
 ## 0.3.1
 

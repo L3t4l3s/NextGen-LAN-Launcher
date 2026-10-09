@@ -468,6 +468,9 @@ fn log_skipped(game_id: &str, what: &str, skipped: &[Skipped]) {
             (setup_script::Reason::FindAndReplace, _) => "kept",
             (setup_script::Reason::Arguments, _) => "arguments added",
             (setup_script::Reason::ArgumentsUnused, _) => "not applied",
+            (setup_script::Reason::ScreenQuery, _) => {
+                "screen size asked in a form Wine's wmic answers"
+            }
             (_, true) => "command replaced by ver>nul",
             (_, false) => "skipped",
         };

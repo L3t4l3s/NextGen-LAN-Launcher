@@ -177,6 +177,12 @@ key = "FIRSTRUN"
 type = "dword"
 value = "1"
 
+[[settings]]                           # the text of an XML element (the file must have it)
+folder = "documents"
+file = "My Games/Age of Mythology/Users/Default.prf"
+xml = "profilelanname"
+value = "%player%"
+
 [[settings]]                           # a JSON key in the Windows user's folders
 folder = "locallow"                    # game (local/, default), appdata, localappdata, locallow, documents
 file = "Innersloth/Among Us/player.amogus"

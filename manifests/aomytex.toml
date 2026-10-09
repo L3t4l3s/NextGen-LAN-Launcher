@@ -1,0 +1,36 @@
+schema = 1
+id = "aomytex"
+title = "Age of Mythology: The Titans"
+revisions = ["20250125"]
+source = "NextGen LAN Launcher: start script checked with Proton 11 (2026-10)"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's start script asks wmic for the screen size and starts
+# aomx.exe with it; Wine's wmic does not answer that form, so the launcher
+# adds a line that asks in one it does (setup_script::with_screen_query);
+# without it the game fails with "Initialization Failed". The package is
+# English only (one language.dll).
+exe = ""
+args = []
+
+# The Titans asks for its licence on the first start. Accepting it sets this
+# value (seen in the registry); set beforehand, the game starts straight
+# away.
+[[settings]]
+registry = 'HKCU\Software\Microsoft\Microsoft Games\Age of Mythology Expansion Pack\1.0'
+key = "FIRSTRUN"
+type = "dword"
+value = "1"
+
+# The name the LAN screen offers: the game keeps it in its profile, a
+# UTF-16 XML file it makes on the first start (the first LAN game asks for
+# it; from then on it is the player's).
+[[settings]]
+folder = "documents"
+file = "My Games/Age of Mythology/Users/Default.prf"
+xml = "profilelanname"
+value = "%player%"

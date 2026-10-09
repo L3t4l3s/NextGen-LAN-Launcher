@@ -94,6 +94,9 @@ pub enum Reason {
     /// A `[[script_args]]` entry whose program the script never starts as a
     /// command; its line is 0.
     ArgumentsUnused,
+    /// Not left out: a line added after the first that asks Wine for the
+    /// screen size in a form its wmic answers (`with_screen_query`); line 0.
+    ScreenQuery,
 }
 
 /// Written into a `rem` line that may stand inside an `if` block, so it holds
@@ -115,6 +118,7 @@ impl std::fmt::Display for Reason {
             Reason::ArgumentsUnused => {
                 f.write_str("the profile's arguments found no such program in the script")
             }
+            Reason::ScreenQuery => f.write_str("Wine's wmic answers no /format:value"),
         }
     }
 }
@@ -579,6 +583,53 @@ fn add_arguments(line: &[u8], wanted: &[(String, String)], found: &mut [bool]) -
     Some(out)
 }
 
+/// A start script that sizes the game to the screen the way ETI's newer
+/// packages do (Age of Mythology: Titans) asks `wmic path
+/// Win32_VideoController get CurrentHorizontalResolution,CurrentVerticalResolution
+/// /format:value` inside a `for /f` and starts the game with
+/// `xres=%CurrentHorizontalResolution%`. Wine's wmic knows the query but
+/// not `/format:value` ("invalid query"): the loop sets nothing and the game
+/// fails ("Initialization Failed"). A line before the script's first
+/// (outside any block; `filter` has taken off a byte order mark) asks the same in the table form Wine
+/// answers, which is what the game sees — the screen's own mode is not,
+/// under a scaled desktop. The script's loop then sets nothing and leaves
+/// these alone. Lines the filter made `rem` lines do not count. The first
+/// row wins (`if not defined`); one display adapter is what Wine reports.
+fn with_screen_query(filtered: Filtered) -> Filtered {
+    let asks = filtered.bytes.split(|b| *b == b'\n').any(|line| {
+        let text = String::from_utf8_lossy(line).to_ascii_lowercase();
+        let text = text.trim_start();
+        !text.starts_with("rem")
+            && text.contains("win32_videocontroller")
+            && text.contains("currenthorizontalresolution")
+    });
+    if !asks {
+        return filtered;
+    }
+    let eol: &[u8] = if filtered.bytes.windows(2).any(|w| w == b"\r\n") {
+        b"\r\n"
+    } else {
+        b"\n"
+    };
+    let query = "@for /f \"skip=1 tokens=1,2\" %%a in ('wmic path Win32_VideoController get CurrentHorizontalResolution^,CurrentVerticalResolution') do @if not defined CurrentHorizontalResolution set \"CurrentHorizontalResolution=%%a\"& set \"CurrentVerticalResolution=%%b\"";
+    let Filtered { bytes, mut skipped } = filtered;
+    let mut out = Vec::with_capacity(bytes.len() + query.len() + 2);
+    out.extend_from_slice(query.as_bytes());
+    out.extend_from_slice(eol);
+    out.extend_from_slice(&bytes);
+    skipped.push(Skipped {
+        line: 0,
+        text: query.to_string(),
+        reason: Reason::ScreenQuery,
+        inline: true,
+    });
+    skipped.sort_by_key(|s| s.line);
+    Filtered {
+        bytes: out,
+        skipped,
+    }
+}
+
 /// `filtered` with a profile's arguments added ([`add_arguments`]). Each
 /// line that got some is noted with [`Reason::Arguments`] — the list is of
 /// lines that did not run as written, not only of lines left out — and
@@ -798,7 +849,9 @@ pub fn prepare(
         Script::Setup | Script::Start | Script::Settings => text,
     };
     let filtered = match script {
-        Script::Start => with_arguments(filter(&text), extra),
+        // Only a whole start script starts the game with what it asked:
+        // a preparation's variables end with its own cmd.
+        Script::Start => with_screen_query(with_arguments(filter(&text), extra)),
         Script::Setup | Script::Preparation | Script::Settings => filter(&text),
     };
     write_if_changed(
@@ -1363,5 +1416,31 @@ mod tests {
             .unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn a_screen_query_gets_a_line_wine_can_answer() {
+        let script = "@echo off\r\nfor /f \"delims=\" %%# in  ('\"wmic path Win32_VideoController  get CurrentHorizontalResolution,CurrentVerticalResolution /format:value\"') do (\r\n  set \"%%#\">nul\r\n)\r\n\"aomx.exe\" xres=%CurrentHorizontalResolution%\r\n";
+        let out = with_screen_query(filter(script.as_bytes()));
+        let text = String::from_utf8(out.bytes).unwrap();
+        let lines: Vec<&str> = text.split("\r\n").collect();
+        assert!(lines[0].starts_with("@for /f \"skip=1 tokens=1,2\" %%a in ('wmic path Win32_VideoController get CurrentHorizontalResolution^,CurrentVerticalResolution')"));
+        assert_eq!(lines[1], "@echo off");
+        assert!(lines[2].starts_with("for /f \"delims=\""));
+        assert!(out.skipped.iter().any(|s| s.reason == Reason::ScreenQuery));
+        // Nothing for a script that asks no such thing.
+        let plain = with_screen_query(filter(b"\"aomx.exe\" xres=1024\r\n"));
+        assert_eq!(plain.bytes, b"\"aomx.exe\" xres=1024\r\n");
+        let remmed = with_screen_query(filter(
+            b"rem wmic path Win32_VideoController get CurrentHorizontalResolution\r\n",
+        ));
+        assert!(remmed
+            .skipped
+            .iter()
+            .all(|s| s.reason != Reason::ScreenQuery));
+        // A byte order mark is gone before (`filter`), cmd would read it as
+        // part of the command.
+        let bommed = with_screen_query(filter(b"\xEF\xBB\xBFset a=1\r\nwmic path Win32_VideoController get CurrentHorizontalResolution\r\n"));
+        assert!(bommed.bytes.starts_with(b"@for /f"));
     }
 }

@@ -79,6 +79,11 @@ pub struct PlayerSetting {
     /// A key in a JSON file, its levels joined by dots.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub json: Option<String>,
+    /// An element of an XML file whose text is set (`<profilelanname>` in Age
+    /// of Mythology's profile). The file must have it: an XML file this
+    /// launcher would start is no file the game can read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub xml: Option<String>,
     /// Where `file` lies; the game's `local/` when not given.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub folder: Option<Folder>,
@@ -191,6 +196,10 @@ pub enum Kind<'a> {
         file: &'a str,
         path: &'a str,
     },
+    Xml {
+        file: &'a str,
+        tag: &'a str,
+    },
 }
 
 impl PlayerSetting {
@@ -238,6 +247,21 @@ impl PlayerSetting {
                 return Err("settings: json needs a file and a dotted key, nothing else");
             }
         }
+        if let Some(tag) = &self.xml {
+            if self.file.is_none()
+                || self.section.is_some()
+                || self.key.is_some()
+                || self.line.is_some()
+                || self.json.is_some()
+                || self.value_type.is_some_and(|t| t != ValueType::Text)
+                || tag.is_empty()
+                || !tag
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+            {
+                return Err("settings: xml needs a file and an element name, nothing else");
+            }
+        }
         if self.value_type == Some(ValueType::Dword) && !all(is_dword) {
             return Err("settings: a dword value must be a number (decimal or 0x…)");
         }
@@ -250,6 +274,10 @@ impl PlayerSetting {
             (Some(file), None, _, _) if !crate::manifest::is_safe_relative(file) => {
                 Err("settings: file must be relative to local/")
             }
+            (Some(file), None, None, None) if self.xml.is_some() => Ok(Kind::Xml {
+                file,
+                tag: self.xml.as_deref().unwrap_or_default(),
+            }),
             (Some(file), None, None, None) if self.json.is_some() => Ok(Kind::Json {
                 file,
                 path: self.json.as_deref().unwrap_or_default(),
@@ -412,7 +440,8 @@ pub fn apply(
             Kind::Ini { file, .. }
             | Kind::Line { file, .. }
             | Kind::WholeFile { file }
-            | Kind::Json { file, .. } => file,
+            | Kind::Json { file, .. }
+            | Kind::Xml { file, .. } => file,
         };
         let root = match setting.folder.unwrap_or_default().below_profile() {
             None => local.to_path_buf(),
@@ -522,6 +551,11 @@ fn write(
     typed: ValueType,
 ) -> std::io::Result<bool> {
     let mut old = read(path)?;
+    // XML without a byte order mark is UTF-8 unless it declares otherwise.
+    let utf8 = utf8
+        || matches!(kind, Kind::Xml { .. })
+            && old.bom.is_empty()
+            && xml_declared(&old.text).is_none_or(|e| e.eq_ignore_ascii_case("utf-8"));
     if utf8 && old.encoding != encoding_rs::UTF_8 {
         // Another encoding's byte order mark must not stand before UTF-8.
         old.encoding = encoding_rs::UTF_8;
@@ -540,6 +574,14 @@ fn write(
                 return Err(std::io::Error::other(
                     "not JSON this launcher can set a key in; left as it is",
                 ))
+            }
+        },
+        Kind::Xml { tag, .. } => match set_xml(&old.text, tag, value) {
+            Some(new) => new,
+            None => {
+                return Err(std::io::Error::other(format!(
+                    "no <{tag}> in it (yet); left as it is"
+                )))
             }
         },
         Kind::Registry { .. } => return Ok(false),
@@ -563,7 +605,9 @@ fn write(
         }
     } else {
         let (encoded, _, lossy) = old.encoding.encode(&new);
-        if lossy {
+        // In XML the `&#321;` a lossy encoding writes is a character
+        // reference, valid in the file's declared encoding.
+        if lossy && !matches!(kind, Kind::Xml { .. }) {
             // A name ANSI cannot hold ("Łukasz", Cyrillic) would come out as
             // `&#321;`: such a file is better UTF-8, which the game may read.
             bytes = old.bom.to_vec();
@@ -617,6 +661,59 @@ fn set_at(path: PathBuf, kind: &Kind<'_>, value: &str, utf8: bool, typed: ValueT
         Ok(false) => Applied::Unchanged(path),
         Err(e) => Applied::Left(format!("{}: {e}", path.display())),
     }
+}
+
+/// The encoding an XML declaration names (`<?xml … encoding="UTF-16"?>`).
+fn xml_declared(text: &str) -> Option<&str> {
+    let decl = &text[..text.find("?>")?];
+    let at = decl.find("encoding=")? + "encoding=".len();
+    let quote = decl[at..].chars().next()?;
+    let rest = &decl[at + 1..];
+    Some(&rest[..rest.find(quote)?])
+}
+
+/// `text` with the first `<tag>` element (any case, as Anno writes
+/// `<LanguageTAG>…</LanguageTag>`; attributes allowed; an empty `<tag/>`
+/// gets its text too) holding `value`, escaped; `None` when it has no such
+/// element outside comments.
+fn set_xml(text: &str, tag: &str, value: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    let name = tag.to_ascii_lowercase();
+    let escaped = value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    let mut from = 0;
+    while let Some(found) = lower[from..].find(&format!("<{name}")) {
+        let at = from + found;
+        from = at + 1;
+        // `<!-- … -->` around it: not the element.
+        if let Some(comment) = lower[..at].rfind("<!--") {
+            if !lower[comment..at].contains("-->") {
+                continue;
+            }
+        }
+        let after = at + 1 + name.len();
+        let gt = after + lower[after..].find('>')?;
+        let head = &lower[after..gt];
+        // `<name>`, `<name a="1">`, `<name/>` — not `<name2>`.
+        if !(head.is_empty() || head.starts_with(char::is_whitespace) || head == "/") {
+            continue;
+        }
+        if head.trim_end().ends_with('/') {
+            let open = text[at..gt].trim_end().trim_end_matches('/').trim_end();
+            return Some(format!(
+                "{}{open}>{escaped}</{}>{}",
+                &text[..at],
+                &text[at + 1..after],
+                &text[gt + 1..]
+            ));
+        }
+        let start = gt + 1;
+        let end = start + lower[start..].find(&format!("</{name}"))?;
+        return Some(format!("{}{escaped}{}", &text[..start], &text[end..]));
+    }
+    None
 }
 
 /// `text` (a JSON object, or nothing yet) with `key` (levels joined by dots)
@@ -1334,6 +1431,81 @@ mod tests {
                 b"[Launcher]\r\nTarget = hl.exe\r\n\r\n[SmartSteamEmu]\r\nLanguage = german\r\nPersonaName = J\xFCrgen\r\n\r\n[DLC]\r\n"
             );
         }
+    }
+
+    #[test]
+    fn an_xml_element_gets_the_name_in_its_own_encoding() {
+        let tmp = tempfile::tempdir().unwrap();
+        let docs = tmp.path().join("Documents/My Games/Age of Mythology/Users");
+        std::fs::create_dir_all(&docs).unwrap();
+        let xml = "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n<playerprofile>\n\t<profilelanname></profilelanname>\n\t<LanguageTAG>eng</LanguageTag>\n</playerprofile>\n";
+        let mut bytes = vec![0xff, 0xfe];
+        for unit in xml.encode_utf16() {
+            bytes.extend(unit.to_le_bytes());
+        }
+        std::fs::write(docs.join("Default.prf"), &bytes).unwrap();
+        let parse = |t: &str| toml::from_str::<PlayerSetting>(t).unwrap();
+        let name = parse("folder = 'documents'\nfile = 'My Games/Age of Mythology/Users/Default.prf'\nxml = 'profilelanname'\nvalue = '%player%'");
+        let lang = parse("folder = 'documents'\nfile = 'My Games/Age of Mythology/Users/Default.prf'\nxml = 'languagetag'\nvalue = { de = 'ger' }");
+        let missing = parse("folder = 'documents'\nfile = 'My Games/Age of Mythology/Users/Other.prf'\nxml = 'profilelanname'\nvalue = '%player%'");
+        let player = Player {
+            name: "Jürgen & Co".into(),
+            lang: "de".into(),
+        };
+        let (done, _) = apply(
+            tmp.path(),
+            Some(tmp.path()),
+            &[name, lang, missing],
+            &player,
+        );
+        assert!(matches!(done[0], Applied::Written(_)));
+        assert!(
+            matches!(done[2], Applied::Left(_)),
+            "a missing file is not made"
+        );
+        assert!(!docs.join("Other.prf").exists());
+        let back = std::fs::read(docs.join("Default.prf")).unwrap();
+        assert_eq!(&back[..2], &[0xff, 0xfe]);
+        let units: Vec<u16> = back[2..]
+            .chunks(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        let text = String::from_utf16(&units).unwrap();
+        assert!(
+            text.contains("<profilelanname>Jürgen &amp; Co</profilelanname>"),
+            "{text}"
+        );
+        assert!(text.contains("<LanguageTAG>ger</LanguageTag>"));
+        assert!(parse("file = 'a.xml'\nxml = 'a b'\nvalue = 'x'")
+            .kind()
+            .is_err());
+        // Empty, with attributes, in a comment, a longer name.
+        assert_eq!(
+            set_xml(
+                "<p><!-- <name>x</name> --><name2>y</name2><name a=\"1\"/></p>",
+                "NAME",
+                "B"
+            )
+            .as_deref(),
+            Some("<p><!-- <name>x</name> --><name2>y</name2><name a=\"1\">B</name></p>")
+        );
+        assert_eq!(
+            set_xml("<p><name>old</NAME></p>", "name", "B").as_deref(),
+            Some("<p><name>B</NAME></p>")
+        );
+        assert_eq!(set_xml("<p></p>", "name", "B"), None);
+        // UTF-8 without a declaration stays UTF-8 for a name ANSI holds.
+        let plain = tmp.path().join("plain.xml");
+        std::fs::write(&plain, "<p><name></name></p>").unwrap();
+        let kind = Kind::Xml {
+            file: "plain.xml",
+            tag: "name",
+        };
+        write(&plain, &kind, "Jürgen", false, ValueType::Text).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&plain).unwrap(),
+            "<p><name>Jürgen</name></p>"
+        );
     }
 
     #[test]

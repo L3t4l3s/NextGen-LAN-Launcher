@@ -1,0 +1,21 @@
+schema = 1
+id = "anno1701"
+title = "Anno 1701"
+revisions = ["20200721"]
+source = "NextGen LAN Launcher: start script checked with Proton 11 (2026-10)"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's start script starts Anno1701.exe (History Edition, German
+# menu). The player is the package's profile "ANNOholic": the name is
+# inside the encrypted .profile file, so it cannot be preset; a player
+# makes their own in the profile management.
+exe = ""
+args = []
+# Anno1701.exe needs mfc140.dll, which the package does not carry: without
+# it the game ends at once (Wine: "mfc140.dll not found"). Checked with
+# Proton 11: with vcrun2022 the intro and the German menu come up.
+winetricks = ["vcrun2022"]
