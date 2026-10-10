@@ -295,6 +295,12 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   `SmartSteamEmu.ini`: `[SmartSteamEmu] PersonaName/Language`). Fehlt die Sprache in der Tabelle
   eines Profils, bleibt der Wert stehen. Der Ort, wo ein Spiel den Namen liest, steht oft woanders,
   als das ETI-Skript schreibt (UT2004 `User.ini`), also am Paket nachsehen, nicht abschreiben.
+  `%player_id%` ist eine zufällige GUID pro Rechner (`player_settings::player_id`, einmal pro Lauf
+  in `AppState::player_id`) für Emulatoren, die Spieler an einer User-ID unterscheiden (Anno 1404:
+  ETIs `set /a "rand=%random% % 10"` verliert das einzelne `%`, alle bekamen dieselbe ID).
+  `<config>/player-id` hält die GUID und die MAC-Adressen, auf denen sie entstand
+  (`lanpage::mac_addresses`); teilt der Rechner keine davon (geklontes Abbild samt
+  Launcher-Ordner), macht er eine neue. Platzhalter werden in einem Durchgang ersetzt (`fill`).
   Registry-Werte als Text oder `type = "dword"` (Zahl, beim Laden geprüft). `quote = false`
   schreibt eine Zeile `KEY Wert` ohne Anführungszeichen (Armagetron `user.cfg`). `xml = "element"`
   setzt den Text eines vorhandenen Elements (Groß-/Kleinschreibung egal, Anno schreibt

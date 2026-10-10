@@ -478,22 +478,27 @@ fn cpu_brand_of(sys: &sysinfo::System) -> String {
         .unwrap_or_default()
 }
 
+/// This computer's network addresses (MAC), sorted, without loopback and
+/// empty ones.
+pub fn mac_addresses() -> Vec<String> {
+    let networks = sysinfo::Networks::new_with_refreshed_list();
+    let mut macs: Vec<String> = networks
+        .iter()
+        .filter(|(name, _)| !name.starts_with("lo") && !name.to_lowercase().contains("loopback"))
+        .map(|(_, data)| data.mac_address().to_string())
+        .filter(|m| m != "00:00:00:00:00:00")
+        .collect();
+    macs.sort();
+    macs.dedup();
+    macs
+}
+
 impl StatsReport {
     /// Collect system information (best effort, never fails).
     pub fn collect(player_name: &str, current_game: Option<&str>) -> Self {
         let mut sys = sysinfo::System::new();
         sys.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
-        let networks = sysinfo::Networks::new_with_refreshed_list();
-        let mut macs: Vec<String> = networks
-            .iter()
-            .filter(|(name, _)| {
-                !name.starts_with("lo") && !name.to_lowercase().contains("loopback")
-            })
-            .map(|(_, data)| data.mac_address().to_string())
-            .filter(|m| m != "00:00:00:00:00:00")
-            .collect();
-        macs.sort();
-        macs.dedup();
+        let macs = mac_addresses();
         let cpu = cpu_brand_of(&sys);
         let hw = crate::hardware::this_machine();
         let os = format!(

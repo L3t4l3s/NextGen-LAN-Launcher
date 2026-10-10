@@ -178,6 +178,9 @@ again.
 
 ## Open items
 
+- **Anno 1404: own Uplay id per player — untested:** the launcher writes `%player_id%` and the
+  player's name into `Uplay.ini` (the ETI script gives everyone the same id). Check at a LAN that
+  two players see each other in the lobby, on Windows and Linux.
 - **Alien Swarm: Reactive Drop on macOS — untested:** package 20190317 hangs at the menu
   background under Proton 11 (its SmartSteamEmu waits on `recvfrom` of an unbound UDP socket, which
   Windows fails at once); `manifests/alienswarm.toml` notes that. The macOS note only assumes

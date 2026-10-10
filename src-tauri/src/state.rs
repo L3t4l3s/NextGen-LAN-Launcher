@@ -18,6 +18,9 @@ pub struct AppState {
     pub dirs: AppDirs,
     pub demo: bool,
     pub settings: RwLock<Settings>,
+    /// `%player_id%` for profiles, read once at start
+    /// (`player_settings::player_id`).
+    pub player_id: String,
     pub transport: RwLock<Option<Arc<dyn Transport>>>,
     /// Startup, settings changes and manual restarts must never spawn engines
     /// concurrently against the same Resilio storage directory.
@@ -215,6 +218,16 @@ impl LaunchAttempt {
 }
 
 impl AppState {
+    /// Who starts a game: name, game language and player id.
+    pub async fn player(&self) -> lanlauncher_core::player_settings::Player {
+        let s = self.settings.read().await;
+        lanlauncher_core::player_settings::Player {
+            name: s.safe_player_name(),
+            lang: s.game_language.clone(),
+            id: self.player_id.clone(),
+        }
+    }
+
     /// Remember a launch attempt and, once the process ends, its exit code.
     /// The watcher only writes back while the record is still the current one.
     pub async fn record_launch(

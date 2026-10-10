@@ -54,6 +54,10 @@
 //! `value` is text (`%player%`, `%game_lang%` filled in) or one per game
 //! language; a language the table does not list leaves the setting alone —
 //! a package without German stays as it is rather than broken.
+//! `%player_id%` is a GUID that stays the same for this launcher
+//! installation and differs between computers ([`player_id`]): emulators
+//! that tell players apart by a user id need one per player, and an ETI
+//! script that was meant to make one gives everybody the same (Anno 1404).
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -339,11 +343,36 @@ impl PlayerSetting {
             SettingValue::Text(text) => text.clone(),
             SettingValue::ByLanguage(by) => by.get(&player.lang.to_ascii_lowercase())?.clone(),
         };
-        Some(
-            text.replace("%player%", &player.name)
-                .replace("%game_lang%", &player.lang),
-        )
+        Some(fill(&text, player))
     }
+}
+
+/// The placeholders in one pass: a name that reads `%game_lang%` stays a
+/// name.
+fn fill(text: &str, player: &Player) -> String {
+    let tokens = [
+        ("%player_id%", player.id.as_str()),
+        ("%player%", player.name.as_str()),
+        ("%game_lang%", player.lang.as_str()),
+    ];
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('%') {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        match tokens.iter().find(|(t, _)| tail.starts_with(t)) {
+            Some((token, value)) => {
+                out.push_str(value);
+                rest = &tail[token.len()..];
+            }
+            None => {
+                out.push('%');
+                rest = &tail[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Who is starting the game.
@@ -354,6 +383,71 @@ pub struct Player {
     pub name: String,
     /// The game language, `de`/`en`/`fr`.
     pub lang: String,
+    /// `%player_id%`, from [`player_id`].
+    pub id: String,
+}
+
+/// The file in the launcher's config folder that keeps `%player_id%`.
+pub const PLAYER_ID_FILE: &str = "player-id";
+
+/// This computer's player id: a random GUID (lower case, 8-4-4-4-12),
+/// kept in `dir`/[`PLAYER_ID_FILE`] together with the network addresses
+/// (`macs`) it was made on. Random, not derived from the name: two players
+/// may pick the same one. A copy of the file on another computer — LAN
+/// machines are often cloned from one image, launcher folder included —
+/// shares none of its addresses, and that computer makes its own id. A
+/// computer that reports no addresses keeps what it has. If the file
+/// cannot be written, the id holds for this run only (logged). Read once
+/// per launcher run (`AppState::player_id`), which one launcher at a time
+/// (`instance`) keeps free of races.
+pub fn player_id(dir: &Path, macs: &[String]) -> String {
+    let path = dir.join(PLAYER_ID_FILE);
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        let mut lines = text.lines();
+        let id = lines.next().unwrap_or_default().trim();
+        let made_on: Vec<&str> = lines
+            .next()
+            .unwrap_or_default()
+            .split_whitespace()
+            .collect();
+        let same_computer = macs.is_empty() || macs.iter().any(|m| made_on.contains(&m.as_str()));
+        if is_guid(id) && same_computer {
+            return id.to_ascii_lowercase();
+        }
+    }
+    let id = new_guid();
+    let text = format!("{id}\n{}\n", macs.join(" "));
+    let written = std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&path, text));
+    if let Err(e) = written {
+        log::warn!("player id not kept in {}: {e}", path.display());
+    }
+    id
+}
+
+/// A version-4 GUID.
+fn new_guid() -> String {
+    use rand::RngExt;
+    let mut b: [u8; 16] = rand::rng().random();
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let hex: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
+fn is_guid(s: &str) -> bool {
+    let groups: Vec<&str> = s.split('-').collect();
+    groups.len() == 5
+        && groups
+            .iter()
+            .zip([8, 4, 4, 4, 12])
+            .all(|(g, n)| g.len() == n && g.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// What happened to one setting, for the log.
@@ -1179,6 +1273,7 @@ mod tests {
         let renamed = Player {
             name: "Bazzite".into(),
             lang: "de".into(),
+            id: TEST_ID.into(),
         };
         apply(&local, Some(&profile), &settings, &renamed);
         let kept: serde_json::Value =
@@ -1287,6 +1382,7 @@ mod tests {
         let player = Player {
             name: "Jürgen".into(),
             lang: "de".into(),
+            id: TEST_ID.into(),
         };
         let dir = tempfile::tempdir().unwrap();
         let (_, registry) = apply(dir.path(), None, &[dword("1")], &player);
@@ -1303,10 +1399,63 @@ mod tests {
         );
     }
 
+    const TEST_ID: &str = "0f8b2a4e-6c1d-4e3f-9a7b-5d2c8e1f4a6b";
+
+    #[test]
+    fn the_player_id_is_made_once_and_kept() {
+        let macs = vec!["52:54:00:12:34:56".to_string()];
+        let dir = tempfile::tempdir().unwrap();
+        let first = player_id(dir.path(), &macs);
+        assert!(is_guid(&first), "{first}");
+        assert_eq!(&first[14..15], "4");
+        assert_eq!(player_id(dir.path(), &macs), first);
+        // Another installation gets another one.
+        let other = tempfile::tempdir().unwrap();
+        assert_ne!(player_id(other.path(), &macs), first);
+        // A second network card added later: still this computer.
+        let more = vec![macs[0].clone(), "02:00:00:00:00:01".to_string()];
+        assert_eq!(player_id(dir.path(), &more), first);
+        // No addresses to compare: keep it.
+        assert_eq!(player_id(dir.path(), &[]), first);
+        // A damaged file is replaced, not passed on to a game.
+        std::fs::write(dir.path().join(PLAYER_ID_FILE), "nonsense").unwrap();
+        let fresh = player_id(dir.path(), &macs);
+        assert!(is_guid(&fresh) && fresh != first);
+    }
+
+    #[test]
+    fn a_cloned_launcher_folder_gets_its_own_player_id() {
+        let image = tempfile::tempdir().unwrap();
+        let original = player_id(image.path(), &["52:54:00:00:00:01".to_string()]);
+        let clone = player_id(image.path(), &["52:54:00:00:00:02".to_string()]);
+        assert_ne!(clone, original);
+    }
+
+    #[test]
+    fn placeholders_are_filled_once() {
+        let player = Player {
+            name: "%game_lang%".into(),
+            lang: "de".into(),
+            id: TEST_ID.into(),
+        };
+        assert_eq!(
+            fill("%player% %game_lang% 100% %player_id%", &player),
+            format!("%game_lang% de 100% {TEST_ID}")
+        );
+    }
+
+    #[test]
+    fn a_value_can_carry_the_player_id() {
+        let id =
+            setting("file = 'Uplay.ini'\nsection = 'Uplay'\nkey = 'UserId'\nvalue = '%player_id%'");
+        assert_eq!(id.value_for(&player()).as_deref(), Some(TEST_ID));
+    }
+
     fn player() -> Player {
         Player {
             name: "Jürgen".into(),
             lang: "de".into(),
+            id: TEST_ID.into(),
         }
     }
 
@@ -1426,6 +1575,7 @@ mod tests {
         let polish = Player {
             name: "Łukasz".into(),
             lang: "de".into(),
+            id: TEST_ID.into(),
         };
         let settings = [setting(
             "file = 'cfg/config.cfg'\nline = 'name'\nvalue = '%player%'",
@@ -1524,6 +1674,7 @@ mod tests {
         let player = Player {
             name: "Jürgen & Co".into(),
             lang: "de".into(),
+            id: TEST_ID.into(),
         };
         let (done, _) = apply(
             tmp.path(),
@@ -1592,6 +1743,7 @@ mod tests {
         let player = Player {
             name: "Bazzite".into(),
             lang: "de".into(),
+            id: TEST_ID.into(),
         };
         smart_steam_emu(tmp.path(), &player);
         let text = std::fs::read_to_string(tmp.path().join("steam_rld.ini")).unwrap();
@@ -1624,6 +1776,7 @@ mod tests {
         let player = Player {
             name: "B".into(),
             lang: "de".into(),
+            id: TEST_ID.into(),
         };
         goldberg(tmp.path(), &player);
         assert!(tmp
@@ -1645,6 +1798,7 @@ mod tests {
         let player = Player {
             name: "Jürgen".into(),
             lang: "de".into(),
+            id: TEST_ID.into(),
         };
         let done = goldberg(tmp.path(), &player);
         assert_eq!(done.len(), 1);
@@ -1673,6 +1827,7 @@ mod tests {
         let player = Player {
             name: "Jürgen".into(),
             lang: "de".into(),
+            id: TEST_ID.into(),
         };
         let done = goldberg(tmp.path(), &player);
         assert_eq!(done.len(), 2);
@@ -1716,6 +1871,7 @@ mod tests {
         let player = Player {
             name: "Jürgen".into(),
             lang: "de".into(),
+            id: TEST_ID.into(),
         };
         let done = goldberg(tmp.path(), &player);
         assert_eq!(done.len(), 2);

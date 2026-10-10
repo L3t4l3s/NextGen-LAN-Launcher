@@ -1,0 +1,29 @@
+schema = 1
+id = "anno1404"
+title = "Anno 1404"
+revisions = ["20220712"]
+source = "NextGen LAN Launcher: package read (2026-10); start not confirmed on a VM without GPU"
+
+[launch]
+# The package's start script starts Anno1404Addon.exe (Venedig) behind a
+# Uplay emulator that reads Uplay.ini. Players on a LAN need different
+# UserIds there. The script means to make one from %random%, but
+# `set /a "rand=%random% % 10"` loses its lone % in a batch file and ends
+# with "Missing operator": rand stays empty and every player gets
+# c1c1c-1c1-c1c-1c-... (on Windows as well). The launcher writes its own
+# id per installation before the script runs; the script's search for the
+# package's default id then finds nothing and leaves it.
+exe = ""
+args = []
+
+[[settings]]
+file = "Uplay.ini"
+section = "Uplay"
+key = "UserId"
+value = "%player_id%"
+
+[[settings]]
+file = "Uplay.ini"
+section = "Uplay"
+key = "Username"
+value = "%player%"

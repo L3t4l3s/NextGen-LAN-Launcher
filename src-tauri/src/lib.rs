@@ -1790,11 +1790,16 @@ pub fn run() {
             let library = Arc::new(std::sync::RwLock::new(settings.library.clone()));
             update_media_scope(app.handle(), &[], &settings.library);
             let language = settings.language.clone();
+            let player_id = lanlauncher_core::player_settings::player_id(
+                &dirs.config,
+                &lanlauncher_core::lanpage::mac_addresses(),
+            );
             let state = Arc::new(AppState {
                 library,
                 dirs,
                 demo,
                 settings: RwLock::new(settings),
+                player_id,
                 transport: RwLock::new(None),
                 transport_lifecycle: tokio::sync::Mutex::new(()),
                 manager: RwLock::new(None),

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.3.8
+
+- **Anno 1404: jeder Spieler bekommt seine eigene Uplay-ID.** Das ETI-Startskript sollte eine
+  zufällige ID erzeugen, gab aber wegen eines Skriptfehlers allen Spielern dieselbe (auch unter
+  Windows). Der Launcher setzt vor dem Start eine eigene ID pro Installation und den Spielernamen in
+  die `Uplay.ini`; ein geklonter Rechner bekommt dabei eine eigene. Profile können diese ID
+  allgemein als `%player_id%` verwenden. Ungetestet im Mehrspieler, auf der LAN prüfen.
+
 ## 0.3.7
 
 - **Kein „Sync gestört“ mehr, nur weil Resilio kurz beschäftigt ist.** Beim Schreiben eines großen

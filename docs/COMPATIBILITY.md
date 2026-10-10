@@ -155,7 +155,10 @@ unset_env = ["WINEDEBUG"]              # variables of [launch].env this platform
 file = "System/User.ini"               # relative to local/, found in any case, made if missing
 section = "DefaultPlayer"
 key = "Name"
-value = "%player%"                     # %player%, %game_lang%
+value = "%player%"                     # %player%, %game_lang%, %player_id%
+# %player_id%: a GUID made once per launcher installation (<config>/player-id),
+# different on every computer, for emulators that tell players apart by a
+# user id (Anno 1404's Uplay.ini).
 
 [[settings]]                           # a config line: seta name "Player"
 file = "main/players/LAN/config_mp.cfg"

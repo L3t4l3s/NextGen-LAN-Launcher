@@ -32,13 +32,7 @@ pub(crate) async fn apply(
     manifest: Option<&Manifest>,
     registry_plan: Option<LaunchPlan>,
 ) -> Result<(), String> {
-    let player = {
-        let s = state.settings.read().await;
-        Player {
-            name: s.safe_player_name(),
-            lang: s.game_language.clone(),
-        }
-    };
+    let player = state.player().await;
     let settings = manifest.map(|m| m.settings.clone()).unwrap_or_default();
     let profile = if manifest.is_some_and(Manifest::uses_windows_profile) {
         windows_profile(state, game_id, paths, &player, &registry_plan).await?
@@ -145,13 +139,7 @@ pub(crate) async fn make_prefix(
     paths: &GamePaths,
     plan: LaunchPlan,
 ) -> Result<(), String> {
-    let player = {
-        let s = state.settings.read().await;
-        Player {
-            name: s.safe_player_name(),
-            lang: s.game_language.clone(),
-        }
-    };
+    let player = state.player().await;
     log::info!("components {game_id}: making the prefix first");
     set_in_prefix(
         state,
