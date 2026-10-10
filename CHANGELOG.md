@@ -4,9 +4,8 @@
 
 ## 0.3.6
 
-- **Aliens versus Predator Classic 2000:** Die Spieldetails sagen jetzt, dass dieses Paket keinen
-  Mehrspielermodus hat (auch unter Windows nicht) und beim ersten Start nach einem Profilnamen
-  fragt.
+- **Profil Aliens versus Predator Classic 2000:** Kommentar und Quelle halten fest, dass das Paket (AvPx Enhanced) auch
+  unter Windows keinen Mehrspielermodus hat und den Namen als eigenes Spielerprofil abfragt.
 
 ## 0.3.5
 

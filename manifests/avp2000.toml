@@ -19,7 +19,3 @@ linux = ["Proton 11.0"]
 # after loading its config under Proton 11.
 exe = ""
 args = []
-
-[setup.notes]
-de = "Dieses Paket (Stand 20260410, AvPx Enhanced) hat keinen Mehrspielermodus, auch unter Windows nicht. Beim ersten Start fragt das Spiel nach einem Profilnamen."
-en = "This package (20260410, AvPx Enhanced) has no multiplayer, not on Windows either. On the first start the game asks for a profile name."
