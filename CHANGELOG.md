@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.3.7
+
+- **Kein „Sync gestört“ mehr, nur weil Resilio kurz beschäftigt ist.** Beim Schreiben eines großen
+  Downloads antwortet die Sync-Engine manchmal eine halbe Minute lang nicht. Statusleiste und
+  Diagnose zeigen dann „Resilio ist beschäftigt“; erst wenn sie zwei Minuten lang schweigt, gilt
+  der Sync als gestört.
+- **Installieren und Reparieren klappen auch, während Resilio beschäftigt ist.** Bisher brach
+  „Installieren“ ab, wenn die Engine in diesem Moment nicht antwortete. Jetzt steht das Spiel in
+  der Warteschlange, und der Launcher meldet die Freigabe an, sobald die Engine wieder antwortet.
+
 ## 0.3.6
 
 - **Profil Aliens versus Predator Classic 2000:** Kommentar und Quelle halten fest, dass das Paket (AvPx Enhanced) auch

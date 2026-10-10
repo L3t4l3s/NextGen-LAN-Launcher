@@ -12,6 +12,7 @@ describe("transport status", () => {
     expect(transportLevel(null)).toBe("preparing");
     expect(transportLevel({ ...health, activity: "discovering" })).toBe("preparing");
     expect(transportLevel({ ...health, activity: "indexing" })).toBe("preparing");
+    expect(transportLevel({ ...health, api_reachable: false, activity: "busy" })).toBe("preparing");
   });
   it("retains real failures and warns after discovery grace expires", () => {
     expect(transportLevel(health)).toBe("warn");

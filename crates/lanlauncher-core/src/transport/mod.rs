@@ -91,6 +91,9 @@ impl ShareStatus {
 pub enum TransportActivity {
     Discovering,
     Indexing,
+    /// The engine runs but has not answered for a moment (heavy disk
+    /// writes); a fault only once it stays quiet.
+    Busy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

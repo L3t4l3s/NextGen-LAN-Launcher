@@ -24,6 +24,11 @@ pub enum Error {
     Transport(String),
     #[error("HTTP error: {0}")]
     Http(String),
+    /// A request that went out but got no answer in time: the other side
+    /// runs, but is busy (a sync engine writing a large download stalls its
+    /// web server). Refused connections and error statuses stay [`Error::Http`].
+    #[error("no answer: {0}")]
+    NoAnswer(String),
     #[error("settings error: {0}")]
     Settings(String),
     #[error("launch error: {0}")]
@@ -54,6 +59,10 @@ impl From<serde_json::Error> for Error {
 
 impl From<reqwest::Error> for Error {
     fn from(e: reqwest::Error) -> Self {
-        Error::Http(e.to_string())
+        if e.is_timeout() {
+            Error::NoAnswer(e.to_string())
+        } else {
+            Error::Http(e.to_string())
+        }
     }
 }

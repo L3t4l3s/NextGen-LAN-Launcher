@@ -459,6 +459,8 @@ pub fn check_transport(health: &TransportHealth) -> Vec<Problem> {
                         .step("transport.not_running.step.restart")
                         .with_fix(FixAction::RestartTransport),
                 );
+            } else if health.activity == Some(crate::transport::TransportActivity::Busy) {
+                out.push(Problem::new("transport.busy", Severity::Info));
             } else if !health.api_reachable {
                 out.push(
                     Problem::new("transport.api_unreachable", Severity::Error)
@@ -470,6 +472,8 @@ pub fn check_transport(health: &TransportHealth) -> Vec<Problem> {
                 let state = match activity {
                     crate::transport::TransportActivity::Discovering => "discovering",
                     crate::transport::TransportActivity::Indexing => "indexing",
+                    // Reported above, before the API check.
+                    crate::transport::TransportActivity::Busy => "busy",
                 };
                 out.push(Problem::new("transport.preparing", Severity::Info).param("state", state));
             } else if health.peers == 0 {
@@ -1318,6 +1322,11 @@ public (default)
             check_transport(&preparing)[0].code,
             "transport.api_unreachable"
         );
+        // Busy writing: said as such, not as an engine that does not answer.
+        preparing.activity = Some(crate::transport::TransportActivity::Busy);
+        let busy = check_transport(&preparing);
+        assert_eq!(busy[0].code, "transport.busy");
+        assert_eq!(busy[0].severity, Severity::Info);
     }
 
     #[test]

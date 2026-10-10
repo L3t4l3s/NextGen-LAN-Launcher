@@ -1214,6 +1214,9 @@ pub struct ResilioTransport {
     lan_only: Mutex<bool>,
     /// Last health detail written to the log (logged only on change).
     last_detail: Mutex<Option<String>>,
+    /// When the API last answered a health poll: a running engine that went
+    /// quiet a moment ago is busy, not broken ([`BUSY_GRACE`]).
+    last_answer: Mutex<Option<Instant>>,
     discovery: Mutex<CatalogDiscovery>,
     /// Last peer counters per `<share dir>\0<peer id>`, for the rates.
     peer_samples: Mutex<HashMap<String, (u64, u64, Instant)>>,
@@ -1251,6 +1254,7 @@ impl ResilioTransport {
             child: Mutex::new(None),
             keys: Mutex::new(HashMap::new()),
             last_detail: Mutex::new(None),
+            last_answer: Mutex::new(None),
             discovery: Mutex::new(CatalogDiscovery::default()),
             peer_samples: Mutex::new(HashMap::new()),
             peer_shape_logged: std::sync::atomic::AtomicBool::new(false),
@@ -1487,6 +1491,8 @@ impl Transport for ResilioTransport {
     }
 
     async fn start(&self) -> Result<()> {
+        // A new process has answered nothing yet: starting, not busy.
+        *self.last_answer.lock().unwrap_or_else(|e| e.into_inner()) = None;
         if !self.config.binary.is_file() {
             return Err(Error::Transport(format!(
                 "Resilio Sync binary not found at {}",
@@ -1540,6 +1546,7 @@ impl Transport for ResilioTransport {
     }
 
     async fn stop(&self) -> Result<()> {
+        *self.last_answer.lock().unwrap_or_else(|e| e.into_inner()) = None;
         // Short timeouts: this also runs while the launcher is closing, where
         // an engine that ignores the request is killed rather than waited for.
         let _ = tokio::time::timeout(Duration::from_secs(3), self.client.shutdown()).await;
@@ -1569,6 +1576,13 @@ impl Transport for ResilioTransport {
             })
             .unwrap_or(false);
         let version = self.client.version().await.ok();
+        let busy = {
+            let mut last = self.last_answer.lock().unwrap_or_else(|e| e.into_inner());
+            if version.is_some() {
+                *last = Some(Instant::now());
+            }
+            engine_busy(running, version.is_some(), *last, Instant::now())
+        };
         // One folder query feeds both counters; an API failure leaves the
         // server state unknown rather than "not found".
         let folders = self.client.folders().await;
@@ -1645,7 +1659,8 @@ impl Transport for ResilioTransport {
                 discovery.elapsed(),
                 &catalog_states,
             )
-        };
+        }
+        .or(busy.then_some(TransportActivity::Busy));
         TransportHealth {
             activity,
             kind: TransportKind::Resilio,
@@ -2209,6 +2224,22 @@ impl CatalogDiscovery {
     }
 }
 
+/// How long a running engine may leave the API unanswered before the
+/// launcher calls the sync broken. Writing a large download, the engine's
+/// web server stalls with the disk: on the test VM it answered nothing for
+/// half a minute while it wrote a 17 GB archive (its writer waiting in the
+/// kernel's write throttle, `rq_qos_wait`), then carried on.
+const BUSY_GRACE: Duration = Duration::from_secs(120);
+
+/// Whether an unanswered poll means "busy": the process runs and the API
+/// answered within [`BUSY_GRACE`]. An engine that never answered is still
+/// starting or broken, and that is said elsewhere.
+fn engine_busy(running: bool, answered: bool, last_answer: Option<Instant>, now: Instant) -> bool {
+    running
+        && !answered
+        && last_answer.is_some_and(|t| now.saturating_duration_since(t) < BUSY_GRACE)
+}
+
 /// Discovery gets a bounded grace period per catalog registration. Actual
 /// indexing is informational, but paused/error shares and API failures never
 /// use this grace period to hide a fault.
@@ -2236,6 +2267,19 @@ fn preparation_activity(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_quiet_engine_is_busy_for_a_while_then_broken() {
+        let now = Instant::now();
+        let a_moment_ago = now - Duration::from_secs(20);
+        assert!(engine_busy(true, false, Some(a_moment_ago), now));
+        assert!(!engine_busy(true, false, Some(now - BUSY_GRACE), now));
+        // Never answered: starting, or broken from the outset.
+        assert!(!engine_busy(true, false, None, now));
+        // A process that is gone is not busy.
+        assert!(!engine_busy(false, false, Some(a_moment_ago), now));
+        assert!(!engine_busy(true, true, Some(now), now));
+    }
+
     #[test]
     fn catalog_registration_restarts_discovery_but_retries_do_not() {
         let start = Instant::now();

@@ -256,7 +256,7 @@ export interface SharePeer {
 }
 
 export interface TransportHealth {
-  activity?: "discovering" | "indexing" | null;
+  activity?: "discovering" | "indexing" | "busy" | null;
   kind: "resilio" | "folder" | "demo";
   running: boolean;
   api_reachable: boolean;

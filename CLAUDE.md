@@ -338,6 +338,22 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   API-Ausfällen nie auf Dateigrößen zurückgefallen. Die Kataloggröße ist eine Schätzung und
   darf einen echten Resilio-Prozentwert nicht verzerren. Vor dem Prüfen muss die Engine
   bestätigen, dass der Großteil da ist (`Observation::bytes_on_disk`, `engine_mostly_done`).
+- **Beschäftigte Engine:** Schreibt Resilio einen großen Download, beantwortet seine API mitunter
+  eine halbe Minute lang nichts (auf der VM nachgestellt: 17-GB-Archiv, Schreib-Thread in
+  `rq_qos_wait`, Listen-Backlog voll, danach wieder normal). Eine Zeitüberschreitung ist
+  `Error::NoAnswer` (`From<reqwest::Error>` per `is_timeout`), verweigerte Verbindungen und
+  Fehlerstatus bleiben `Error::Http`. `health` meldet `TransportActivity::Busy`, solange der Prozess
+  läuft und die letzte Antwort weniger als `BUSY_GRACE` (2 min) zurückliegt (`start`/`stop` setzen
+  das zurück); `api_reachable` bleibt dabei ehrlich `false`, Statusleiste („Resilio ist
+  beschäftigt …“) und Diagnose (`transport.busy`, Info) prüfen `Busy` vorher. Danach greift
+  `transport.api_unreachable` mit „Neu starten“. Bekommt `install`, `repair` oder
+  `adopt_existing` beim Anmelden der Freigabe `NoAnswer`, setzt der Tracker `share_retry_at`; `tick`
+  meldet höchstens eine solche Freigabe pro Durchlauf an, sobald `list_shares` antwortet (listet die
+  Engine sie schon, kam die Anfrage an und nur die Antwort nicht), und nimmt sie zurück, wenn das
+  Spiel inzwischen abgebrochen wurde. Eine echte Ablehnung beim Nachholen macht die Installation
+  zu `Failed` mit `sync.share_error` und „Reparieren“. Lücke: `share_retry_at` lebt nur im
+  Speicher; ein Neustart von Engine oder Launcher, bevor die Freigabe ankam, vergisst die
+  Installation (der leere Ordner gilt dann als nicht installiert), der Spieler klickt erneut.
 - **Resilio-Identität:** Die Web-UI von 2.8.1.1390 verwendet `setuseridentity&username=…`,
   danach `getmasterfolder` und nur bei fehlendem Schlüssel `setmfsecret`. Diese Folge wurde
   mit einem separaten Windows-Testprofil ausgeführt. Vorher `useridentity` lesen: Der

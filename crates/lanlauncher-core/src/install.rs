@@ -33,6 +33,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, Mutex, RwLock};
 
+/// How often a share is offered again while the engine lists its shares but
+/// gives no answer to adding this one.
+const SHARE_RETRY_SPACING: Duration = Duration::from_secs(30);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
@@ -439,6 +443,9 @@ pub struct Tracker {
     /// The step and figure the last status showed, to notice the bar going
     /// backwards (`fell_back`).
     shown: Option<(u8, f64, Phase)>,
+    /// The engine did not answer when the share was to be added: the tick
+    /// adds it once the engine answers again, not before this time.
+    share_retry_at: Option<Instant>,
 }
 
 impl Tracker {
@@ -467,6 +474,7 @@ impl Tracker {
             work_progress: 0.0,
             work_started_at: None,
             shown: None,
+            share_retry_at: None,
         }
     }
 
@@ -1310,6 +1318,22 @@ impl InstallManager {
                 "share for {game_id} registered at {}",
                 paths.share_dir.display()
             ),
+            // The engine runs but did not answer in time: it stalls while it
+            // writes a large download. The install is queued all the same
+            // and the tick adds the share once the engine answers again.
+            Err(Error::NoAnswer(e)) => {
+                log::warn!(
+                    "share for {game_id} not registered at {} yet, the engine did not answer ({e}); trying again when it does",
+                    paths.share_dir.display()
+                );
+                let mut trackers = self.trackers.lock().await;
+                let tracker = trackers
+                    .entry(game_id.to_string())
+                    .or_insert_with(|| Tracker::new(game_id));
+                tracker.request_install();
+                tracker.share_retry_at = Some(Instant::now());
+                return Ok(());
+            }
             Err(e) => {
                 log::warn!(
                     "share for {game_id} not registered at {}: {e}",
@@ -1319,10 +1343,11 @@ impl InstallManager {
             }
         }
         let mut trackers = self.trackers.lock().await;
-        trackers
+        let tracker = trackers
             .entry(game_id.to_string())
-            .or_insert_with(|| Tracker::new(game_id))
-            .request_install();
+            .or_insert_with(|| Tracker::new(game_id));
+        tracker.request_install();
+        tracker.share_retry_at = None;
         Ok(())
     }
 
@@ -1333,6 +1358,7 @@ impl InstallManager {
         let paths = self.paths_for(&game)?;
         let _ = self.transport.set_paused(&paths.share_dir, false).await;
         let _ = std::fs::remove_dir_all(extract::staging_dir(&paths.local_dir));
+        let mut retry = false;
         if let Err(e) = self
             .transport
             .add_share(
@@ -1351,12 +1377,14 @@ impl InstallManager {
                 "share for {game_id} not registered at {}: {e}",
                 paths.share_dir.display()
             );
+            retry = matches!(e, Error::NoAnswer(_));
         }
         let mut trackers = self.trackers.lock().await;
-        trackers
+        let tracker = trackers
             .entry(game_id.to_string())
-            .or_insert_with(|| Tracker::new(game_id))
-            .request_repair();
+            .or_insert_with(|| Tracker::new(game_id));
+        tracker.request_repair();
+        tracker.share_retry_at = retry.then(Instant::now);
         Ok(())
     }
 
@@ -1503,6 +1531,9 @@ impl InstallManager {
                             game.id,
                             paths.share_dir.display()
                         );
+                        if matches!(e, Error::NoAnswer(_)) {
+                            t.share_retry_at = Some(Instant::now());
+                        }
                     }
                 }
                 trackers.insert(game.id.clone(), t);
@@ -1515,14 +1546,18 @@ impl InstallManager {
     pub async fn tick(&self) -> Vec<GameStatus> {
         let now = Instant::now();
         let catalog = self.catalog.read().await.clone();
-        let share_statuses: HashMap<_, _> = self
-            .transport
-            .list_shares()
-            .await
+        let listed = self.transport.list_shares().await.ok();
+        // Only an answer says which shares are missing.
+        let listed_ok = listed.is_some();
+        let share_statuses: HashMap<_, _> = listed
             .unwrap_or_default()
             .into_iter()
             .map(|s| (crate::transport::normalise_dir(&s.dir), s))
             .collect();
+        if listed_ok {
+            self.add_pending_shares(&catalog, &share_statuses, now)
+                .await;
+        }
         let results: Vec<WorkResult> = self
             .results
             .lock()
@@ -1824,6 +1859,90 @@ impl InstallManager {
         }
         out.sort_by(|a, b| a.game_id.cmp(&b.game_id));
         out
+    }
+
+    /// Adds a share an install, repair or start could not add because the
+    /// engine did not answer (`Tracker::share_retry_at`), now that it lists
+    /// its shares again. One per tick: each request can wait out the client
+    /// timeout, and the tick also carries every other game's status. A share
+    /// the engine lists after all (the request reached it, only the answer
+    /// did not) is left as it is. Any other refusal fails the install, with
+    /// "repair" (which adds the share again) as the way out.
+    async fn add_pending_shares(
+        &self,
+        catalog: &Catalog,
+        listed: &HashMap<String, ShareStatus>,
+        now: Instant,
+    ) {
+        let due = {
+            let trackers = self.trackers.lock().await;
+            trackers
+                .iter()
+                .filter(|(_, t)| t.share_retry_at.is_some_and(|at| at <= now))
+                .map(|(id, _)| id.clone())
+                .min()
+        };
+        let Some(id) = due else {
+            return;
+        };
+        let Some((game, paths)) = catalog
+            .game(&id)
+            .and_then(|g| Some((g.clone(), self.paths_for(g).ok()?)))
+        else {
+            return;
+        };
+        let already = listed.contains_key(&crate::transport::normalise_dir(&paths.share_dir));
+        let result = if already {
+            Ok(())
+        } else {
+            self.transport
+                .add_share(
+                    &game.key,
+                    &paths.share_dir,
+                    &ShareOptions {
+                        lan_only: self.lan_only,
+                        paused: false,
+                    },
+                )
+                .await
+        };
+        let mut trackers = self.trackers.lock().await;
+        let pending = trackers.get_mut(&id).filter(|t| t.share_retry_at.is_some());
+        let Some(tracker) = pending else {
+            // Cancelled or removed while the request was out: take back what
+            // it added, or the download the player stopped starts after all.
+            if !already && result.is_ok() {
+                if let Err(e) = self.transport.remove_share(&paths.share_dir).await {
+                    log::warn!("share for {id} added after its install was cancelled: {e}");
+                }
+            }
+            return;
+        };
+        match result {
+            Ok(()) => {
+                log::info!(
+                    "share for {id} registered at {} (the engine answers again)",
+                    paths.share_dir.display()
+                );
+                tracker.share_retry_at = None;
+            }
+            Err(Error::NoAnswer(e)) => {
+                log::warn!("share for {id} still not registered, no answer: {e}");
+                tracker.share_retry_at = Some(now + SHARE_RETRY_SPACING);
+            }
+            Err(e) => {
+                log::warn!("share for {id} not registered: {e}");
+                tracker.share_retry_at = None;
+                tracker.fail(
+                    Problem::new("sync.share_error", Severity::Error)
+                        .param("detail", e.to_string())
+                        .step("sync.share_error.step.1")
+                        .with_fix(FixAction::RepairGame {
+                            game_id: id.clone(),
+                        }),
+                );
+            }
+        }
     }
 
     async fn spawn_adopt(&self, id: &str, paths: &GamePaths, archive_len: u64, revision: String) {
@@ -2895,6 +3014,134 @@ mod tests {
             genre_id: None,
             readme: Default::default(),
         }
+    }
+
+    /// An engine that stalls: until `stalled` is cleared, every call fails
+    /// the way a request to an engine that does not answer does.
+    struct StallingTransport {
+        inner: crate::transport::demo::DemoTransport,
+        stalled: AtomicBool,
+        /// Answers, but refuses to add a share.
+        refuses: AtomicBool,
+        adds: std::sync::atomic::AtomicUsize,
+    }
+
+    impl StallingTransport {
+        fn new(inner: crate::transport::demo::DemoTransport) -> Self {
+            Self {
+                inner,
+                stalled: AtomicBool::new(true),
+                refuses: AtomicBool::new(false),
+                adds: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        fn check(&self) -> Result<()> {
+            if self.stalled.load(Ordering::SeqCst) {
+                Err(Error::NoAnswer("operation timed out".into()))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Transport for StallingTransport {
+        fn kind(&self) -> crate::transport::TransportKind {
+            self.inner.kind()
+        }
+        async fn start(&self) -> Result<()> {
+            self.inner.start().await
+        }
+        async fn stop(&self) -> Result<()> {
+            self.inner.stop().await
+        }
+        async fn health(&self) -> crate::transport::TransportHealth {
+            self.inner.health().await
+        }
+        async fn add_share(&self, key: &ShareKey, dir: &Path, opts: &ShareOptions) -> Result<()> {
+            self.check()?;
+            if self.refuses.load(Ordering::SeqCst) {
+                return Err(Error::Transport("API add_folder: error 100".into()));
+            }
+            self.adds.fetch_add(1, Ordering::SeqCst);
+            self.inner.add_share(key, dir, opts).await
+        }
+        async fn remove_share(&self, dir: &Path) -> Result<()> {
+            self.check()?;
+            self.inner.remove_share(dir).await
+        }
+        async fn set_paused(&self, dir: &Path, paused: bool) -> Result<()> {
+            self.check()?;
+            self.inner.set_paused(dir, paused).await
+        }
+        async fn share_status(&self, dir: &Path) -> Result<Option<ShareStatus>> {
+            self.check()?;
+            self.inner.share_status(dir).await
+        }
+        async fn list_shares(&self) -> Result<Vec<ShareStatus>> {
+            self.check()?;
+            self.inner.list_shares().await
+        }
+        async fn set_lan_mode(&self, lan_only: bool) -> Result<()> {
+            self.inner.set_lan_mode(lan_only).await
+        }
+    }
+
+    fn stalling_manager(root: &Path) -> (InstallManager, Arc<StallingTransport>) {
+        let mut demo = crate::transport::demo::DemoTransport::new();
+        demo.duration = Duration::from_millis(100);
+        demo.archive_source = Some(fixture("sample_game.rar"));
+        let transport = Arc::new(StallingTransport::new(demo));
+        let mut catalog = Catalog::default();
+        catalog.games.push(test_game("amongus"));
+        let root = root.to_path_buf();
+        let mut manager = InstallManager::new(
+            transport.clone(),
+            catalog,
+            move |g| Some(GamePaths::new(&root, &g.id)),
+            |_, _| None,
+            Arc::new(CountingHook(Arc::new(std::sync::atomic::AtomicUsize::new(
+                0,
+            )))),
+        );
+        manager.policy.stable_for = Duration::from_millis(200);
+        (manager, transport)
+    }
+
+    #[tokio::test]
+    async fn an_install_waits_out_an_engine_that_does_not_answer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (manager, transport) = stalling_manager(tmp.path());
+
+        // Queued, not failed: the engine is busy, not gone.
+        manager.install("amongus").await.unwrap();
+        assert_eq!(manager.tracker_phase("amongus").await, Some(Phase::Queued));
+        manager.tick().await;
+        assert_eq!(transport.adds.load(Ordering::SeqCst), 0);
+
+        // It answers again: the share is added on the next tick, once.
+        transport.stalled.store(false, Ordering::SeqCst);
+        let seen = tick_until_ready(&manager).await;
+        assert_eq!(seen.last(), Some(&Phase::Ready), "phases: {seen:?}");
+        assert_eq!(transport.adds.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_share_the_engine_refuses_later_fails_the_install() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (manager, transport) = stalling_manager(tmp.path());
+        manager.install("amongus").await.unwrap();
+
+        // It answers, but says no: that is a fault to show, not to retry.
+        transport.stalled.store(false, Ordering::SeqCst);
+        transport.refuses.store(true, Ordering::SeqCst);
+        let status = manager.tick().await;
+        assert_eq!(status[0].phase, Phase::Failed, "status: {:?}", status[0]);
+        assert_eq!(
+            status[0].problem.as_ref().map(|p| p.code.as_str()),
+            Some("sync.share_error")
+        );
     }
 
     /// Manager over a passive folder transport with an on-disk ETI-style
