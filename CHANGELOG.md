@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.3.6
+
+- **Aliens versus Predator Classic 2000:** Die Spieldetails sagen jetzt, dass dieses Paket keinen
+  Mehrspielermodus hat (auch unter Windows nicht) und beim ersten Start nach einem Profilnamen
+  fragt.
+
 ## 0.3.5
 
 - **Fortschrittsbalken springt nicht mehr zurück.** Beim Wechsel vom Prüfen zum Entpacken stand der

@@ -2,7 +2,7 @@ schema = 1
 id = "avp2000"
 title = "Aliens versus Predator Classic 2000"
 revisions = ["20260410"]
-source = "NextGen LAN Launcher: start script checked with Proton 11 (2026-10)"
+source = "NextGen LAN Launcher: start script checked with Proton 11 (2026-10); no multiplayer menu on Windows either (tester)"
 script_start_checked = ["linux"]
 
 [tested_with]
@@ -11,8 +11,15 @@ linux = ["Proton 11.0"]
 [launch]
 # The package's start script starts AvPxEnhanced.exe (English). It runs
 # RELOADED's Steam emulator; the launcher sets name and language in its
-# steam_rld.ini. The game asks for a profile name on the first start. Its
-# main menu showed no multiplayer entry under Proton 11 - unknown whether
-# that is the same on Windows.
+# steam_rld.ini, but the game does not show it: it asks for a profile name
+# on the first start and keeps it in a binary profile (User_Profiles/*.prf),
+# nothing a profile can set. The main menu has no multiplayer entry, on
+# Windows as well (checked by a tester): AvPx Enhanced is a single-player
+# build. The exe still knows -server/-client/-ip, but -server ended right
+# after loading its config under Proton 11.
 exe = ""
 args = []
+
+[setup.notes]
+de = "Dieses Paket (Stand 20260410, AvPx Enhanced) hat keinen Mehrspielermodus, auch unter Windows nicht. Beim ersten Start fragt das Spiel nach einem Profilnamen."
+en = "This package (20260410, AvPx Enhanced) has no multiplayer, not on Windows either. On the first start the game asks for a profile name."
