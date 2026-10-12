@@ -219,7 +219,9 @@ Without a profile, two Steam emulators get the name and language anyway: Goldber
 `steam_api(64).dll` naming `force_account_name.txt`) gets `steam_settings/force_account_name.txt`
 and `force_language.txt` next to it, SmartSteamEmu gets `PersonaName`/`Language` in every
 `SmartSteamEmu.ini` of the package, and Nemirtingas' Epic emulator gets `EOSEmu.User.UserName` and
-`Language` in every `NemirtingasEpicEmu.json` that has them. Below the usual five folders, Unreal
+`Language` in every `NemirtingasEpicEmu.json` that has them, plus an `EpicId` and `ProductUserId` of
+its own, derived from `%player_id%` (the package ships one pair for everybody, and players who share
+it cannot invite each other). Below the usual five folders, Unreal
 Engine's `Engine/Binaries/ThirdParty` is searched too, where those games keep Steam's DLL.
 
 `winetricks = ["directplay", "vcrun2010"]` (in `[launch]` or `[platform.<os>]`) names Windows

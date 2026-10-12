@@ -992,7 +992,9 @@ pub fn smart_steam_emu(local: &Path, player: &Player) -> Vec<Applied> {
 /// executable) keeps the player in `EOSEmu.User` of its
 /// `nepice_settings/NemirtingasEpicEmu.json`: `UserName`, and `Language` as
 /// a two-letter code. Packages ship it with `ChangeME`; only files that are
-/// there are set, as UTF-8.
+/// there are set, as UTF-8. `EpicId` and `ProductUserId` come from
+/// `%player_id%` ([`epic_ids`]): the package ships one pair for everybody,
+/// and two players with the same ids cannot invite each other.
 pub fn epic_emu(local: &Path, player: &Player) -> Vec<Applied> {
     emulators(local, player).2
 }
@@ -1158,25 +1160,37 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>, 
     let mut epic = Vec::new();
     // Its own two-letter code, for the languages Steam's list knows.
     let epic_language = language.map(|_| player.lang.to_ascii_lowercase());
+    let (epic_id, product_user_id) = epic_ids(&player.id).unzip();
     for json in found.iter().filter(|path| has_extension(path, "json")) {
         // Only the layout this is known for: a build that keeps its user
         // elsewhere would get keys it never reads.
-        let has_user = std::fs::read_to_string(json)
+        let user = std::fs::read_to_string(json)
             .ok()
             .and_then(|text| {
                 serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}')).ok()
             })
-            .is_some_and(|v| v["EOSEmu"]["User"].is_object());
-        if !has_user {
+            .map(|v| v["EOSEmu"]["User"].clone())
+            .filter(serde_json::Value::is_object);
+        let Some(user) = user else {
             epic.push(Applied::Left(format!(
                 "{}: no EOSEmu.User to set",
                 json.display()
             )));
             continue;
-        }
+        };
+        // The ids only where the build has them, spelled as here.
+        let has = |key: &str| user.get(key).is_some();
         for (key, value) in [
             ("EOSEmu.User.UserName", Some(player.name.as_str())),
             ("EOSEmu.User.Language", epic_language.as_deref()),
+            (
+                "EOSEmu.User.EpicId",
+                epic_id.as_deref().filter(|_| has("EpicId")),
+            ),
+            (
+                "EOSEmu.User.ProductUserId",
+                product_user_id.as_deref().filter(|_| has("ProductUserId")),
+            ),
         ] {
             if let Some(value) = value {
                 let kind = Kind::Json {
@@ -1195,6 +1209,19 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>, 
         }
     }
     (goldberg, sse, epic)
+}
+
+/// The Epic emulator's `EpicId` and `ProductUserId` for this computer: 32
+/// hex digits each, as it makes them, derived from `%player_id%` so they
+/// stay the same from start to start and differ between computers. None
+/// without a player id: every computer would get the same pair again.
+fn epic_ids(player_id: &str) -> Option<(String, String)> {
+    use sha2::{Digest, Sha256};
+    if player_id.trim().is_empty() {
+        return None;
+    }
+    let id = |what: &str| hex::encode(&Sha256::digest(format!("{what}:{player_id}"))[..16]);
+    Some((id("epic"), id("product")))
 }
 
 fn is_ini(path: &Path) -> bool {
@@ -1930,7 +1957,7 @@ mod tests {
         let file = dir.join("NemirtingasEpicEmu.json");
         std::fs::write(
             &file,
-            r#"{"EOSEmu":{"Application":{"AppId":"endeavor"},"User":{"EpicId":"","Language":"en","UserName":"ChangeME"}}}"#,
+            r#"{"EOSEmu":{"Application":{"AppId":"endeavor"},"User":{"EpicId":"","ProductUserId":"","Language":"en","UserName":"ChangeME"}}}"#,
         )
         .unwrap();
         let player = Player {
@@ -1939,11 +1966,27 @@ mod tests {
             id: TEST_ID.into(),
         };
         let done = epic_emu(tmp.path(), &player);
-        assert_eq!(done.len(), 2);
+        assert_eq!(done.len(), 4);
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(json["EOSEmu"]["User"]["UserName"], "Jürgen");
         assert_eq!(json["EOSEmu"]["User"]["Language"], "de");
+        // Its own ids, the same on every start, others on another computer.
+        let (epic_id, product_user_id) = epic_ids(TEST_ID).unwrap();
+        assert_eq!(json["EOSEmu"]["User"]["EpicId"], epic_id.as_str());
+        assert_eq!(
+            json["EOSEmu"]["User"]["ProductUserId"],
+            product_user_id.as_str()
+        );
+        assert_eq!(epic_id.len(), 32);
+        assert!(epic_id.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_ne!(epic_id, product_user_id);
+        assert_eq!(epic_ids(TEST_ID), Some((epic_id.clone(), product_user_id)));
+        assert_ne!(
+            epic_ids("0b7e1f2a-0000-4000-8000-000000000000").unwrap().0,
+            epic_id
+        );
+        assert_eq!(epic_ids(""), None);
         assert_eq!(json["EOSEmu"]["Application"]["AppId"], "endeavor");
         // A language it has no code for stays; nothing is made, and a file
         // without `EOSEmu.User` is left as it is.
@@ -1951,7 +1994,13 @@ mod tests {
             lang: "ru".into(),
             ..player
         };
+        assert_eq!(epic_emu(tmp.path(), &player).len(), 3);
+        // A build without the id keys gets none.
+        std::fs::write(&file, r#"{"EOSEmu":{"User":{"UserName":"x"}}}"#).unwrap();
         assert_eq!(epic_emu(tmp.path(), &player).len(), 1);
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert!(json["EOSEmu"]["User"].get("EpicId").is_none());
         let empty = tempfile::tempdir().unwrap();
         assert!(epic_emu(empty.path(), &player).is_empty());
         std::fs::write(&file, r#"{"EOSEmu":{"Application":{}}}"#).unwrap();

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.3.12
+
+- Aliens: Fireteam Elite: Jeder Spieler bekommt eine eigene Epic-Kennung. Das Paket bringt für alle
+  dieselbe mit, deshalb scheiterten Einladungen in beide Richtungen mit einer Fehlermeldung. Auf der
+  VM nachgestellt: Mit eigener Kennung trat sie der Party eines Rechners mit der alten bei und kam
+  ins Spiel.
+
 ## 0.3.11
 
 - Proton läuft in der Steam Linux Runtime, wenn es eine verlangt und sie installiert ist, so wie

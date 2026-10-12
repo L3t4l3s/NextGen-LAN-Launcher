@@ -294,7 +294,8 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   `[Settings] UserName/Language`), SmartSteamEmu (jede
   `SmartSteamEmu.ini`: `[SmartSteamEmu] PersonaName/Language`) und Nemirtingas' Epic-Emulator
   (jede vorhandene `NemirtingasEpicEmu.json`: `EOSEmu.User.UserName/Language`, Sprache als
-  `de`/`en`/`fr`; Aliens: Fireteam Elite). Gesucht wird fünf Ordner tief, dazu gezielt unter
+  `de`/`en`/`fr`, dazu eigene `EpicId`/`ProductUserId` aus `%player_id%`: das Paket bringt
+  für alle dasselbe Paar mit, Einladungen scheiterten dann; Aliens: Fireteam Elite). Gesucht wird fünf Ordner tief, dazu gezielt unter
   `Engine/Binaries/ThirdParty` (oben oder im Spielordner): Unreal-Spiele legen Steams DLL unter
   `Engine/Binaries/ThirdParty/Steamworks/Steamv151/Win64/` ab, dort blieb sie unentdeckt und
   Goldberg nannte den Spieler `Noob`. Eine JSON ohne `EOSEmu.User` bleibt unangetastet. Fehlt die Sprache in der Tabelle
