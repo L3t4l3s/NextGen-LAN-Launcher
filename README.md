@@ -178,6 +178,11 @@ again.
 
 ## Open items
 
+- **Launcher deaf to input after a stuck drag — untested:** on Bazzite through Sunshine the window
+  stopped taking clicks and keys; GTK's drag helper windows (1x1 at -99,-99, carrying a cover
+  image's types) were still there, so a drag that started in the page never ended. The page now
+  cancels every `dragstart` outside text fields (`src/main.ts`). Check that it does not come back;
+  a drag that starts outside the launcher is not covered.
 - **Anno 1404: own Uplay id per player — untested:** the launcher writes `%player_id%` and the
   player's name into `Uplay.ini` (the ETI script gives everyone the same id). Check at a LAN that
   two players see each other in the lobby, on Windows and Linux.

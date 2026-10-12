@@ -16,6 +16,20 @@ if (!import.meta.env.DEV) {
     e.preventDefault();
   });
 }
+// Nothing in the launcher is dragged. A cover or link that starts to be
+// dragged hands the pointer to GTK's drag-and-drop, and a drag that never
+// ends (seen on Bazzite through Sunshine: its 1x1 helper windows stayed at
+// -99,-99 carrying the image's types) leaves the whole window deaf to clicks
+// and keys until the launcher restarts. So no drag starts, except selected
+// text in a text field.
+window.addEventListener(
+  "dragstart",
+  (e) => {
+    if (e.target instanceof Element && e.target.closest("input, textarea, [contenteditable='true']")) return;
+    e.preventDefault();
+  },
+  true,
+);
 mount(App, { target: document.getElementById("app")! });
 startGamepadNavigation();
 // A window that opens and stays empty is the one failure the launcher cannot

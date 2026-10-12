@@ -552,8 +552,13 @@ impl Manifest {
     }
 
     /// The notes a player on `platform` reads, in `lang` (else English):
-    /// the general ones, then the platform's own.
-    pub fn notes_for(&self, platform: &str, lang: &str) -> Option<String> {
+    /// the general ones, then the platform's own — only for a package
+    /// `revision` the profile was written for, so a note need not name the
+    /// package state to stay true when a newer package arrives.
+    pub fn notes_for(&self, revision: &str, platform: &str, lang: &str) -> Option<String> {
+        if !self.matches_revision(revision) {
+            return None;
+        }
         let pick = |by: &BTreeMap<String, String>| by.get(lang).or_else(|| by.get("en")).cloned();
         let general = pick(&self.setup.notes);
         let own = self.setup.platform_notes.get(platform).and_then(pick);
@@ -1063,9 +1068,27 @@ mod tests {
             Path::new("g.toml"),
         )
         .unwrap();
-        assert_eq!(m.notes_for("macos", "de").as_deref(), Some("Alle. Mac."));
-        assert_eq!(m.notes_for("linux", "de").as_deref(), Some("Alle."));
-        assert_eq!(m.notes_for("macos", "fr").as_deref(), Some("Mac (en)."));
+        assert_eq!(
+            m.notes_for("1", "macos", "de").as_deref(),
+            Some("Alle. Mac.")
+        );
+        assert_eq!(m.notes_for("1", "linux", "de").as_deref(), Some("Alle."));
+        assert_eq!(
+            m.notes_for("1", "macos", "fr").as_deref(),
+            Some("Mac (en).")
+        );
+        // A profile written for other packages says nothing about this one.
+        let m = Manifest::parse(
+            "schema = 1\nid = \"g\"\nrevisions = [\"20190317\"]\n[launch]\nexe = \"g.exe\"\n\
+             [setup]\nnotes.de = \"Startet nicht.\"\n",
+            Path::new("g.toml"),
+        )
+        .unwrap();
+        assert_eq!(
+            m.notes_for("20190317", "linux", "de").as_deref(),
+            Some("Startet nicht.")
+        );
+        assert_eq!(m.notes_for("20240101", "linux", "de"), None);
     }
 
     #[test]

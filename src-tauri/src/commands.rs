@@ -126,7 +126,7 @@ fn manifest_info(m: &Manifest, revision: &str, lang: &str) -> ManifestInfo {
         args: spec.args.clone(),
         runner: spec.runner,
         alternatives: spec.alternatives.iter().map(|a| a.name.clone()).collect(),
-        notes: m.notes_for(Manifest::current_platform(), lang),
+        notes: m.notes_for(revision, Manifest::current_platform(), lang),
         verified_for_revision: m.verified_for(revision, Manifest::current_platform()),
         own_config: m.user_config,
         checked_revisions: m.revisions.clone(),

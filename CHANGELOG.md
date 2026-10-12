@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.3.10
+
+- Der Launcher reagierte manchmal gar nicht mehr auf Klicks und Tasten: Ein angefangenes Ziehen
+  eines Covers oder Links blieb hängen und hielt die Maus fest, bis zum Neustart. In der
+  Oberfläche wird jetzt nichts mehr gezogen (außer markiertem Text in Eingabefeldern). Gesehen
+  auf Bazzite über Sunshine, nicht nachgestellt; ungetestet, auf der LAN prüfen.
+- Hinweise in den Spieldetails erscheinen nur noch für die Paketstände, für die das Profil
+  geschrieben wurde. Alien Swarm: Reactive Drop sagt deshalb nur noch, dass das Spiel unter Linux
+  nicht startet, ohne Paketstand und Vermutungen.
+
 ## 0.3.9
 
 - Aliens: Fireteam Elite bekommt Spielername und Sprache: Der Launcher findet Goldberg jetzt auch im

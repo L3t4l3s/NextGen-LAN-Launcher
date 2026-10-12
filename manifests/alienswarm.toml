@@ -14,16 +14,16 @@ source = "NextGen LAN Launcher: start script tried with Proton 11 (2026-10), doe
 # going offline does not change it. Without the emulator the menu comes
 # up ("no Steam connection"), which is no use on a LAN. Newer releases of
 # the game are reported to run under Proton (not tried); that needs a new
-# package on the sync server. The notes name the package revision because
-# notes are shown for every revision.
+# package on the sync server; the notes are shown for the revisions above
+# only.
 # macOS: CrossOver is Wine as well (not tried).
 exe = ""
 args = []
 
 [setup.platform_notes.linux]
-de = "Dieses Paket (Stand 20190317) startet unter Linux nicht: Das Spiel bleibt im Hintergrundbild des Menüs stehen. Der Steam-Emulator dieses Pakets wartet unter Wine/Proton ewig auf eine Netzwerkantwort, die unter Windows sofort mit einem Fehler zurückkommt. Abhilfe bringt vermutlich erst ein neueres Paket des Spiels auf dem Sync-Server."
-en = "This package (20190317) does not start on Linux: the game stops at the menu background. This package's Steam emulator waits for ever under Wine/Proton for a network call that fails at once on Windows. Probably only a newer package of the game on the sync server helps."
+de = "Startet unter Linux nicht."
+en = "Does not start on Linux."
 
 [setup.platform_notes.macos]
-de = "Dieses Paket (Stand 20190317) startet unter macOS vermutlich nicht: Unter Linux bleibt das Spiel im Hintergrundbild des Menüs stehen, weil der Steam-Emulator dieses Pakets unter Wine ewig auf eine Netzwerkantwort wartet. CrossOver beruht ebenfalls auf Wine. Abhilfe bringt vermutlich erst ein neueres Paket des Spiels auf dem Sync-Server."
-en = "This package (20190317) probably does not start on macOS: on Linux the game stops at the menu background because this package's Steam emulator waits for ever under Wine for a network call. CrossOver is Wine as well. Probably only a newer package of the game on the sync server helps."
+de = "Startet unter macOS vermutlich nicht (CrossOver beruht wie Linux auf Wine)."
+en = "Probably does not start on macOS (CrossOver is Wine, as on Linux)."
