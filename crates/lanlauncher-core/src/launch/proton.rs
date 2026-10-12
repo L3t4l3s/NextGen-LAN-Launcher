@@ -279,6 +279,64 @@ pub fn probed_paths(home: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// The Steam Linux Runtime a Proton asks for, and where it is, if anywhere.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequiredRuntime {
+    /// Steam's app id of the runtime (`4183110` for Proton 11).
+    pub appid: String,
+    /// Its `_v2-entry-point`, when it is installed in a library of the Steam
+    /// the Proton belongs to.
+    pub entry_point: Option<PathBuf>,
+}
+
+/// The runtime the Proton at `proton` (its `proton` script) names as
+/// `require_tool_appid` in its `toolmanifest.vdf`, looked for in the
+/// libraries of `steam_root`; `None` when it names none (older and custom
+/// builds).
+///
+/// Steam runs such a Proton inside that runtime's container, and Proton
+/// relies on it: run straight on the host it loads the host's libraries,
+/// and its GStreamer plugins wanted `libbz2.so.1.0`, which Fedora (Bazzite)
+/// does not have — video decoding in the games failed.
+pub fn required_runtime(proton: &Path, steam_root: &Path) -> Option<RequiredRuntime> {
+    let manifest = std::fs::read_to_string(proton.parent()?.join("toolmanifest.vdf")).ok()?;
+    let appid = vdf_value(&manifest, "require_tool_appid")?;
+    if appid.is_empty() || !appid.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let entry_point = steam_libraries(steam_root).into_iter().find_map(|library| {
+        let acf = std::fs::read_to_string(
+            library
+                .join("steamapps")
+                .join(format!("appmanifest_{appid}.acf")),
+        )
+        .ok()?;
+        let dir = vdf_value(&acf, "installdir")?;
+        // A name, not a path: nothing should walk out of `common/` on the
+        // manifest's say-so.
+        if dir.is_empty() || dir.contains('/') || dir == ".." {
+            return None;
+        }
+        let entry = library
+            .join("steamapps/common")
+            .join(dir)
+            .join("_v2-entry-point");
+        entry.is_file().then_some(entry)
+    });
+    Some(RequiredRuntime { appid, entry_point })
+}
+
+/// The first `"key" "value"` pair with this key in a VDF text (hand-parsed
+/// like [`library_paths_in_vdf`]).
+fn vdf_value(text: &str, wanted: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let mut parts = line.split('"').filter(|s| !s.trim().is_empty());
+        let key = parts.next()?;
+        let value = parts.next()?.trim();
+        key.eq_ignore_ascii_case(wanted).then(|| value.to_string())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,5 +608,73 @@ mod tests {
         assert!(version_of("Proton 10.0") > version_of("Proton 9.0"));
         assert!(version_of("GE-Proton9-20") > version_of("GE-Proton9-2"));
         assert_eq!(version_of("Proton - Experimental"), Vec::<u32>::new());
+    }
+
+    /// Proton 11 names Steam Linux Runtime 4 (`4183110`); found in a second
+    /// library, missing, or not asked for at all.
+    #[test]
+    fn the_runtime_a_proton_asks_for_is_found_in_any_library() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let steam = tmp.path().join("Steam");
+        let card = tmp.path().join("card");
+        let proton = steam.join("steamapps/common/Proton 11.0/proton");
+        touch(&proton);
+        std::fs::write(
+            proton.parent().unwrap().join("toolmanifest.vdf"),
+            "\"manifest\"\n{\n  \"version\" \"2\"\n  \"commandline\" \"/proton %verb%\"\n  \"require_tool_appid\" \"4183110\"\n}\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(card.join("steamapps/common")).unwrap();
+        std::fs::write(
+            steam.join("steamapps/libraryfolders.vdf"),
+            format!(
+                "\"libraryfolders\"\n{{\n \"1\"\n {{\n  \"path\" \"{}\"\n }}\n}}\n",
+                card.display()
+            ),
+        )
+        .unwrap();
+        let missing = required_runtime(&proton, &steam).expect("asks for one");
+        assert_eq!(missing.appid, "4183110");
+        assert_eq!(missing.entry_point, None);
+
+        std::fs::write(
+            card.join("steamapps/appmanifest_4183110.acf"),
+            "\"AppState\"\n{\n \"appid\" \"4183110\"\n \"installdir\" \"SteamLinuxRuntime_4\"\n}\n",
+        )
+        .unwrap();
+        // Listed but not there yet (a download in progress): still missing.
+        assert_eq!(required_runtime(&proton, &steam).unwrap().entry_point, None);
+        let entry = card.join("steamapps/common/SteamLinuxRuntime_4/_v2-entry-point");
+        touch(&entry);
+        assert_eq!(
+            required_runtime(&proton, &steam).unwrap().entry_point,
+            Some(entry)
+        );
+
+        // A Proton without a tool manifest, or naming no runtime.
+        let custom = steam.join("compatibilitytools.d/GE-Proton/proton");
+        touch(&custom);
+        assert_eq!(required_runtime(&custom, &steam), None);
+        std::fs::write(
+            custom.parent().unwrap().join("toolmanifest.vdf"),
+            "\"manifest\"\n{\n  \"commandline\" \"/proton %verb%\"\n}\n",
+        )
+        .unwrap();
+        assert_eq!(required_runtime(&custom, &steam), None);
+    }
+
+    /// The machine this runs on: what each Proton asks for and whether it
+    /// is installed (`cargo test … -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn the_runtime_of_this_machines_proton() {
+        let home = std::env::var_os("HOME").map(PathBuf::from).expect("HOME");
+        for install in find_protons(&home) {
+            println!(
+                "{} -> {:?}",
+                install.proton.display(),
+                required_runtime(&install.proton, &install.steam_root)
+            );
+        }
     }
 }

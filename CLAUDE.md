@@ -613,6 +613,24 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   Benutzer denselben Build selbst installiert, bleibt nur seine Kopie (gleicher Name); Tests rufen `find_protons_in(home, &[])`, sonst sähen sie, was der
   Testrechner installiert hat. Alles in
   `crates/lanlauncher-core/src/launch/proton.rs`, rein dateisystembasiert und damit testbar.
+- **Steam Linux Runtime:** Proton 11 nennt in `toolmanifest.vdf` `require_tool_appid 4183110`
+  (Runtime 4); Steam startet es in deren Container. Direkt gestartet nimmt Proton die
+  Bibliotheken des Rechners: auf Bazzite fehlte Protons GStreamer-Plugins `libbz2.so.1.0`
+  (Fedora hat nur `.so.1`), Videos im Spiel scheiterten (`webview.log`). `proton::required_runtime`
+  sucht die Runtime über `appmanifest_<appid>.acf` → `installdir` → `_v2-entry-point` in allen
+  Bibliotheken der Steam-Wurzel des Proton; `unix::steam_runtime` setzt sie als Wrapper vor
+  Proton (`--verb=waitforexitandrun --`), der Wrapper des Profils kommt davor (`splice` in
+  `plan`), `program` bleibt Proton (Prefix-Aufzeichnung). Proton bekommt in der Runtime dasselbe
+  Verb wie der Einstiegspunkt (`waitforexitandrun`, wie Steam und umu), auf dem Rechner weiter
+  `run`. `STEAM_COMPAT_INSTALL_PATH` (Spielordner), `STEAM_COMPAT_TOOL_PATHS` (Proton-Ordner) und
+  `STEAM_COMPAT_MOUNTS` (Spielordner, immer) machen Pfade außerhalb von `$HOME` im Container
+  sichtbar. Die Prozesse des Containers (`pv-adverb`, `bwrap`, …) stehen in
+  `winetricks::WINE_SYSTEM`, sonst gälte der Prefix nach dem Spiel noch als belegt. Fehlt die
+  Runtime, startet Proton wie bisher direkt; die Diagnose (`runner.steam_runtime_missing`, für
+  jedes gefundene und jedes angepinnte Proton) bietet `steam://install/<appid>` an, geöffnet per
+  `xdg-open` über `host_command` (Steam darf die Umgebung des AppImage nicht erben). winetricks bleibt außerhalb. Der Start in der Runtime ist
+  ungetestet (auf der VM nicht installiert); offen ist vor allem, ob der `fnr`-Ersatz (Perl) im
+  Container läuft.
 - **LAN-Chat** (`crates/lanlauncher-core/src/chat/`, Shell `src-tauri/src/chat.rs`, Panel
   `ChatPanel.svelte`): serverlos, UDP-Beacons und TCP auf Port 41950. Alles ist ein
   unveränderliches `Event`; zwei Launcher gleichen beim Treffen und alle zwei Minuten per `Hello`

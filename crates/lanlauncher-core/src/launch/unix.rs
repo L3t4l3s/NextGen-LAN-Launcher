@@ -170,20 +170,30 @@ fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
+/// The Steam a Proton runs for (`STEAM_COMPAT_CLIENT_INSTALL_PATH`): the one
+/// it was found under, else `~/.steam/steam` for a Proton set by hand.
+pub fn steam_client_root(steam_root: Option<&Path>) -> Option<PathBuf> {
+    steam_root
+        .map(Path::to_path_buf)
+        .or_else(|| dirs_home().map(|h| h.join(".steam/steam")))
+}
+
 pub fn plan(ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
     if starts_through_script(ctx) {
         // The script decides what starts; a script run through a native
         // profile is no case, `starts_through_script` asks for Wine.
         if let Some(mut plan) = script_plan(ctx, Script::Start)? {
-            plan.wrapper = trusted_wrapper(ctx.manifest);
+            plan.wrapper.splice(0..0, trusted_wrapper(ctx.manifest));
             return Ok(plan);
         }
     }
     let mut plan = plan_without_wrapper(ctx)?;
     // A `.app` starts through `open`, which hands it to launchd and exits at
-    // once: a wrapper would wrap `open`, never the game.
+    // once: a wrapper would wrap `open`, never the game. The profile's
+    // wrapper goes outside the Steam Linux Runtime the plan may already
+    // carry ([`steam_runtime`]): `gamescope -- <runtime> -- proton …`.
     if plan.program != Path::new("/usr/bin/open") {
-        plan.wrapper = trusted_wrapper(ctx.manifest);
+        plan.wrapper.splice(0..0, trusted_wrapper(ctx.manifest));
     }
     Ok(plan)
 }
@@ -360,14 +370,22 @@ fn wine_plan(
             // and Proton refuses to start when this points at the wrong one.
             env.entry("STEAM_COMPAT_CLIENT_INSTALL_PATH".into())
                 .or_insert(
-                    chosen
-                        .steam_root
-                        .clone()
-                        .or_else(|| dirs_home().map(|h| h.join(".steam/steam")))
+                    steam_client_root(chosen.steam_root.as_deref())
                         .map(|p| p.to_string_lossy().to_string())
                         .unwrap_or_default(),
                 );
-            let mut a = vec!["run".to_string(), exe.to_string_lossy().to_string()];
+            let wrapper = steam_runtime(&chosen, &ctx.paths.share_dir, &mut env);
+            // Inside the runtime Proton gets the verb the entry point got, as
+            // Steam and umu pass it (`waitforexitandrun`: wait until the
+            // prefix's Wine from a setup just before has gone, then run);
+            // on the host it stays `run`, as it always was. Untested against
+            // a real runtime, check at the LAN.
+            let verb = if wrapper.is_empty() {
+                "run"
+            } else {
+                "waitforexitandrun"
+            };
+            let mut a = vec![verb.to_string(), exe.to_string_lossy().to_string()];
             a.extend(args);
             Ok(LaunchPlan {
                 program: chosen.program,
@@ -377,7 +395,7 @@ fn wine_plan(
                 runner: chosen.label,
                 needs_elevation: false,
                 raw_command_line: None,
-                wrapper: Vec::new(),
+                wrapper,
             })
         }
         _ => {
@@ -402,6 +420,82 @@ fn wine_plan(
             })
         }
     }
+}
+
+/// The Steam Linux Runtime in front of a Proton that asks for one
+/// (`proton::required_runtime`), as Steam runs it: `<runtime>/_v2-entry-point
+/// --verb=waitforexitandrun --`, then Proton. Empty when the Proton names no
+/// runtime, or when it is not installed — then Proton runs on the host as
+/// before, and the diagnostics page says what is missing.
+///
+/// The runtime's container sees the home folder, not a library on another
+/// drive (a Steam Deck's SD card under `/run/media`): the Proton goes in as
+/// `STEAM_COMPAT_TOOL_PATHS`, the game's folder as `STEAM_COMPAT_INSTALL_PATH`
+/// (unless a profile set them) and always in `STEAM_COMPAT_MOUNTS`, which the
+/// container shares as well. The `fnr` helper below the launcher's data
+/// folder is only seen while that is in the home folder.
+fn steam_runtime(
+    chosen: &DetectedRunner,
+    share_dir: &Path,
+    env: &mut BTreeMap<String, String>,
+) -> Vec<String> {
+    // No Steam to look in: nothing, rather than `steamapps/` below
+    // whatever the current folder is.
+    let root = match env.get("STEAM_COMPAT_CLIENT_INSTALL_PATH") {
+        Some(root) if !root.is_empty() => PathBuf::from(root),
+        _ => return Vec::new(),
+    };
+    let Some(required) = super::proton::required_runtime(&chosen.program, &root) else {
+        return Vec::new();
+    };
+    let Some(entry) = required.entry_point else {
+        if first_time(format!(
+            "missing {} {}",
+            required.appid,
+            chosen.program.display()
+        )) {
+            log::warn!(
+                "{} asks for the Steam Linux Runtime (app {}), which is not installed; running it without",
+                chosen.label,
+                required.appid
+            );
+        }
+        return Vec::new();
+    };
+    if first_time(format!("using {}", entry.display())) {
+        log::info!(
+            "{} runs inside the Steam Linux Runtime {}",
+            chosen.label,
+            entry.display()
+        );
+    }
+    if let Some(dir) = chosen.program.parent() {
+        env.entry("STEAM_COMPAT_TOOL_PATHS".into())
+            .or_insert_with(|| dir.to_string_lossy().to_string());
+    }
+    let share = share_dir.to_string_lossy().to_string();
+    env.entry("STEAM_COMPAT_INSTALL_PATH".into())
+        .or_insert_with(|| share.clone());
+    let mounts = env.entry("STEAM_COMPAT_MOUNTS".into()).or_default();
+    if !mounts.split(':').any(|m| m == share) {
+        if !mounts.is_empty() {
+            mounts.push(':');
+        }
+        mounts.push_str(&share);
+    }
+    vec![
+        entry.to_string_lossy().to_string(),
+        "--verb=waitforexitandrun".into(),
+        "--".into(),
+    ]
+}
+
+/// Whether `what` is new in this run: plans are built for every start and
+/// setup, the log line about the runtime is worth once.
+fn first_time(what: String) -> bool {
+    static SEEN: std::sync::Mutex<std::collections::BTreeSet<String>> =
+        std::sync::Mutex::new(std::collections::BTreeSet::new());
+    SEEN.lock().unwrap_or_else(|e| e.into_inner()).insert(what)
 }
 
 /// Whether a start runs the game's whole `game_start.cmd` in its prefix
@@ -1119,6 +1213,98 @@ mod tests {
         assert!(plan_from(ManifestOrigin::DerivedFromScript)
             .wrapper
             .is_empty());
+    }
+
+    /// Proton 11 asks for Steam Linux Runtime 4: installed, the game, its
+    /// setup and its start script run through its entry point, the profile's
+    /// wrapper outside, the tool itself still the plan's program.
+    #[cfg(unix)]
+    #[test]
+    fn a_proton_runs_inside_the_runtime_it_asks_for() {
+        use crate::manifest::ManifestOrigin;
+        use crate::settings::GameRunner;
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = GamePaths::new(tmp.path(), "g");
+        std::fs::create_dir_all(&paths.local_dir).unwrap();
+        std::fs::write(paths.local_dir.join("game.exe"), "").unwrap();
+        let steam = tmp.path().join("Steam");
+        let proton = steam.join("steamapps/common/Proton 11.0/proton");
+        std::fs::create_dir_all(proton.parent().unwrap()).unwrap();
+        std::fs::write(&proton, "").unwrap();
+        std::fs::write(
+            proton.parent().unwrap().join("toolmanifest.vdf"),
+            "\"manifest\"\n{\n  \"require_tool_appid\" \"4183110\"\n}\n",
+        )
+        .unwrap();
+        let mut settings = Settings::default();
+        settings.set_game_runner(
+            "g",
+            Some(GameRunner {
+                program: proton.clone(),
+                runner: Runner::Proton,
+                label: "Proton 11.0".into(),
+                steam_root: Some(steam.clone()),
+                shares_default_prefix: true,
+            }),
+        );
+        let m = Manifest {
+            id: "g".into(),
+            origin: ManifestOrigin::Bundled,
+            launch: LaunchSpec {
+                exe: "game.exe".into(),
+                runner: Runner::Proton,
+                wrapper: vec!["gamemoderun".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let ctx = LaunchContext {
+            paths: &paths,
+            game_id: "g",
+            settings: &settings,
+            manifest: Some(&m),
+            receipt: None,
+            alternative: None,
+        };
+
+        // Not installed: on the host, as before.
+        let game = plan(&ctx).unwrap();
+        assert_eq!(game.wrapper, ["gamemoderun"]);
+        assert!(!game.env.contains_key("STEAM_COMPAT_TOOL_PATHS"));
+
+        std::fs::write(
+            steam.join("steamapps/appmanifest_4183110.acf"),
+            "\"AppState\"\n{\n \"installdir\" \"SteamLinuxRuntime_4\"\n}\n",
+        )
+        .unwrap();
+        let entry = steam.join("steamapps/common/SteamLinuxRuntime_4/_v2-entry-point");
+        std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+        std::fs::write(&entry, "").unwrap();
+        let runtime = [
+            entry.to_string_lossy().to_string(),
+            "--verb=waitforexitandrun".into(),
+            "--".into(),
+        ];
+        let game = plan(&ctx).unwrap();
+        assert_eq!(game.program, proton);
+        assert_eq!(game.wrapper[0], "gamemoderun");
+        assert_eq!(game.wrapper[1..], runtime);
+        assert_eq!(game.args[0], "waitforexitandrun");
+        assert_eq!(
+            game.env["STEAM_COMPAT_MOUNTS"],
+            paths.share_dir.to_string_lossy()
+        );
+        assert_eq!(
+            game.env["STEAM_COMPAT_TOOL_PATHS"],
+            proton.parent().unwrap().to_string_lossy()
+        );
+        assert_eq!(
+            game.env["STEAM_COMPAT_INSTALL_PATH"],
+            paths.share_dir.to_string_lossy()
+        );
+        let setup = setup_script_plan(&ctx).unwrap().unwrap();
+        assert_eq!(setup.wrapper, runtime, "a setup gets no profile wrapper");
+        assert_eq!(setup.program, proton);
     }
 
     #[test]

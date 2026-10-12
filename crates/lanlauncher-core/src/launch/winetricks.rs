@@ -532,11 +532,12 @@ fn host_var(name: &str) -> String {
 }
 
 /// Wine's own processes, which outlive a game or a run by a few seconds
-/// (`wineserver` waits before it goes). A running game always has a process
-/// of its own besides them.
+/// (`wineserver` waits before it goes), and those of the Steam Linux
+/// Runtime's container around them (`pv-adverb` stays as long as they do).
+/// A running game always has a process of its own besides them.
 /// Linux keeps 15 characters of a name: `winemenubuilder.exe` shows as
 /// `winemenubuilder`.
-const WINE_SYSTEM: [&str; 14] = [
+const WINE_SYSTEM: [&str; 21] = [
     "wineserver",
     "wineserver64",
     "services.exe",
@@ -551,6 +552,13 @@ const WINE_SYSTEM: [&str; 14] = [
     "start.exe",
     "rundll32.exe",
     "tabtip.exe",
+    "_v2-entry-point",
+    "pressure-vessel-wrap",
+    "pressure-vessel-adverb",
+    "pv-adverb",
+    "pv-bwrap",
+    "bwrap",
+    "srt-logger",
 ];
 
 fn is_wine_system(name: &str) -> bool {

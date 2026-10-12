@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.3.11
+
+- Proton läuft in der Steam Linux Runtime, wenn es eine verlangt und sie installiert ist, so wie
+  Steam es startet (Proton 11: Runtime 4). Ohne sie liefen die Spiele mit den Bibliotheken des
+  Systems, und auf Bazzite fehlten Protons Video-Plugins. Fehlt die Runtime, meldet die Diagnose
+  das und öffnet auf Wunsch Steam zum Installieren. Der Start in der Runtime ist ungetestet, auf
+  der LAN prüfen.
+
 ## 0.3.10
 
 - Der Launcher reagierte manchmal gar nicht mehr auf Klicks und Tasten: Ein angefangenes Ziehen

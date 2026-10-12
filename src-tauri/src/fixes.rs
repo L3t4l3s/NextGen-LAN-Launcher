@@ -377,6 +377,29 @@ pub async fn apply(
             // strange thing to say about opening a folder.
             Ok("msg.folder_opened".into())
         }
+        // `steam://install/…` goes to Steam, not to a browser. On Linux it may
+        // start Steam itself, which must not inherit the launcher's own
+        // environment (AppImage libraries, a font config inside the mount
+        // that goes away with the launcher): `xdg-open` through
+        // `host_command`, as a game start gets it.
+        FixAction::OpenUrl { url } if url.starts_with("steam://") => {
+            if cfg!(target_os = "linux") {
+                // Not awaited: the handler may be Steam itself, which runs
+                // until it is closed. Reaped in the background.
+                let mut child = lanlauncher_core::launch::host_command("xdg-open")
+                    .arg(url)
+                    .spawn()
+                    .map_err(|e| e.to_string())?;
+                tauri::async_runtime::spawn(async move {
+                    let _ = child.wait().await;
+                });
+            } else {
+                app.opener()
+                    .open_url(url, None::<&str>)
+                    .map_err(|e| e.to_string())?;
+            }
+            Ok("msg.steam_opened".into())
+        }
         FixAction::OpenUrl { url } => {
             app.opener()
                 .open_url(url, None::<&str>)

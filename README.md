@@ -178,6 +178,11 @@ again.
 
 ## Open items
 
+- **Proton inside the Steam Linux Runtime — untested:** a Proton that names a runtime in its
+  `toolmanifest.vdf` (Proton 11: app 4183110) now starts through the runtime's `_v2-entry-point`
+  when it is installed. The test machine has no runtime, so only the detection and the diagnostics
+  hint were seen. Check that games, setup scripts and start scripts (the `fnr` helper runs Perl
+  from inside the container) work, also with a library outside the home folder.
 - **Launcher deaf to input after a stuck drag — untested:** on Bazzite through Sunshine the window
   stopped taking clicks and keys; GTK's drag helper windows (1x1 at -99,-99, carrying a cover
   image's types) were still there, so a drag that started in the page never ended. The page now

@@ -8,7 +8,8 @@ use crate::library::Library;
 use crate::problem::{FixAction, Problem, Severity};
 use crate::transport::{ShareState, ShareStatus, TransportHealth};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 /// Missing data is not itself a network fault while a healthy catalog share
 /// is connecting, syncing or waiting for the loader. Never invent a percent.
@@ -869,6 +870,40 @@ pub fn check_appimage_unpacked(
         .dismissible("appimage.no_fuse")]
 }
 
+/// Protons the games run with (`(label, proton script, Steam root)`) that
+/// ask for a Steam Linux Runtime which is not installed: one warning per
+/// runtime, naming the tools, with a button that asks Steam to install it.
+///
+/// Such a Proton still starts — on the host's libraries instead of the
+/// runtime's, which it was not built for: Proton 11 on Bazzite lost its
+/// video plugins (`libbz2.so.1.0` missing), and in-game videos stayed black.
+pub fn check_steam_runtime(protons: &[(String, PathBuf, PathBuf)]) -> Vec<Problem> {
+    let mut missing: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (label, proton, root) in protons {
+        if let Some(required) = crate::launch::proton::required_runtime(proton, root) {
+            if required.entry_point.is_none() {
+                let tools = missing.entry(required.appid).or_default();
+                if !tools.contains(label) {
+                    tools.push(label.clone());
+                }
+            }
+        }
+    }
+    missing
+        .into_iter()
+        .map(|(appid, tools)| {
+            Problem::new("runner.steam_runtime_missing", Severity::Warning)
+                .param("tools", tools.join(", "))
+                .param("appid", &appid)
+                .step("runner.steam_runtime_missing.step.install")
+                .with_fix(FixAction::OpenUrl {
+                    url: format!("steam://install/{appid}"),
+                })
+                .dismissible(format!("runner.steam_runtime_missing.{appid}"))
+        })
+        .collect()
+}
+
 /// Orphaned sync engine processes not started by this launcher instance.
 pub fn check_orphans(our_pid: Option<u32>) -> Vec<Problem> {
     let sys = crate::transport::resilio::scan_processes();
@@ -892,6 +927,48 @@ pub fn check_orphans(our_pid: Option<u32>) -> Vec<Problem> {
 
 #[cfg(test)]
 mod tests {
+    /// One warning per missing runtime, naming every tool that wants it;
+    /// nothing once it is installed or for a Proton that names none.
+    #[test]
+    fn a_proton_without_its_runtime_is_reported_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let steam = tmp.path().join("Steam");
+        let proton = |name: &str, manifest: Option<&str>| {
+            let path = steam.join("steamapps/common").join(name).join("proton");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "").unwrap();
+            if let Some(text) = manifest {
+                std::fs::write(path.parent().unwrap().join("toolmanifest.vdf"), text).unwrap();
+            }
+            (name.to_string(), path, steam.clone())
+        };
+        let wants = "\"manifest\"\n{\n \"require_tool_appid\" \"4183110\"\n}\n";
+        let protons = [
+            proton("Proton 11.0", Some(wants)),
+            proton("Proton Experimental", Some(wants)),
+            proton("GE-Proton", None),
+        ];
+        let found = check_steam_runtime(&protons);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].code, "runner.steam_runtime_missing");
+        assert_eq!(found[0].params["tools"], "Proton 11.0, Proton Experimental");
+        assert_eq!(
+            found[0].fix,
+            Some(FixAction::OpenUrl {
+                url: "steam://install/4183110".into()
+            })
+        );
+        std::fs::write(
+            steam.join("steamapps/appmanifest_4183110.acf"),
+            "\"AppState\"\n{\n \"installdir\" \"SteamLinuxRuntime_4\"\n}\n",
+        )
+        .unwrap();
+        let entry = steam.join("steamapps/common/SteamLinuxRuntime_4/_v2-entry-point");
+        std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+        std::fs::write(&entry, "").unwrap();
+        assert!(check_steam_runtime(&protons).is_empty());
+    }
+
     #[test]
     fn catalog_loading_is_informational_but_offline_or_paused_needs_action() {
         let connecting = catalog_pending_problem(true, None);

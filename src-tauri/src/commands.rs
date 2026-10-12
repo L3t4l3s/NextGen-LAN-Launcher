@@ -1244,6 +1244,32 @@ async fn firewalld_zones() -> Option<Vec<diagnostics::FirewalldZone>> {
         .then(|| diagnostics::parse_firewalld_zones(&String::from_utf8_lossy(&output.stdout)))
 }
 
+/// The Protons games can start with: each one found, and each one a game is
+/// pinned to (set by hand, maybe not among those found). `check_steam_runtime`
+/// names each missing runtime once.
+fn protons_in_use(
+    settings: &lanlauncher_core::settings::Settings,
+    found: &[launch::unix::DetectedRunner],
+) -> Vec<(String, std::path::PathBuf, std::path::PathBuf)> {
+    use lanlauncher_core::manifest::Runner;
+    let found = found
+        .iter()
+        .filter(|r| r.runner == Runner::Proton)
+        .map(|r| (&r.label, &r.program, r.steam_root.as_deref()));
+    let pinned = settings
+        .game_runners
+        .values()
+        .filter(|r| r.runner == Runner::Proton)
+        .map(|r| (&r.label, &r.program, r.steam_root.as_deref()));
+    found
+        .chain(pinned)
+        .filter_map(|(label, program, root)| {
+            let root = launch::unix::steam_client_root(root)?;
+            Some((label.clone(), program.clone(), root))
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
     let mut problems = Vec::new();
@@ -1356,6 +1382,18 @@ pub async fn run_diagnostics(state: State<'_, Arc<AppState>>) -> Cmd<Report> {
         }
     }
     if cfg!(target_os = "linux") {
+        checks.push("steam_runtime".into());
+        // Reads Steam's libraries, an SD card among them: off the async
+        // workers, like the runner scan itself.
+        let pinned = settings.clone();
+        if let Ok(found) = tauri::async_runtime::spawn_blocking(move || {
+            let found = launch::unix::detect_runners(&pinned);
+            diagnostics::check_steam_runtime(&protons_in_use(&pinned, &found))
+        })
+        .await
+        {
+            problems.extend(found);
+        }
         checks.push("appimage".into());
         problems.extend(diagnostics::check_appimage_unpacked(
             std::env::var("APPIMAGE").ok().as_deref(),

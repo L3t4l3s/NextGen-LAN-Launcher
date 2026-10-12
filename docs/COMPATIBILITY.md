@@ -252,6 +252,14 @@ Wine; it does not make a share's content harmless — Wine is no sandbox, and a 
 can reach the host on its own. The wrapper is applied at spawn time (`LaunchPlan::wrapper`); `program` stays
 the Wine/Proton/CrossOver the plan runs.
 
+A Proton whose `toolmanifest.vdf` names a `require_tool_appid` (Proton 11: Steam Linux Runtime 4,
+app 4183110) runs inside that runtime when it is installed in a library of the Proton's Steam, as
+Steam runs it: `<runtime>/_v2-entry-point --verb=waitforexitandrun -- proton waitforexitandrun …`,
+with the profile's wrapper outside, `STEAM_COMPAT_INSTALL_PATH`/`STEAM_COMPAT_TOOL_PATHS` set to the
+game's folder and the Proton, and the game's folder in `STEAM_COMPAT_MOUNTS` (the container shares the home folder, not a library on another drive).
+Without the runtime Proton runs on the host as before, and the diagnostics page offers to install it
+through Steam (`steam://install/<appid>`). winetricks still uses Proton's Wine directly.
+
 ### Launch configurations from testers
 
 The game details on macOS and Linux offer a **launch configuration** editor (executable,
