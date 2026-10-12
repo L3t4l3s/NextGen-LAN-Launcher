@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.3.9
+
+- Aliens: Fireteam Elite bekommt Spielername und Sprache: Der Launcher findet Goldberg jetzt auch im
+  tiefen Steam-Ordner von Unreal-Spielen (vorher hieß jeder „Noob“) und setzt den Namen auch im
+  Epic-Emulator des Pakets (vorher „ChangeME“). Auf der VM bis ins Hauptmenü geprüft (deutsch);
+  die Lobby mit zwei Spielern ist ungetestet, auf der LAN prüfen.
+
 ## 0.3.8
 
 - **Anno 1404: jeder Spieler bekommt seine eigene Uplay-ID.** Das ETI-Startskript sollte eine

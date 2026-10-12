@@ -198,10 +198,11 @@ again.
   process applies.
 - **Player name and language in the games — check at the LAN:** before every start, on every
   platform, the launcher writes the player's name and the game language where the game reads
-  them (`[[settings]]` in a profile; Goldberg and SmartSteamEmu packages without one). Written
-  and checked file by file against the packages of Counter-Strike: Source, Counter-Strike 1.6,
-  Age of Empires II HD and III, Call of Duty 2 (player profile made in advance) and Unreal
-  Tournament 2004 (`User.ini`, where ETI's script misses it); Warcraft III's LAN name in the
+  them (`[[settings]]` in a profile; Goldberg, SmartSteamEmu and Nemirtingas' Epic emulator
+  packages without one). Written and checked file by file against the packages of
+  Counter-Strike: Source, Counter-Strike 1.6, Age of Empires II HD and III, Call of Duty 2 (player
+  profile made in advance), Unreal Tournament 2004 (`User.ini`, where ETI's script misses it) and
+  Aliens: Fireteam Elite (Goldberg and the Epic emulator, menu in German on the VM, lobby untested); Warcraft III's LAN name in the
   registry is untested. Not yet seen inside the running games. A language the package lacks
   stays as it is (CoD2 is German only). TrackMania keeps both in binary files and is left out.
 - **Start scripts on macOS/Linux — untested on a Mac, check at the LAN:** a game whose executable

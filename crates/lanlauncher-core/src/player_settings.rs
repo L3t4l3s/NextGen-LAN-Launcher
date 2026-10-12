@@ -6,7 +6,7 @@
 //! ending in it — while the game reads the player's name from `User.ini`.
 //! A profile names the exact places instead (`[[settings]]`), and packages
 //! built on the Goldberg Steam emulator get theirs without one
-//! ([`goldberg`]). This comes on top of the start script, not instead of it.
+//! ([`goldberg`], likewise [`smart_steam_emu`] and [`epic_emu`]). This comes on top of the start script, not instead of it.
 //!
 //! What a profile can name:
 //!
@@ -988,14 +988,24 @@ pub fn smart_steam_emu(local: &Path, player: &Player) -> Vec<Applied> {
     emulators(local, player).1
 }
 
-/// Both emulator families from one walk through the package: [`goldberg`]
-/// (with gbe_fork) and [`smart_steam_emu`] (with RELOADED's `steam_rld.ini`).
-pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>) {
+/// Nemirtingas' Epic emulator (Aliens: Fireteam Elite, next to the game's
+/// executable) keeps the player in `EOSEmu.User` of its
+/// `nepice_settings/NemirtingasEpicEmu.json`: `UserName`, and `Language` as
+/// a two-letter code. Packages ship it with `ChangeME`; only files that are
+/// there are set, as UTF-8.
+pub fn epic_emu(local: &Path, player: &Player) -> Vec<Applied> {
+    emulators(local, player).2
+}
+
+/// The emulators from one walk through the package: [`goldberg`] (with
+/// gbe_fork), [`smart_steam_emu`] (with RELOADED's `steam_rld.ini`) and
+/// [`epic_emu`].
+pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>, Vec<Applied>) {
     let language = steam_language(&player.lang);
-    let found = find_files(local, 5, |name| {
-        // Goldberg as `steam_api`, or as `steamclient` behind its
-        // ColdClientLoader (`steamclient64.ccl.dll` in 7 Days to Die):
-        // both read `steam_settings/` next to themselves.
+    // Goldberg as `steam_api`, or as `steamclient` behind its
+    // ColdClientLoader (`steamclient64.ccl.dll` in 7 Days to Die): both
+    // read `steam_settings/` next to themselves.
+    let wanted = |name: &str| {
         matches!(
             name,
             "steam_api.dll"
@@ -1006,13 +1016,33 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>) 
                 | "steamclient64.ccl.dll"
                 | "smartsteamemu.ini"
                 | "steam_rld.ini"
+                | "nemirtingasepicemu.json"
         )
-    });
+    };
+    let mut found = find_files(local, 5, wanted);
+    // Unreal Engine games keep Steam's DLL deeper, in
+    // `Engine/Binaries/ThirdParty/Steamworks/Steamv151/Win64/` (Aliens:
+    // Fireteam Elite), with the engine at the top or in the game's folder:
+    // looked for there only, not by walking every package deeper.
+    let engines = std::iter::once(local.to_path_buf()).chain(
+        std::fs::read_dir(local)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .map(|e| e.path()),
+    );
+    for top in engines {
+        let third_party = top.join("Engine").join("Binaries").join("ThirdParty");
+        found.extend(find_files(&third_party, 3, wanted));
+    }
+    found.sort();
+    found.dedup();
     let (mut goldberg, mut sse) = (Vec::new(), Vec::new());
     // Which emulator each DLL is, one read per file; a folder once.
     let mut gbe_dirs = std::collections::BTreeSet::new();
     let mut classic_dirs = std::collections::BTreeMap::new();
-    for dll in found.iter().filter(|path| !is_ini(path)) {
+    for dll in found.iter().filter(|path| is_dll(path)) {
         let (gbe, classic) = emulator_marks(dll);
         let Some(dir) = dll.parent() else { continue };
         // gbe_fork only where its own config files are: the text alone is
@@ -1125,12 +1155,59 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>) 
             }
         }
     }
-    (goldberg, sse)
+    let mut epic = Vec::new();
+    // Its own two-letter code, for the languages Steam's list knows.
+    let epic_language = language.map(|_| player.lang.to_ascii_lowercase());
+    for json in found.iter().filter(|path| has_extension(path, "json")) {
+        // Only the layout this is known for: a build that keeps its user
+        // elsewhere would get keys it never reads.
+        let has_user = std::fs::read_to_string(json)
+            .ok()
+            .and_then(|text| {
+                serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}')).ok()
+            })
+            .is_some_and(|v| v["EOSEmu"]["User"].is_object());
+        if !has_user {
+            epic.push(Applied::Left(format!(
+                "{}: no EOSEmu.User to set",
+                json.display()
+            )));
+            continue;
+        }
+        for (key, value) in [
+            ("EOSEmu.User.UserName", Some(player.name.as_str())),
+            ("EOSEmu.User.Language", epic_language.as_deref()),
+        ] {
+            if let Some(value) = value {
+                let kind = Kind::Json {
+                    file: "NemirtingasEpicEmu.json",
+                    path: key,
+                };
+                epic.push(set_inside(
+                    local,
+                    json.clone(),
+                    &kind,
+                    value,
+                    true,
+                    ValueType::Text,
+                ));
+            }
+        }
+    }
+    (goldberg, sse, epic)
 }
 
 fn is_ini(path: &Path) -> bool {
+    has_extension(path, "ini")
+}
+
+fn is_dll(path: &Path) -> bool {
+    has_extension(path, "dll")
+}
+
+fn has_extension(path: &Path, extension: &str) -> bool {
     path.extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("ini"))
+        .is_some_and(|e| e.eq_ignore_ascii_case(extension))
 }
 
 /// Which classic Goldberg a DLL is: one that reads the `force_*` files, an
@@ -1807,6 +1884,83 @@ mod tests {
             "Jürgen"
         );
         assert!(!tmp.path().join("steam_settings").exists());
+    }
+
+    #[test]
+    fn goldberg_in_unreals_steam_folder_is_found() {
+        // Aliens: Fireteam Elite: six levels down; with the game one folder
+        // further in, seven.
+        let tmp = tempfile::tempdir().unwrap();
+        let deeper = tmp
+            .path()
+            .join("Game/Engine/Binaries/ThirdParty/Steamworks/Steamv151/Win64");
+        std::fs::create_dir_all(&deeper).unwrap();
+        std::fs::write(
+            deeper.join("steam_api64.dll"),
+            b"MZ...force_account_name.txt...",
+        )
+        .unwrap();
+        assert_eq!(goldberg(tmp.path(), &player()).len(), 2);
+        assert!(deeper
+            .join("steam_settings/force_account_name.txt")
+            .exists());
+        let dir = tmp
+            .path()
+            .join("Engine/Binaries/ThirdParty/Steamworks/Steamv151/Win64");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("steam_api64.dll"),
+            b"MZ...force_account_name.txt...",
+        )
+        .unwrap();
+        // Both, each once.
+        let done = goldberg(tmp.path(), &player());
+        assert_eq!(done.len(), 4);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("steam_settings/force_account_name.txt")).unwrap(),
+            "Jürgen"
+        );
+    }
+
+    #[test]
+    fn the_epic_emulator_gets_the_name_and_the_language() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("Endeavor/Binaries/Win64/nepice_settings");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("NemirtingasEpicEmu.json");
+        std::fs::write(
+            &file,
+            r#"{"EOSEmu":{"Application":{"AppId":"endeavor"},"User":{"EpicId":"","Language":"en","UserName":"ChangeME"}}}"#,
+        )
+        .unwrap();
+        let player = Player {
+            name: "Jürgen".into(),
+            lang: "de".into(),
+            id: TEST_ID.into(),
+        };
+        let done = epic_emu(tmp.path(), &player);
+        assert_eq!(done.len(), 2);
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(json["EOSEmu"]["User"]["UserName"], "Jürgen");
+        assert_eq!(json["EOSEmu"]["User"]["Language"], "de");
+        assert_eq!(json["EOSEmu"]["Application"]["AppId"], "endeavor");
+        // A language it has no code for stays; nothing is made, and a file
+        // without `EOSEmu.User` is left as it is.
+        let player = Player {
+            lang: "ru".into(),
+            ..player
+        };
+        assert_eq!(epic_emu(tmp.path(), &player).len(), 1);
+        let empty = tempfile::tempdir().unwrap();
+        assert!(epic_emu(empty.path(), &player).is_empty());
+        std::fs::write(&file, r#"{"EOSEmu":{"Application":{}}}"#).unwrap();
+        let done = epic_emu(tmp.path(), &player);
+        assert!(matches!(done[..], [Applied::Left(_)]), "{done:?}");
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            r#"{"EOSEmu":{"Application":{}}}"#
+        );
     }
 
     #[test]

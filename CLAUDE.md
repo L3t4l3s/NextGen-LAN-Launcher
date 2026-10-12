@@ -291,8 +291,13 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   hinter dem ColdClientLoader), gbe_fork (DLL nennt `configs.user.ini` → `[user::general]
   account_name/language`, UTF-8; nur wo dessen `configs.*.ini` liegen), älteres Goldberg ohne
   `force_*` (DLL nennt nur `account_name.txt` → nur `settings/`, AvP), RELOADED (`steam_rld.ini`
-  `[Settings] UserName/Language`) und SmartSteamEmu (jede
-  `SmartSteamEmu.ini`: `[SmartSteamEmu] PersonaName/Language`). Fehlt die Sprache in der Tabelle
+  `[Settings] UserName/Language`), SmartSteamEmu (jede
+  `SmartSteamEmu.ini`: `[SmartSteamEmu] PersonaName/Language`) und Nemirtingas' Epic-Emulator
+  (jede vorhandene `NemirtingasEpicEmu.json`: `EOSEmu.User.UserName/Language`, Sprache als
+  `de`/`en`/`fr`; Aliens: Fireteam Elite). Gesucht wird fünf Ordner tief, dazu gezielt unter
+  `Engine/Binaries/ThirdParty` (oben oder im Spielordner): Unreal-Spiele legen Steams DLL unter
+  `Engine/Binaries/ThirdParty/Steamworks/Steamv151/Win64/` ab, dort blieb sie unentdeckt und
+  Goldberg nannte den Spieler `Noob`. Eine JSON ohne `EOSEmu.User` bleibt unangetastet. Fehlt die Sprache in der Tabelle
   eines Profils, bleibt der Wert stehen. Der Ort, wo ein Spiel den Namen liest, steht oft woanders,
   als das ETI-Skript schreibt (UT2004 `User.ini`), also am Paket nachsehen, nicht abschreiben.
   `%player_id%` ist eine zufällige GUID pro Rechner (`player_settings::player_id`, einmal pro Lauf

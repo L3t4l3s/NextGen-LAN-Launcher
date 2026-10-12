@@ -43,9 +43,10 @@ pub(crate) async fn apply(
     let done = tauri::async_runtime::spawn_blocking(move || {
         let (mut done, registry) =
             player_settings::apply(&local, profile.as_deref(), &settings, &who);
-        let (goldberg, smart_steam_emu) = player_settings::emulators(&local, &who);
+        let (goldberg, smart_steam_emu, epic_emu) = player_settings::emulators(&local, &who);
         done.extend(goldberg);
         done.extend(smart_steam_emu);
+        done.extend(epic_emu);
         (done, registry)
     })
     .await;
