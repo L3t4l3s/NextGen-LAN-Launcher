@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.4.0
+
+- Assetto Corsa startet unter Linux: Ein Profil kann jetzt GE-Proton verlangen
+  (`proton = "ge"`), und „Automatisch“ nimmt es dann, wenn es installiert ist. Assettos Launcher
+  braucht .NET 4.8, und dessen Installation scheitert unter Valves Proton 11, unter GE-Proton geht
+  sie durch. Das Profil installiert .NET nach Rückfrage und setzt Namen und Sprache. Launcher
+  und Rennen auf der VM geprüft, Multiplayer ungetestet.
+
 ## 0.3.12
 
 - Aliens: Fireteam Elite: Jeder Spieler bekommt eine eigene Epic-Kennung. Das Paket bringt für alle

@@ -1,0 +1,67 @@
+schema = 1
+id = "assetto"
+title = "Assetto Corsa"
+revisions = ["20180217"]
+source = "NextGen LAN Launcher: start script, launcher and a race checked with GE-Proton 11-7 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["GE-Proton11-7"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# AssettoCorsa.exe, the game's launcher (a .NET 4.8 program with an embedded
+# browser), which starts the race (acs.exe). Wine Mono cannot run it, and
+# winetricks' dotnet48 needs dotnet40 first, whose installer fails under
+# Valve's Proton 11 (exit status 67, the prefix is left without Mono and
+# without .NET). Under GE-Proton the same steps go through, so Automatic
+# takes GE-Proton when it is installed. GE-Proton would install .NET by
+# itself (its fix for Steam app 244210), but only with the Steam app id set
+# and, unasked, for minutes at the first start; the launcher asks first.
+exe = ""
+args = []
+proton = "ge"
+winetricks = ["dotnet48"]
+
+[setup.platform_notes.linux]
+de = "Braucht GE-Proton (z. B. über ProtonPlus installieren). Mit Valves Proton lässt sich .NET 4.8 nicht installieren, der Assetto-Launcher startet dann nicht."
+en = "Needs GE-Proton (install it with ProtonPlus, for one). Valve's Proton cannot install .NET 4.8, and Assetto's launcher does not start without it."
+
+# The name and language: the package's Steam emulator reads them from
+# steam_api.ini beside each steam_api.dll, the game's (acs.exe) and the
+# launcher's in launcher/support, which shows the name on its main menu (the
+# package says "elamigos", "german"). The launcher keeps the name it saw at
+# its first start (player.nameNick in the Local Storage of
+# Documents/Assetto Corsa/launcherdata) and takes the race's driver name from
+# there: a later change of name does not reach it (seen on the VM). The emulator gives everybody Steam id 1638
+# (76561197960267366); whether a server takes two players with one id is
+# unchecked, and the emulator reads no id from the file.
+[[settings]]
+file = "steam_api.ini"
+section = "Steam"
+key = "PersonaName"
+value = "%player%"
+
+[[settings]]
+file = "steam_api.ini"
+section = "Steam"
+key = "Language"
+value = { de = "german", en = "english" }
+
+[[settings]]
+file = "launcher/support/steam_api.ini"
+section = "Steam"
+key = "PersonaName"
+value = "%player%"
+
+[[settings]]
+file = "launcher/support/steam_api.ini"
+section = "Steam"
+key = "Language"
+value = { de = "german", en = "english" }
+
+# Not preset: the launcher's language (it asks at the first start and only
+# knows English and Italian; the answer goes into Documents/Assetto
+# Corsa/cfg/launcher.ini [WINDOW] LANGUAGE). A launcher.ini without the
+# launcher's own LASTVER makes it warn of a folder from another version and
+# offer to delete everything in it, settings and saves included.

@@ -3,7 +3,7 @@
 use super::setup_script::Script;
 use super::{expand_args, resolve_exe, LaunchContext, LaunchPlan};
 use crate::error::{Error, Result};
-use crate::manifest::Runner;
+use crate::manifest::{ProtonBuild, Runner};
 use crate::paths::GamePaths;
 use crate::settings::GameRunner;
 use std::collections::BTreeMap;
@@ -299,7 +299,12 @@ fn wine_plan(
     let chosen = if let Some(selected) = selected {
         find_runner(&runners, selected.runner, &selected.program, Some(selected))
     } else {
-        automatic_runner(&runners, wanted)
+        // A Proton path in the settings is a decision, like a pin.
+        let build = ctx
+            .manifest
+            .and_then(|m| m.launch.proton)
+            .filter(|_| ctx.settings.runner_paths.proton.is_none());
+        automatic_runner(&runners, wanted, build)
     }
     .ok_or_else(|| {
         if let Some(program) = selected_program {
@@ -627,9 +632,29 @@ pub fn prefix_id(plan: &LaunchPlan) -> Option<String> {
         })
 }
 
-/// What Automatic runs for a game: the first runner that fits what the
-/// game's manifest asks for, else the best one there is.
-fn automatic_runner(runners: &[DetectedRunner], wanted: Runner) -> Option<DetectedRunner> {
+/// What Automatic runs for a game: the newest of the Proton build its
+/// manifest asks for when one is installed and the manifest wants no other
+/// kind of runner, else the first runner that fits what the manifest asks
+/// for, else the best one there is.
+fn automatic_runner(
+    runners: &[DetectedRunner],
+    wanted: Runner,
+    build: Option<ProtonBuild>,
+) -> Option<DetectedRunner> {
+    if matches!(wanted, Runner::Auto | Runner::Proton) {
+        let asked = runners
+            .iter()
+            .filter(|d| d.runner == Runner::Proton)
+            .filter_map(|d| match build? {
+                ProtonBuild::Ge => super::proton::ge_build(&d.program, &d.label).map(|v| (v, d)),
+            })
+            // The first of equal builds: the order of `detect_runners`.
+            .rev()
+            .max_by(|a, b| a.0.cmp(&b.0));
+        if let Some((_, asked)) = asked {
+            return Some(asked.clone());
+        }
+    }
     match wanted {
         Runner::Auto => runners.first().cloned(),
         r => runners
@@ -929,6 +954,71 @@ mod tests {
         );
         assert!(env["STEAM_COMPAT_CLIENT_INSTALL_PATH"].ends_with(".local/share/Steam"));
         assert!(env["STEAM_COMPAT_DATA_PATH"].ends_with(".nll-prefix"));
+    }
+
+    /// A profile asking for GE-Proton gets it from Automatic, ahead of a
+    /// Wine and of Valve's Proton, recognised by its `version` file whatever
+    /// the folder is called; without one installed the usual order holds.
+    #[test]
+    fn a_profile_asking_for_ge_proton_gets_it_when_installed() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let tool = |dir: &str, version: Option<&str>| {
+            let proton = tmp.path().join(dir).join("proton");
+            std::fs::create_dir_all(proton.parent().expect("parent")).expect("dirs");
+            std::fs::write(&proton, "#!/bin/sh\n").expect("proton");
+            if let Some(version) = version {
+                std::fs::write(tmp.path().join(dir).join("version"), version).expect("version");
+            }
+            DetectedRunner {
+                runner: Runner::Proton,
+                program: proton,
+                label: dir.into(),
+                steam_root: None,
+            }
+        };
+        let wine = DetectedRunner {
+            runner: Runner::Wine,
+            program: "/usr/bin/wine".into(),
+            label: "Wine".into(),
+            steam_root: None,
+        };
+        let valve = tool("Proton 11.0", Some("1789520217 proton-11.0-3\n"));
+        let latest = tool("Proton-GE Latest", Some("1789520217 GE-Proton11-7\n"));
+        let runners = vec![wine.clone(), valve.clone(), latest.clone()];
+        let pick = |runners: &[DetectedRunner], build| {
+            automatic_runner(runners, Runner::Auto, build).map(|d| d.label)
+        };
+        assert_eq!(
+            pick(&runners, Some(ProtonBuild::Ge)),
+            Some(latest.label.clone())
+        );
+        assert_eq!(pick(&runners, None), Some(wine.label.clone()));
+        // A build without a `version` file is known by its name.
+        let named = tool("GE-Proton10-25", None);
+        assert_eq!(
+            pick(&[valve.clone(), named.clone()], Some(ProtonBuild::Ge)),
+            Some(named.label.clone())
+        );
+        // The newest GE, whatever its folder is called; an older naming too.
+        let old = tool("Proton-6.21-GE-2", Some("1650000000 Proton-6.21-GE-2\n"));
+        assert_eq!(
+            pick(
+                &[old.clone(), named.clone(), latest.clone()],
+                Some(ProtonBuild::Ge)
+            ),
+            Some(latest.label.clone())
+        );
+        assert_eq!(
+            pick(&[valve.clone(), old.clone()], Some(ProtonBuild::Ge)),
+            Some(old.label)
+        );
+        // A profile that wants Wine gets Wine.
+        assert_eq!(
+            automatic_runner(&runners, Runner::Wine, Some(ProtonBuild::Ge)).map(|d| d.label),
+            Some(wine.label.clone())
+        );
+        let without = vec![wine.clone(), valve];
+        assert_eq!(pick(&without, Some(ProtonBuild::Ge)), Some(wine.label));
     }
 
     /// The setup script runs in the very prefix the game then starts in,

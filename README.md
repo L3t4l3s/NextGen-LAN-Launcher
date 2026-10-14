@@ -191,6 +191,10 @@ again.
 - **Anno 1404: own Uplay id per player — untested:** the launcher writes `%player_id%` and the
   player's name into `Uplay.ini` (the ETI script gives everyone the same id). Check at a LAN that
   two players see each other in the lobby, on Windows and Linux.
+- **Assetto Corsa multiplayer — untested:** with GE-Proton the launcher, its menu and a race run on
+  the VM (`manifests/assetto.toml`). The package's Steam emulator gives every player Steam id 1638
+  and reads no id from its file; check at a LAN whether a server takes two players, and whether
+  the profile's preference for GE-Proton picks it on a Steam Deck.
 - **Alien Swarm: Reactive Drop on macOS — untested:** package 20190317 hangs at the menu
   background under Proton 11 (its SmartSteamEmu waits on `recvfrom` of an unbound UDP socket, which
   Windows fails at once); `manifests/alienswarm.toml` notes that. The macOS note only assumes

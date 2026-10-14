@@ -122,6 +122,7 @@ runner = "auto"                        # auto | wine | crossover | proton | nati
 required_files = ["hl-cs16/hl.exe"]    # install counts as complete only if these exist
 env = {}
 wrapper = []                           # programs in front of the start, e.g. ["gamemoderun"]
+proton = "ge"                          # optional: Automatic prefers GE-Proton when installed
 
 [[launch.alternatives]]
 name = "Half-Life"
@@ -261,6 +262,14 @@ with the profile's wrapper outside, `STEAM_COMPAT_INSTALL_PATH`/`STEAM_COMPAT_TO
 game's folder and the Proton, and the game's folder in `STEAM_COMPAT_MOUNTS` (the container shares the home folder, not a library on another drive).
 Without the runtime Proton runs on the host as before, and the diagnostics page offers to install it
 through Steam (`steam://install/<appid>`). winetricks still uses Proton's Wine directly.
+
+`proton = "ge"` (in `[launch]` only) makes Automatic take the newest installed GE-Proton ahead of Wine
+and of Valve's Proton, known by its `version` file (`GE-Proton11-7`) or else by its folder name. Without
+one the usual order holds; a tool the player chose, a Proton path in the settings and a `runner`
+other than `auto`/`proton` win either way. Assetto Corsa needs it: winetricks'
+`dotnet48` fails under Proton 11 at the `dotnet40` installer, and the same steps go through with
+GE-Proton's Wine. The launcher passes no Steam app id, so GE-Proton's own per-game fixes stay off;
+the profile's `winetricks` installs what they would, after asking.
 
 ### Launch configurations from testers
 

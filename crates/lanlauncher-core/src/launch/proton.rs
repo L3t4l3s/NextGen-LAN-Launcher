@@ -251,6 +251,34 @@ fn compat_tools_in(dir: &Path, root: &Path) -> Vec<ProtonInstall> {
         .collect()
 }
 
+/// The build of the GE-Proton at `proton`, as its numbers (`GE-Proton11-7`:
+/// `[11, 7]`), or `None` for any other Proton. Its `version` file says so
+/// (`1789520217 GE-Proton11-7`) whatever the folder is called — ProtonPlus
+/// names it after the build, a "latest" install `Proton-GE Latest`; the
+/// label is the fallback for a build without that file. Older builds are
+/// called `Proton-6.21-GE-2`.
+pub fn ge_build(proton: &Path, label: &str) -> Option<Vec<u32>> {
+    let build = |text: &str| {
+        let lower = text.to_ascii_lowercase();
+        let name = lower
+            .split_whitespace()
+            .last()
+            .unwrap_or_default()
+            .to_string();
+        let ge = ["ge-proton", "proton-ge", "-ge-"]
+            .iter()
+            .any(|mark| lower.contains(mark));
+        ge.then(|| version_of(&name))
+    };
+    match proton
+        .parent()
+        .and_then(|dir| std::fs::read_to_string(dir.join("version")).ok())
+    {
+        Some(version) => build(&version),
+        None => build(label),
+    }
+}
+
 /// Every place a Proton was looked for, so a failed search can be explained
 /// in the log rather than guessed at — the same courtesy
 /// `resilio::locate_binary_detailed` does for the sync engine.

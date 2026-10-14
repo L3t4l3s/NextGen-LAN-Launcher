@@ -77,9 +77,23 @@ pub struct LaunchSpec {
     /// game details, never on their own.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub winetricks: Vec<String>,
+    /// The Proton build Automatic takes for this game when one is installed
+    /// (`"ge"`: GE-Proton), ahead of Wine and every other Proton; without
+    /// one the usual order holds. A tool the player chose still wins.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proton: Option<ProtonBuild>,
     /// Alternative entry points (e.g. several games in one package).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub alternatives: Vec<Alternative>,
+}
+
+/// A Proton build a profile can ask for ([`LaunchSpec::proton`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProtonBuild {
+    /// GE-Proton: Wine with the Staging patches. Assetto Corsa's launcher
+    /// needs .NET 4.8, whose installer fails under Valve's Proton 11.
+    Ge,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
