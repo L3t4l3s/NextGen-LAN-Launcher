@@ -2,6 +2,7 @@
 
 mod chat;
 mod commands;
+mod control;
 mod fixes;
 mod player;
 mod state;
@@ -1354,6 +1355,40 @@ static LAUNCHER_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceL
 #[cfg(target_os = "linux")]
 static INSTANCE_NOTE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
+/// Hand a command line's request to the running launcher and print its
+/// answer; the exit code says how it went (0 done, 1 refused, 2 not a
+/// complete command, 3 no launcher running, 4 a launcher too old for
+/// commands).
+#[cfg(target_os = "linux")]
+fn send_command(command: Result<lanlauncher_core::control::Command, String>) -> i32 {
+    use lanlauncher_core::instance;
+    let command = match command {
+        Ok(command) => command,
+        Err(e) => {
+            eprintln!("{e}");
+            return 2;
+        }
+    };
+    match instance::send(&instance::default_dir("xyz.nextgen-lan.launcher"), &command) {
+        Ok(Ok(out)) => {
+            print!("{out}");
+            0
+        }
+        Ok(Err(e)) => {
+            eprintln!("{e}");
+            1
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+            eprintln!("{e}");
+            4
+        }
+        Err(e) => {
+            eprintln!("NextGen LAN Launcher is not running ({e})");
+            3
+        }
+    }
+}
+
 /// Become the one launcher of this user, or have the running one show its
 /// window. False means this process is done.
 ///
@@ -1406,6 +1441,15 @@ fn claim_the_launcher() -> bool {
                         log::info!("launcher started again with new options; quitting for it");
                         app.exit(0);
                     }
+                },
+                |command| match LAUNCHER_HANDLE.get() {
+                    // On its way out (Quit, or replaced): a share registered
+                    // now would go with the engine that is stopping.
+                    _ if tray::QUITTING.load(std::sync::atomic::Ordering::SeqCst) => {
+                        Err("err.quitting".into())
+                    }
+                    Some(app) => control::run(app, command),
+                    None => Err("err.not_ready".into()),
                 },
             );
             true
@@ -1607,6 +1651,12 @@ fn warn_about_a_blank_window(app: &tauri::AppHandle) {
 pub fn run() {
     #[cfg(target_os = "linux")]
     {
+        // A request for the running launcher (`--install <id>` …) starts
+        // nothing of its own.
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        if let Some(command) = lanlauncher_core::control::Command::from_args(&args) {
+            std::process::exit(send_command(command));
+        }
         // Before the graphics ladder writes its notes and the webview log
         // gets its header: a second start only shows the running window.
         if !claim_the_launcher() {
@@ -1623,9 +1673,22 @@ pub fn run() {
     // the first launcher may be sitting in the tray with its window hidden.
     // Linux does the same before anything else in `run`.
     #[cfg(any(windows, target_os = "macos"))]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-        log::info!("launcher started again; showing the running one");
-        tray::show_window(app);
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+        // A request from the command line (`--install <id>` …): carried out
+        // here, its answer goes to the log — the plugin carries no reply.
+        match lanlauncher_core::control::Command::from_args(&argv) {
+            Some(Ok(command)) => {
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    let _ = control::run(&app, command);
+                });
+            }
+            Some(Err(e)) => log::warn!("command line: {e}"),
+            None => {
+                log::info!("launcher started again; showing the running one");
+                tray::show_window(app);
+            }
+        }
     }));
     builder
         .on_window_event(tray::hide_on_close)
@@ -1832,6 +1895,19 @@ pub fn run() {
                 }
             }
             app.manage(state.clone());
+            // Linux hands a command to the running launcher before it gets
+            // here; on Windows and macOS this start is the launcher, and
+            // there was nobody to carry the command out.
+            #[cfg(not(target_os = "linux"))]
+            if lanlauncher_core::control::Command::from_args(
+                &std::env::args().skip(1).collect::<Vec<_>>(),
+            )
+            .is_some()
+            {
+                log::warn!(
+                    "command line: no launcher was running; the command was not carried out"
+                );
+            }
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 start_services(handle, state).await;

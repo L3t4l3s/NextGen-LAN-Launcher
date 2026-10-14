@@ -21,6 +21,7 @@
 
 pub mod catalog;
 pub mod chat;
+pub mod control;
 pub mod diagnostics;
 pub mod error;
 pub mod extract;

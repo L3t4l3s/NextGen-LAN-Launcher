@@ -8,6 +8,9 @@
 //! to the predecessor it is about to replace. Hence this: an `flock`ed file
 //! says who is first, a Unix socket next to it carries "show your window".
 //!
+//! The same socket carries the command line's requests (`--install <id>`,
+//! `crate::control`): [`send`] asks, [`Instance::serve`] answers.
+//!
 //! The lock goes with the process, crash or not, and the files are opened
 //! close-on-exec, so neither the sync engine nor a game inherits it.
 
@@ -28,6 +31,11 @@ const QUIT: &str = "quit";
 /// answers from its own thread, so this only runs out on a launcher that is
 /// stuck or on its way out.
 const ANSWER_WITHIN: Duration = Duration::from_secs(2);
+
+/// Commands carried out at once; one more is refused rather than given a
+/// thread of its own — a script polling `--status` in a loop must not pile
+/// up threads behind a component installation that takes many minutes.
+const COMMANDS_AT_ONCE: usize = 8;
 
 /// How the claim ended.
 #[derive(Debug)]
@@ -240,13 +248,47 @@ fn request(path: &Path, what: &str, connect_for: Duration) -> bool {
     read_line(&stream).trim() == "ok"
 }
 
+/// What the running launcher answered a command: `Ok` with its output, or
+/// `Err` with its error (an `err.*` code from the commands).
+pub type Answer = Result<String, String>;
+
+/// Hand `command` to the running launcher and wait for its answer, as long
+/// as the command takes (installing components can take many minutes).
+/// `NotFound`/`ConnectionRefused` when no launcher is running.
+pub fn send(dir: &Path, command: &crate::control::Command) -> std::io::Result<Answer> {
+    let stream = UnixStream::connect(dir.join(SOCKET))?;
+    let _ = stream.set_write_timeout(Some(ANSWER_WITHIN));
+    (&stream).write_all(format!("{}\n", command.to_line()).as_bytes())?;
+    let mut text = String::new();
+    (&stream).read_to_string(&mut text)?;
+    let (status, rest) = text.split_once('\n').unwrap_or((text.as_str(), ""));
+    match status {
+        "ok" => Ok(Ok(rest.to_string())),
+        "err" => Ok(Err(rest.trim_end().to_string())),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "the running launcher does not take commands (an older version?)",
+        )),
+    }
+}
+
 impl Instance {
     /// Answer later starts on a thread of its own for the rest of the
     /// process. `show` brings the window up and says whether there was one
     /// to bring — a launcher that is shutting down says no, and the new start
     /// then waits for it to finish and takes over. `quit` ends this launcher
     /// for a start that replaces it; that start waits for the lock.
-    pub fn serve(self, show: impl Fn() -> bool + Send + 'static, quit: impl Fn() + Send + 'static) {
+    /// `command` carries out a command line's request, on a thread of its
+    /// own: an uninstall or a component installation takes long, and the
+    /// window must still come up meanwhile.
+    pub fn serve(
+        self,
+        show: impl Fn() -> bool + Send + 'static,
+        quit: impl Fn() + Send + 'static,
+        command: impl Fn(crate::control::Command) -> Answer + Send + Sync + 'static,
+    ) {
+        let command = std::sync::Arc::new(command);
+        let running = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         std::thread::Builder::new()
             .name("single-instance".into())
             .spawn(move || {
@@ -256,7 +298,8 @@ impl Instance {
                 for stream in listener.incoming().flatten() {
                     let _ = stream.set_read_timeout(Some(ANSWER_WITHIN));
                     let _ = stream.set_write_timeout(Some(ANSWER_WITHIN));
-                    match read_line(&stream).trim() {
+                    let line = read_line(&stream);
+                    match line.trim() {
                         SHOW => {
                             let answer = if show() { "ok\n" } else { "busy\n" };
                             let _ = (&stream).write_all(answer.as_bytes());
@@ -265,7 +308,33 @@ impl Instance {
                             let _ = (&stream).write_all(b"ok\n");
                             quit();
                         }
-                        _ => {}
+                        other => {
+                            let Some(request) = crate::control::Command::from_line(other) else {
+                                continue;
+                            };
+                            use std::sync::atomic::Ordering;
+                            if running.fetch_add(1, Ordering::SeqCst) >= COMMANDS_AT_ONCE {
+                                running.fetch_sub(1, Ordering::SeqCst);
+                                let _ = (&stream).write_all(b"err\nerr.commands_busy\n");
+                                continue;
+                            }
+                            let command = command.clone();
+                            let finished = running.clone();
+                            let spawned = std::thread::Builder::new().name("command".into()).spawn(
+                                move || {
+                                    let answer = match command(request) {
+                                        Ok(out) => format!("ok\n{out}"),
+                                        Err(e) => format!("err\n{e}\n"),
+                                    };
+                                    finished.fetch_sub(1, Ordering::SeqCst);
+                                    let _ = stream.set_write_timeout(None);
+                                    let _ = (&stream).write_all(answer.as_bytes());
+                                },
+                            );
+                            if spawned.is_err() {
+                                running.fetch_sub(1, Ordering::SeqCst);
+                            }
+                        }
                     }
                 }
             })
@@ -273,11 +342,11 @@ impl Instance {
     }
 }
 
-/// One short line, never more than a few bytes: whatever else arrives on the
-/// socket is not ours to buffer.
+/// One short line, never more than a command's few words: whatever else
+/// arrives on the socket is not ours to buffer.
 fn read_line(stream: &UnixStream) -> String {
     let mut line = String::new();
-    let _ = BufReader::new(stream.take(64)).read_line(&mut line);
+    let _ = BufReader::new(stream.take(128)).read_line(&mut line);
     line
 }
 
@@ -310,6 +379,7 @@ mod tests {
                 true
             },
             || {},
+            |_| Err("unused".into()),
         );
         let second = claim(dir.path(), Ask::Show, Duration::ZERO).unwrap();
         assert!(matches!(second, Start::Handed), "{second:?}");
@@ -384,6 +454,7 @@ mod tests {
         first.serve(
             || panic!("a replacing start must not ask for the window"),
             move || drop(lock.lock().unwrap().take()),
+            |_| Err("unused".into()),
         );
         let second = claim(dir.path(), Ask::Replace, Duration::from_secs(5)).unwrap();
         assert!(matches!(second, Start::Primary(_)), "{second:?}");
@@ -396,7 +467,7 @@ mod tests {
             panic!("the first start must be the launcher");
         };
         // Says "busy" to everyone, like a launcher stopping its engine.
-        leaving.serve(|| false, || {});
+        leaving.serve(|| false, || {}, |_| Err("unused".into()));
         // Someone else holds the lock now and shows its window when asked
         // (stands in for a start that won the race for the lock).
         let path = dir.path().to_path_buf();
@@ -459,6 +530,7 @@ mod tests {
                 true
             },
             || {},
+            |_| Err("unused".into()),
         );
         let mut gone = std::process::Command::new("true").spawn().unwrap();
         let pid = gone.id();
@@ -514,5 +586,55 @@ mod tests {
         assert!(in_gamescope(env(&[("XDG_CURRENT_DESKTOP", "gamescope")])));
         assert!(!in_gamescope(env(&[("XDG_CURRENT_DESKTOP", "KDE")])));
         assert!(!in_gamescope(env(&[])));
+    }
+
+    #[test]
+    fn a_command_reaches_the_running_launcher_and_its_answer_comes_back() {
+        use crate::control::Command;
+        let dir = tempfile::tempdir().unwrap();
+        // No launcher: the caller is told so, nothing waits.
+        assert!(send(dir.path(), &Command::Status(None)).is_err());
+        let Start::Primary(first) = claim(dir.path(), Ask::Show, Duration::ZERO).unwrap() else {
+            panic!("the first start must be the launcher");
+        };
+        first.serve(
+            || true,
+            || {},
+            |command| match command {
+                Command::Install(id) => Ok(format!("installing {id}\n")),
+                Command::Play { game_id, .. } => {
+                    // Longer than a start's answer may take.
+                    std::thread::sleep(ANSWER_WITHIN + Duration::from_millis(500));
+                    Err(format!("err.components_needed|{game_id}"))
+                }
+                _ => Err("err.unexpected".into()),
+            },
+        );
+        assert_eq!(
+            send(dir.path(), &Command::Install("cod2".into())).unwrap(),
+            Ok("installing cod2\n".into())
+        );
+        // A long command keeps nobody else waiting: the window still comes
+        // up meanwhile.
+        let path = dir.path().to_path_buf();
+        let play = std::thread::spawn(move || {
+            send(
+                &path,
+                &Command::Play {
+                    game_id: "assetto".into(),
+                    skip_components: false,
+                },
+            )
+            .unwrap()
+        });
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(matches!(
+            claim(dir.path(), Ask::Show, Duration::ZERO).unwrap(),
+            Start::Handed
+        ));
+        assert_eq!(
+            play.join().unwrap(),
+            Err("err.components_needed|assetto".into())
+        );
     }
 }

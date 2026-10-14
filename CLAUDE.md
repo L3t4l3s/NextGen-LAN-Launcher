@@ -396,7 +396,15 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   antwortet „busy“; der neue Start wartet dann auf die Sperre und übernimmt. Ein Start mit eigenen
   Optionen (`--safe-graphics`, `--demo`) bittet den laufenden Launcher zu beenden (`Ask::Replace`)
   und übernimmt — sonst käme `--safe-graphics` nach einem weißen Fenster nie an, denn das
-  Schließen hat den Launcher nur versteckt. Nachstellen unter
+  Schließen hat den Launcher nur versteckt. Befehle von der Kommandozeile (`--install <id>`,
+  `--play`, `--uninstall`, `--components`, `--status`, `lanlauncher_core::control`) gehen unter
+  Linux als Zeile über denselben Socket (`instance::send`, Antwort `ok`/`err` + Ausgabe, eigener
+  Thread pro Befehl, damit „show“ nicht wartet) und laufen in `src-tauri/src/control.rs` durch
+  dieselben Commands wie die Knöpfe; unter Windows/macOS reicht das Plugin nur `argv` weiter, die
+  Antwort steht im Log. Damit kann ein Agent auf dem Testrechner Spiele selbst installieren und
+  starten. Testinstanz daneben: eigene `XDG_*`-Ordner und ein **kurzer** `XDG_RUNTIME_DIR`
+  (Socket-Pfade sind auf ~108 Zeichen begrenzt), beenden nur per PID — der Prozessname ist
+  derselbe wie der des echten Launchers. Nachstellen unter
   Xvfb: `dbus-run-session`, ein kleines Programm, das den Watcher-Namen per `g_bus_own_name`
   besitzt, ein Fenstermanager (`openbox`) und `wmctrl -c` zum Schließen (`xdotool windowclose`
   zerstört das Fenster, statt es zu schließen).

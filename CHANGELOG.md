@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.5.0
+
+- Der laufende Launcher nimmt Befehle von der Kommandozeile an: `--install <id>`,
+  `--uninstall <id>`, `--play <id>`, `--components <id>` und `--status [<id>]` tun dasselbe wie
+  die Knöpfe, über denselben Code. Unter Linux kommt die Antwort zurück (Status als JSON, Fehler
+  als Code mit Exit-Code), unter Windows und macOS steht sie nur im Log. Unter Linux im
+  Demo-Modus geprüft; unter Windows und macOS ungetestet.
+
 ## 0.4.0
 
 - Assetto Corsa startet unter Linux: Ein Profil kann jetzt GE-Proton verlangen

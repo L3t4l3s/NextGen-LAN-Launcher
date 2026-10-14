@@ -160,6 +160,25 @@ the installer builds (artifacts `bundles-<os>` on the run page) only run for pul
 to `main`, a manual run of the *CI* workflow, or a commit whose message contains `[full-ci]`.
 Tags `v*` are built by `release.yml` instead.
 
+## Commands for the running launcher
+
+A second start with one of these arguments hands it to the launcher that is already running and
+does what the button does, through the same code (`crates/lanlauncher-core/src/control.rs`):
+
+```bash
+nextgen-lan-launcher --install <id>        # as "Install": register the share, then verify, extract, set up
+nextgen-lan-launcher --status [<id>]       # one JSON line per tracked game (phase, progress, problem)
+nextgen-lan-launcher --play <id> [--skip-components]   # prints the process id
+nextgen-lan-launcher --components <id>     # the profile's winetricks verbs; waits until done
+nextgen-lan-launcher --uninstall <id>
+```
+
+On Linux the answer comes back over the single-instance socket; the exit code is 0 (done),
+1 (refused, the error code on stderr), 2 (incomplete command) or 3 (no launcher running). On
+Windows and macOS the single-instance plugin carries no reply: the command runs, and its outcome
+is in the launcher's log. Without a running launcher nothing happens on Linux; on Windows and macOS
+the launcher starts and ignores the command. For an AppImage, call the AppImage with the argument.
+
 ## The app icon after an upgrade
 
 Windows caches the icon of every path it has displayed. An upgrade writes a new executable to the
@@ -195,6 +214,9 @@ again.
   the VM (`manifests/assetto.toml`). The package's Steam emulator gives every player Steam id 1638
   and reads no id from its file; check at a LAN whether a server takes two players, and whether
   the profile's preference for GE-Proton picks it on a Steam Deck.
+- **Command-line commands on Windows and macOS — untested:** `--install <id>` and the others reach
+  the running launcher through `tauri-plugin-single-instance` there; checked on Linux only (demo
+  mode). Check that a second start with a command carries it out and logs the outcome.
 - **Alien Swarm: Reactive Drop on macOS — untested:** package 20190317 hangs at the menu
   background under Proton 11 (its SmartSteamEmu waits on `recvfrom` of an unbound UDP socket, which
   Windows fails at once); `manifests/alienswarm.toml` notes that. The macOS note only assumes
