@@ -186,7 +186,8 @@ export function createMock() {
   const chatMock = createChatMock(emit, () => settings.playerName || "DemoPlayer", (id) => demoGames.find((g) => g.id === id)?.title ?? null);
 
   setInterval(() => {
-    emit("install-status", [...sims.keys()].map(status).filter(Boolean));
+    // Like the backend: statuses only once the install manager exists.
+    if (loadState().statuses) emit("install-status", [...sims.keys()].map(status).filter(Boolean));
     // The real backend sends these once a second too, so the rates in the
     // status bar move here as well.
     emit("transport-rates", {
@@ -196,6 +197,15 @@ export function createMock() {
   }, 1000);
 
   const noServer = new URLSearchParams(location.search).has("noserver");
+  // `?slowstart`: a slow PC, where the catalog takes 2 s and the statuses 5 s.
+  const slowStart = new URLSearchParams(location.search).has("slowstart");
+  const startedAt = Date.now();
+  const loadState = () => {
+    const after = Date.now() - startedAt;
+    return { catalog: !slowStart || after > 2000, statuses: !slowStart || after > 5000 };
+  };
+  // The backend tells the UI to re-read the games at both points.
+  if (slowStart) for (const ms of [2100, 5100]) setTimeout(() => emit("catalog-updated", 0), ms);
   const bootstrap: BootstrapInfo = {
     settings,
     demo: true,
@@ -284,10 +294,15 @@ export function createMock() {
     switch (cmd) {
       case "get_bootstrap":
         return { ...bootstrap, settings };
-      case "get_games":
-        return demoGames.map((x) => ({ ...x, status: status(x.id) }));
+      case "get_load_state":
+        return loadState();
+      case "get_games": {
+        const loaded = loadState();
+        if (!loaded.catalog) return [];
+        return demoGames.map((x) => ({ ...x, status: loaded.statuses ? status(x.id) : null }));
+      }
       case "get_statuses":
-        return [...sims.keys()].map(status).filter(Boolean);
+        return loadState().statuses ? [...sims.keys()].map(status).filter(Boolean) : [];
       case "install_game":
         sims.set(id, { phase: "syncing", started: Date.now(), duration: 25_000, stuck: true, paused: false, pausedAt: 0, problem: null });
         return;

@@ -273,6 +273,27 @@ pub async fn get_statuses(state: State<'_, Arc<AppState>>) -> Cmd<Vec<GameStatus
     }
 }
 
+/// What the startup has loaded so far. Until the catalog is read the game
+/// list is empty, and until the install manager exists (after the sync
+/// engine has started, seconds on a slow PC) no game has a status: without
+/// this, the library said "no catalog" and an installed game offered
+/// "Install" for those seconds.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadState {
+    pub catalog: bool,
+    pub statuses: bool,
+}
+
+#[tauri::command]
+pub async fn get_load_state(state: State<'_, Arc<AppState>>) -> Cmd<LoadState> {
+    // The startup catalog, not the manager: a settings save during a slow
+    // start can build a manager over the empty default catalog first.
+    let catalog = state.startup_catalog.read().await.is_some();
+    let statuses = state.manager.read().await.is_some();
+    Ok(LoadState { catalog, statuses })
+}
+
 async fn manager(state: &AppState) -> Cmd<Arc<lanlauncher_core::install::InstallManager>> {
     state
         .manager

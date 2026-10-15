@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.7.1
+
+- **Ladezustand beim Start.** Auf langsameren Rechnern stand nach dem Start erst „Noch kein
+  Katalog“, und ein installiertes Spiel bot „Installieren“ an, bis Sekunden später der echte
+  Zustand kam. Jetzt zeigt die Bibliothek „Bibliothek wird geladen …“, danach bis zum
+  Installationsstatus „Installationsstatus wird geladen …“, und der Knopf in den Spieldetails
+  wartet mit „Status wird geladen …“. Die Filter „Installiert“ und „In Arbeit“ melden in dieser
+  Zeit nicht „Kein Spiel passt“. In der Browser-Attrappe lässt sich das mit `?slowstart` ansehen.
+
 ## 0.7.0
 
 - Werkzeuge aus dem ETI-Katalog: Der Battlefield-Masterserver, LANshare, die Sync-VM und die

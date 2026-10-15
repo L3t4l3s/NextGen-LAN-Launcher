@@ -307,6 +307,14 @@ export interface LaunchAttempt {
   captured: boolean;
 }
 
+/** What the startup has loaded so far (`get_load_state`). */
+export interface LoadState {
+  /** The catalog is read: an empty game list now means there are no games. */
+  catalog: boolean;
+  /** Every game has a status: a missing one now means "not installed". */
+  statuses: boolean;
+}
+
 export interface BootstrapInfo {
   settings: Settings;
   demo: boolean;

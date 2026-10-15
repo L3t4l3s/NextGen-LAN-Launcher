@@ -2,6 +2,7 @@
 // a plain browser (`npm run dev` without Tauri) and for screenshots.
 
 import type {
+  LoadState,
   BootstrapInfo,
   ComponentsReport,
   ChatItem,
@@ -55,6 +56,7 @@ export const api = {
   bootstrap: () => invoke<BootstrapInfo>("get_bootstrap"),
   games: () => invoke<GameView[]>("get_games"),
   statuses: () => invoke<GameStatus[]>("get_statuses"),
+  loadState: () => invoke<LoadState>("get_load_state"),
   install: (gameId: string) => invoke<void>("install_game", { gameId }),
   repair: (gameId: string) => invoke<void>("repair_game", { gameId }),
   pause: (gameId: string, paused: boolean) => invoke<void>("pause_game", { gameId, paused }),

@@ -4,7 +4,7 @@ import { api, listen } from "$lib/api";
 import { setByteUnits } from "$lib/format";
 import { setLanguage } from "$lib/i18n";
 import { applyTheme, defaultTheme, builtinThemes } from "$lib/theme";
-import type { BootstrapInfo, EventBundle, GameStatus, GameView, Settings, TransportHealth, Theme } from "$lib/types";
+import type { BootstrapInfo, EventBundle, GameStatus, GameView, LoadState, Settings, TransportHealth, Theme } from "$lib/types";
 
 export type View = "library" | "downloads" | "diagnostics" | "lanpage" | "settings";
 
@@ -27,6 +27,9 @@ class AppStore {
   settings = $state<Settings | null>(null);
   games = $state<GameView[]>([]);
   statuses = $state<Record<string, GameStatus>>({});
+  /** What the backend had loaded when the games were last read. Until then
+   *  an empty list or a missing status says "not yet", not "none". */
+  loaded = $state<LoadState>({ catalog: false, statuses: false });
   health = $state<TransportHealth | null>(null);
   /** What the library is showing: search, filters and sort order live here so
    *  a look at Downloads and back does not reset them. */
@@ -54,6 +57,7 @@ class AppStore {
   /** Logo for the top bar, decided together with the theme in applyThemeFor. */
   logo = $state<string | null>(null);
   private toastSeq = 0;
+  private reloadSeq = 0;
 
   get selected(): GameView | null {
     return this.games.find((g) => g.id === this.selectedId) ?? null;
@@ -121,6 +125,8 @@ class AppStore {
         const next: Record<string, GameStatus> = {};
         for (const s of list) next[s.gameId] = s;
         this.statuses = next;
+        // Status events come from the install manager, so it exists.
+        if (!this.loaded.statuses) this.loaded = { ...this.loaded, statuses: true };
         this.recordSpeeds(list);
         if (newlyInstalled) void this.reloadGames().catch(() => {});
       });
@@ -134,7 +140,8 @@ class AppStore {
         if (this.health) this.health = { ...this.health, ...rates };
       });
       await listen("catalog-updated", () => {
-        void this.reloadGames();
+        // A failed read keeps what is shown; the next event reads again.
+        void this.reloadGames().catch(() => {});
       });
       await listen("event-updated", (payload) => {
         this.event = payload as EventBundle;
@@ -146,6 +153,7 @@ class AppStore {
       this.ready = true;
     } catch (e) {
       this.loadError = String(e);
+      this.loaded = { catalog: true, statuses: true };
       this.ready = true;
     }
   }
@@ -183,7 +191,16 @@ class AppStore {
   }
 
   async reloadGames() {
-    this.games = await api.games();
+    // Reads overlap at startup (init, two catalog events); an older one that
+    // answers last must not put back the empty list it read.
+    const seq = ++this.reloadSeq;
+    // Asked before the games: what it reports was there when they were read.
+    const loaded = await api.loadState();
+    const games = await api.games();
+    if (seq !== this.reloadSeq) return;
+    this.games = games;
+    // Never back to "loading" once something was there.
+    this.loaded = { catalog: this.loaded.catalog || loaded.catalog, statuses: this.loaded.statuses || loaded.statuses };
     const next: Record<string, GameStatus> = { ...this.statuses };
     for (const g of this.games) if (g.status) next[g.id] = g.status;
     this.statuses = next;

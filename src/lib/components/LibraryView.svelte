@@ -3,7 +3,7 @@
   import { t } from "$lib/i18n";
   import GameCard from "./GameCard.svelte";
   import GameDetail from "./GameDetail.svelte";
-  import { isBusy, isPlayable } from "$lib/phase";
+  import { filterNeedsStatus, isBusy, isPlayable } from "$lib/phase";
 
   // In the store, not here: this component is destroyed on every tab switch,
   // and with it went the sort order the user had chosen.
@@ -34,7 +34,7 @@
       .filter((g) => (view.filter === "tools" ? g.isTool : view.filter !== "all" || !g.isTool))
       .filter((g) => view.filter === "tools" || !view.genre || g.genre === view.genre)
       .filter((g) => {
-        if (view.filter === "all" || view.filter === "tools") return true;
+        if (!filterNeedsStatus(view.filter)) return true;
         const s = app.statusOf(g.id);
         return view.filter === "installed" ? isPlayable(s) : isBusy(s) || s?.phase === "failed" || s?.phase === "paused";
       })
@@ -78,15 +78,27 @@
       <span class="muted count">{t("library.count", { count: visible.length })}</span>
     </div>
 
-    {#if app.games.length === 0}
+    {#if !app.loaded.catalog}
+      <div class="empty loading">
+        <div class="spinner"></div>
+        <p class="muted">{t("library.loading")}</p>
+      </div>
+    {:else if app.games.length === 0}
       <div class="empty card">
         <h2>{t("library.empty.title")}</h2>
         <p class="muted">{t("library.empty.text")}</p>
         <button class="primary" onclick={() => (app.view = "diagnostics")}>{t("nav.diagnostics")}</button>
       </div>
+    {:else if !app.loaded.statuses && filterNeedsStatus(view.filter)}
+      <!-- "Installed" and "in progress" need the statuses; empty now would
+           read as "you have none". -->
+      <p class="muted empty status-loading"><span class="spinner small"></span> {t("library.loading_status")}</p>
     {:else if visible.length === 0}
       <p class="muted empty">{t("library.nothing_found")}</p>
     {:else}
+      {#if !app.loaded.statuses}
+        <p class="muted status-loading"><span class="spinner small"></span> {t("library.loading_status")}</p>
+      {/if}
       <div class="grid">
         {#each visible as game (game.id)}
           <GameCard {game} selected={app.selectedId === game.id} onselect={(id) => (app.selectedId = app.selectedId === id ? null : id)} />
@@ -165,6 +177,22 @@
     margin: 3rem auto;
     max-width: 520px;
     text-align: center;
+  }
+  .loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+  }
+  .status-loading {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0 0 0.75rem;
+  }
+  .empty.status-loading {
+    justify-content: center;
+    margin: 3rem auto;
   }
   .demo {
     margin-top: 1.5rem;

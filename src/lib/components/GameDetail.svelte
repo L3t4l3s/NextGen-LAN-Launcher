@@ -297,6 +297,10 @@
         <button class="primary big" onclick={() => pause(false)} disabled={working}>{t("action.resume")}</button>
       {:else if status?.phase === "failed"}
         <button class="primary big" onclick={repair} disabled={working}>{t("action.retry")}</button>
+      {:else if !status && !app.loaded.statuses}
+        <!-- Right after the start the install state is not known yet: an
+             installed game would offer "Install" until it is. -->
+        <button class="primary big loading-state" disabled><span class="spinner small"></span> {t("detail.loading_status")}</button>
       {:else}
         <button class="primary big" onclick={install} disabled={working || game.disabledByEvent}>{t("action.install")}</button>
       {/if}
@@ -516,6 +520,12 @@
   }
   .primary-row .big {
     flex: 1;
+  }
+  .loading-state {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
   }
   .secondary {
     display: grid;

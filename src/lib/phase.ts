@@ -18,6 +18,12 @@ export function phaseBadge(status: GameStatus | null): { label: string; cls: str
   }
 }
 
+/** Library filters that sort by install state; empty while the statuses
+ *  load would read as "none". */
+export function filterNeedsStatus(filter: string): boolean {
+  return filter === "installed" || filter === "active";
+}
+
 export function isBusy(status: GameStatus | null): boolean {
   return !!status && busyPhases.includes(status.phase);
 }

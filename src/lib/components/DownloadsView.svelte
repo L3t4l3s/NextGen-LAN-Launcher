@@ -78,7 +78,10 @@
 
 <!-- No heading: the tab above already says where you are. -->
 <div class="page downloads">
-  {#if items.length === 0 && app.hintGames.length === 0}
+  {#if !app.loaded.statuses}
+    <!-- Nothing listed yet means "not loaded", not "nothing running". -->
+    <p class="muted status-loading"><span class="spinner small"></span> {t("library.loading_status")}</p>
+  {:else if items.length === 0 && app.hintGames.length === 0}
     <div class="card empty">
       <p class="muted">{t("downloads.empty")}</p>
       <button class="primary" onclick={() => (app.view = "library")}>{t("nav.library")}</button>
@@ -230,5 +233,10 @@
   .empty {
     text-align: center;
     padding: 2.5rem;
+  }
+  .status-loading {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
 </style>

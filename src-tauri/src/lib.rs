@@ -1932,6 +1932,7 @@ pub fn run() {
             commands::get_bootstrap,
             commands::get_games,
             commands::get_statuses,
+            commands::get_load_state,
             commands::install_game,
             commands::repair_game,
             commands::pause_game,

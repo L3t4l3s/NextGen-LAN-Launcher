@@ -33,6 +33,9 @@ export const en: Messages = {
   "downloads.cancel.confirm": "Cancel the download of {title}? The data downloaded so far is deleted. An already installed version and its savegames are kept.",
   "downloads.cancel.kept": "Download of {title} cancelled. The installed version is kept.",
   "downloads.cancel.done": "Download of {title} cancelled.",
+  "library.loading": "Loading the library …",
+  "library.loading_status": "Loading install status …",
+  "detail.loading_status": "Loading status …",
   "library.nothing_found": "No game matches your search.",
   "library.select_hint": "Select a game to see details.",
 

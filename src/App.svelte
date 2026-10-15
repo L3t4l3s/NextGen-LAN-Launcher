@@ -87,17 +87,4 @@
     display: grid;
     place-items: center;
   }
-  .spinner {
-    width: 42px;
-    height: 42px;
-    border-radius: 50%;
-    border: 4px solid var(--color-surface-alt);
-    border-top-color: var(--color-primary);
-    animation: spin 0.9s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
 </style>

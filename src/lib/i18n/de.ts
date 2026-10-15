@@ -33,6 +33,9 @@ export const de: Messages = {
   "downloads.cancel.confirm": "Download von {title} abbrechen? Die bereits geladenen Daten werden gelöscht. Eine bereits installierte Version bleibt samt Spielständen erhalten.",
   "downloads.cancel.kept": "Download von {title} abgebrochen. Die installierte Version bleibt erhalten.",
   "downloads.cancel.done": "Download von {title} abgebrochen.",
+  "library.loading": "Bibliothek wird geladen …",
+  "library.loading_status": "Installationsstatus wird geladen …",
+  "detail.loading_status": "Status wird geladen …",
   "library.nothing_found": "Kein Spiel passt zur Suche.",
   "library.select_hint": "Wähle ein Spiel aus, um Details zu sehen.",
 
