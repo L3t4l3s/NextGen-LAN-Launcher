@@ -214,6 +214,10 @@ again.
   the VM (`manifests/assetto.toml`). The package's Steam emulator gives every player Steam id 1638
   and reads no id from its file; check at a LAN whether a server takes two players, and whether
   the profile's preference for GE-Proton picks it on a Steam Deck.
+- **Battlefield 1942 multiplayer — untested:** mod chooser, menu, language and name work under
+  Proton 11 on the VM (`manifests/bf1942.toml`). The game starts without a CD key in the registry
+  (ETI sets none either; the package's `local/game_setup.cmd` is not run); check at a LAN whether
+  a server takes the players.
 - **Command-line commands on Windows and macOS — untested:** `--install <id>` and the others reach
   the running launcher through `tauri-plugin-single-instance` there; checked on Linux only (demo
   mode). Check that a second start with a command carries it out and logs the outcome.

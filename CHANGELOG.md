@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.5.1
+
+- Startprofil für Battlefield 1942: Das Menü ist jetzt deutsch (ETIs Startskript schreibt
+  `german`, das Spiel kennt nur `German` und bleibt sonst englisch), und der Spielername steht im
+  Profil. Unter Windows bleibt es beim Skript, dort braucht die Sprache Adminrechte.
+  Mod-Auswahl, Menü, Sprache und Name auf der VM geprüft, Multiplayer ungetestet.
+
 ## 0.5.0
 
 - Der laufende Launcher nimmt Befehle von der Kommandozeile an: `--install <id>`,

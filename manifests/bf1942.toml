@@ -1,0 +1,52 @@
+schema = 1
+id = "bf1942"
+title = "Battlefield 1942"
+revisions = ["20160130"]
+source = "NextGen LAN Launcher: mod launcher, main menu, language and player name checked with Proton 11 (2026-10); multiplayer unchecked"
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's mod chooser (bf1942, Desert Combat, the expansions), which
+# starts BF1942.exe with "+restart 1 +game <mod>"; BF1942.exe alone opens no
+# window. Named here rather than left to game_start.cmd so that the part of
+# the script before it runs first and the language below is set after it:
+# the script writes Language "german", which the game does not know (it
+# compares the case, the menu stays English); "German" gives the German menu.
+# On Windows the launcher cannot write HKLM without administrator rights,
+# the script's value stays there.
+exe = "Launcher.exe"
+args = []
+required_files = ["Launcher.exe", "BF1942.exe", "Mods/bf1942/lexiconAll.dat"]
+
+# The package's local/game_setup.cmd (Changekey.exe, a key from Keys.txt) is
+# not ETI's setup script: that one lives beside game_start.cmd, and the
+# public ETI scripts have none for this game. The game starts without a key
+# in the registry; whether a LAN server asks for one is unchecked.
+
+# The values are the column names of Mods/bf1942/lexiconAll.dat (English,
+# French, Italian, Spanish, German, ...); only German was checked in the
+# game. The plain key counts in a win32 prefix, WOW6432Node in a win64 one.
+[[settings]]
+registry = 'HKLM\SOFTWARE\EA GAMES\Battlefield 1942'
+key = "Language"
+value = { de = "German", en = "English", fr = "French" }
+
+[[settings]]
+registry = 'HKLM\SOFTWARE\WOW6432Node\EA GAMES\Battlefield 1942'
+key = "Language"
+value = { de = "German", en = "English", fr = "French" }
+
+# The name lives in the active profile, which Settings/Profile.con names; it
+# is held at the package's "Custom", whose GeneralOptions.con the package
+# ships (the game writes it again when it ends).
+[[settings]]
+file = "Mods/bf1942/Settings/Profile.con"
+line = "game.setProfile"
+value = "Custom"
+
+[[settings]]
+file = "Mods/bf1942/Settings/Profiles/Custom/GeneralOptions.con"
+line = "game.setPlayerName"
+value = "%player%"
