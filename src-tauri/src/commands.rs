@@ -77,6 +77,11 @@ pub struct GameView {
     /// `server_start.cmd` present (dedicated server script), or on macOS and
     /// Linux a server the profile names (`[server]`).
     pub has_server_script: bool,
+    /// An entry of the catalog's tools (`Game::tool`), shown apart.
+    pub is_tool: bool,
+    /// The catalog tool the share names as its server (`server_start.id`),
+    /// when the catalog has it: "Start server" leads there.
+    pub server_tool: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -245,6 +250,11 @@ pub async fn get_games(state: State<'_, Arc<AppState>>) -> Cmd<Vec<GameView>> {
                 .as_ref()
                 .map(|p| p.share_dir.to_string_lossy().to_string()),
             has_keygen: paths.as_ref().and_then(|p| p.keygen()).is_some(),
+            is_tool: g.tool,
+            server_tool: paths
+                .as_ref()
+                .and_then(|p| p.server_tool())
+                .filter(|id| catalog.game(id).is_some_and(|t| t.tool)),
             has_server_script: paths.as_ref().is_some_and(|p| {
                 p.server_script().is_file()
                     || (!cfg!(target_os = "windows")
@@ -887,7 +897,10 @@ pub async fn play_game(
         crate::wine_setup::remember_prefix(plan.clone(), paths, game_id.clone(), existed_before)
             .await;
     }
-    {
+    // A tool (the master server) is nothing anybody plays: it stays out of
+    // "playing" for the chat and the LANPage.
+    let is_tool = state.catalog().await.game(&game_id).is_some_and(|g| g.tool);
+    if !is_tool {
         let mut running = state.running.write().await;
         running.retain(|(g, _)| g != &game_id);
         running.insert(0, (game_id, pid));

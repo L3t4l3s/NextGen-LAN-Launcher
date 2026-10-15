@@ -20,6 +20,14 @@ discarded(del_id, game_id, game_key)
 tools(tool_id, db_id, tool_name, tool_key, tool_maintainer, tool_size, tool_readme_*, tool_disabled)
 ```
 
+Tools (master server, LANshare, the sync VM, …) are shares like games: ETI installs them with the
+same steps into `LAN/<tool_id>` and starts them through their `game_start.cmd` (it special-cases
+LANshare, the sync VM and the LANPage). The launcher lists every enabled tool with a key beside the
+games (`Game::tool`, the "Tools" filter of the library); the table has no revision, so whatever
+`version.ini` a tool's share has counts as current. A game's share can name the tool that is its
+server in `server_start.id` (Battlefield 3: `bfserver`); the detail page then offers "Install
+server", which leads to that tool, instead of "Start server".
+
 `assets.eti` next to it holds the covers as `assets/<game_id>.jpg|png`. Like every other `.eti` it
 is a RAR archive; the launcher sniffs the format and also accepts a plain or gzip-compressed tar.
 The same covers are published in <https://github.com/eti-lan/LAN-Launcher> (`assets/`); the
@@ -59,6 +67,7 @@ VC++ redistributables, DirectX 11, PhysX and more). The ETI client offers it in 
 | `game_start.cmd` | Windows launch script, called as `"<game_path>" <id> <lang> "<player>"`. |
 | `game_setup.cmd` | Optional one-time setup, called with the same four arguments as `game_start.cmd` (`"<game_path>" <id> <lang> "<player>"`; a quarter of the official scripts read `%3`/`%4`). |
 | `game_start.cmd` and administrator rights | The ETI client runs elevated for every start. The launcher runs its start scripts as the user: the `netsh advfirewall firewall add rule` lines are executed once at setup (elevated) so they persist, the matching `delete rule` at exit fails harmlessly, and only scripts that write HKLM or import `.reg` files are started with a UAC prompt. |
+| `server_start.id` | Optional. The id of the catalog tool that is the game's server (`bfserver` for the Battlefield games); "Install server" leads there. |
 | `server_start.cmd`, `game_uninst.cmd` | Optional. When `server_start.cmd` exists the detail page offers "Start server" and runs it with the four `game_start.cmd` arguments; on macOS and Linux filtered in the game's prefix like the start script (`.nll-server.cmd`), or the server a profile names (`[server] exe`) when the script opens something that does not run under Wine. |
 | `keygen.exe` | Optional key generator (some setup scripts start it as `..\keygen.exe` from `local/`). When present in the game folder (or `local/`), the detail page offers a "Keygen" button. |
 | `.SyncIgnore` | Usually `local/*`. |

@@ -34,6 +34,7 @@ async fn main() {
         needs_master_server: false,
         genre_id: None,
         readme: Default::default(),
+        tool: false,
     });
     let r2 = root.clone();
     let mut manager = InstallManager::new(

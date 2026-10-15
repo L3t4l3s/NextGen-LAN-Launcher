@@ -20,6 +20,7 @@ const demoGames: Omit<GameView, "status">[] = [
   g("aoe2", 12, "Age of Empires II: HD", "20230917", 4.4, "2013", "Microsoft", "8", "Echtzeit-Strategie", "Wololo."),
   g("trackmania", 13, "TrackMania Nations Forever", "20180303", 0.6, "2008", "Nadeo", "200", "Racing", "Kostenloser Arcade-Racer."),
   g("supra", 14, "Supraball", "20200606", 3.0, "2016", "Supra Games", "10", "Sport", "Fußball aus der Ego-Perspektive."),
+  { ...g("bfserver", 15, "Battlefield Masterserver", "", 10, "", "bf4play", "", "", "Alle Server für Battlefield Bad Company 2, 3, 4 und Hardline."), genre: null, releaseYear: null, maxPlayers: null, isTool: true },
 ];
 
 function g(
@@ -71,6 +72,8 @@ function g(
     shareDir: `D:\\LAN\\${id}`,
     hasKeygen: id === "cod4",
     hasServerScript: id === "goldsrc" || id === "quake3",
+    isTool: false,
+    serverTool: id === "bfbc2" ? "bfserver" : null,
   };
 }
 

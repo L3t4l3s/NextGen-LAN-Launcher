@@ -32,7 +32,7 @@ class AppStore {
    *  a look at Downloads and back does not reset them. */
   libraryView = $state({
     query: "",
-    filter: "all" as "all" | "installed" | "active",
+    filter: "all" as "all" | "installed" | "active" | "tools",
     genre: "",
     sort: "title" as "title" | "players" | "size" | "year",
   });

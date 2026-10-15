@@ -96,6 +96,10 @@ export interface GameView {
   shareDir: string | null;
   hasKeygen: boolean;
   hasServerScript: boolean;
+  /** An entry of the catalog's tools (master server, LANshare, …). */
+  isTool: boolean;
+  /** The tool the share names as its server (`server_start.id`). */
+  serverTool: string | null;
 }
 
 export type Extra = "keygen" | "server";

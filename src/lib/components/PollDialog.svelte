@@ -31,6 +31,7 @@
 
   const shownGames = $derived(
     app.games
+      .filter((g) => !g.isTool)
       .filter((g) => !gameFilter.trim() || g.title.toLowerCase().includes(gameFilter.trim().toLowerCase()))
       .sort((a, b) => a.title.localeCompare(b.title)),
   );

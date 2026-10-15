@@ -126,6 +126,18 @@ impl GamePaths {
         self.share_dir.join("server_start.cmd")
     }
 
+    /// The catalog tool that is this game's server, as its share names it in
+    /// `server_start.id` (Battlefield 3: `bfserver`, the master server);
+    /// ETI's "Start server" then opens that tool.
+    pub fn server_tool(&self) -> Option<String> {
+        let text = std::fs::read(self.share_dir.join("server_start.id")).ok()?;
+        let id = String::from_utf8_lossy(&text)
+            .trim_start_matches('\u{feff}')
+            .trim()
+            .to_string();
+        crate::catalog::GAME_ID_RE.is_match(&id).then_some(id)
+    }
+
     /// Key generator some packages ship (`<game>/keygen.exe`, started by
     /// ETI's setup scripts as `..\keygen.exe` from `local/`; a copy inside
     /// `local/` is accepted too).

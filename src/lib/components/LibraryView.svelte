@@ -21,16 +21,20 @@
     return year ? Number(year[0]) : 0;
   }
 
-  const genres = $derived([...new Set(app.games.map((g) => g.genre).filter((g): g is string => !!g))].sort());
+  const genres = $derived([...new Set(app.games.filter((g) => !g.isTool).map((g) => g.genre).filter((g): g is string => !!g))].sort());
 
   const visible = $derived.by(() => {
     const q = view.query.trim().toLowerCase();
     // filter() already returns a fresh array, so sorting it in place is safe.
     return app.games
       .filter((g) => !q || g.title.toLowerCase().includes(q) || g.id.includes(q) || (g.publisher ?? "").toLowerCase().includes(q))
-      .filter((g) => !view.genre || g.genre === view.genre)
+      // The catalog's tools (master server, LANshare, …) have a view of
+      // their own; "all games" leaves them out, installed and in progress
+      // show them too.
+      .filter((g) => (view.filter === "tools" ? g.isTool : view.filter !== "all" || !g.isTool))
+      .filter((g) => view.filter === "tools" || !view.genre || g.genre === view.genre)
       .filter((g) => {
-        if (view.filter === "all") return true;
+        if (view.filter === "all" || view.filter === "tools") return true;
         const s = app.statusOf(g.id);
         return view.filter === "installed" ? isPlayable(s) : isBusy(s) || s?.phase === "failed" || s?.phase === "paused";
       })
@@ -56,7 +60,7 @@
     <div class="toolbar">
       <input type="search" placeholder={t("library.search")} bind:value={view.query} />
       <div class="segments">
-        {#each ["all", "installed", "active"] as f (f)}
+        {#each ["all", "installed", "active", "tools"] as f (f)}
           <button class:active={view.filter === f} onclick={() => (view.filter = f as typeof view.filter)}>{t(`library.filter.${f}`)}</button>
         {/each}
       </div>

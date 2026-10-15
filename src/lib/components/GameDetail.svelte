@@ -245,6 +245,15 @@
       });
   });
 
+  function openServerTool(id: string) {
+    // A search or genre left over from finding this game would hide the
+    // tool's tile next to its open details.
+    app.libraryView.query = "";
+    app.libraryView.genre = "";
+    app.libraryView.filter = "tools";
+    app.selectedId = id;
+  }
+
   async function runExtra(extra: Extra) {
     await run(extra, async () => {
       const pid = await api.runExtra(game.id, extra);
@@ -278,7 +287,7 @@
 
     <div class="primary-row">
       {#if playable}
-        <button class="success big" onclick={() => play()} disabled={working || app.bootstrap?.demo} title={app.bootstrap?.demo ? t("action.play_demo") : ""}>▶ {t("action.play")}</button>
+        <button class="success big" onclick={() => play()} disabled={working || app.bootstrap?.demo} title={app.bootstrap?.demo ? t("action.play_demo") : ""}>▶ {t(game.isTool ? "action.start" : "action.play")}</button>
         {#if status?.phase === "update_available"}
           <button class="primary" onclick={repair} disabled={working}>{t("action.update")}</button>
         {/if}
@@ -324,7 +333,11 @@
       {#if platform === "windows" && game.hasKeygen}
         <button onclick={() => runExtra("keygen")} disabled={working || !playable || app.bootstrap?.demo}>🔑 {t("action.keygen")}</button>
       {/if}
-      {#if game.hasServerScript}
+      {#if game.serverTool}
+        <!-- The share names a catalog tool as its server (server_start.id):
+             lead there instead of running a script. -->
+        <button onclick={() => openServerTool(game.serverTool!)}>🖥 {t(isPlayable(app.statusOf(game.serverTool)) ? "action.server_open" : "action.server_install")}</button>
+      {:else if game.hasServerScript}
         <button onclick={() => runExtra("server")} disabled={working || !playable || app.bootstrap?.demo}>🖥 {t("action.server")}</button>
       {/if}
       <button class="danger" onclick={uninstall} disabled={working || !status || status.phase === "not_installed"}>{t("action.uninstall")}</button>

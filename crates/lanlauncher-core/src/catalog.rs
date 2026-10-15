@@ -118,6 +118,12 @@ pub struct Game {
     pub needs_master_server: bool,
     pub genre_id: Option<i64>,
     pub readme: BTreeMap<String, String>,
+    /// An entry of the catalog's `tools` table (a master server, LANshare,
+    /// the sync VM): installed, updated and started like a game, from its own
+    /// share, as ETI does. Its revision is empty — the table has none — and
+    /// then any revision on disk counts as current.
+    #[serde(default)]
+    pub tool: bool,
 }
 
 impl Game {
@@ -136,6 +142,44 @@ pub struct Tool {
     pub size: Option<String>,
     pub disabled: bool,
     pub readme: BTreeMap<String, String>,
+}
+
+impl Tool {
+    /// The tool as a catalog entry ([`Game::tool`]); `None` without a share
+    /// key. The size is GB like a game's; one past 1000 is taken for MB-ish
+    /// noise (the sync VM says 2000) and left unknown rather than asking
+    /// for terabytes of free space.
+    pub fn as_game(&self) -> Option<Game> {
+        let key = self.key.clone()?;
+        if self.name.chars().count() > 300 || self.name.chars().any(char::is_control) {
+            return None;
+        }
+        let size_gb = self
+            .size
+            .as_deref()
+            .and_then(|s| s.trim().replace(',', ".").parse::<f64>().ok())
+            .filter(|gb| (0.0..1000.0).contains(gb))
+            .unwrap_or(0.0);
+        Some(Game {
+            id: self.id.clone(),
+            order: self.order,
+            title: if self.name.trim().is_empty() {
+                self.id.clone()
+            } else {
+                self.name.clone()
+            },
+            key,
+            revision: String::new(),
+            size_bytes: (size_gb * 1_000_000_000.0).round() as u64,
+            release_year: None,
+            publisher: self.maintainer.clone(),
+            max_players: None,
+            needs_master_server: false,
+            genre_id: None,
+            readme: self.readme.clone(),
+            tool: true,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -287,6 +331,19 @@ impl Catalog {
                     catalog.tools.push(t);
                 }
             }
+            // The tools with a share become entries beside the games; an id
+            // a game or an earlier row already has stays theirs (the table
+            // does not keep ids unique, and the library is keyed by them).
+            let mut seen: std::collections::HashSet<String> =
+                catalog.games.iter().map(|g| g.id.clone()).collect();
+            let tools: Vec<Game> = catalog
+                .tools
+                .iter()
+                .filter(|t| !t.disabled)
+                .filter_map(Tool::as_game)
+                .filter(|t| seen.insert(t.id.clone()))
+                .collect();
+            catalog.games.extend(tools);
         }
 
         if table_columns(conn, "discarded").is_ok() {
@@ -390,6 +447,7 @@ fn parse_game(row: &rusqlite::Row<'_>, raw_id: &str) -> std::result::Result<Game
             != 0,
         genre_id: row.get::<_, Option<i64>>(10).map_err(|e| e.to_string())?,
         readme,
+        tool: false,
     })
 }
 
@@ -664,7 +722,15 @@ mod tests {
     #[test]
     fn reads_games_genres_tools_and_discarded() {
         let cat = Catalog::from_connection(&fixture_conn()).unwrap();
-        assert_eq!(cat.games.len(), 4, "skipped: {:?}", cat.skipped_rows);
+        // Four games, and the one enabled tool as an entry of its own.
+        assert_eq!(cat.games.len(), 5, "skipped: {:?}", cat.skipped_rows);
+        let lanshare = cat.game("eti_lanshare").unwrap();
+        assert!(lanshare.tool);
+        assert_eq!(lanshare.title, "LANshare 3");
+        assert_eq!(lanshare.revision, "");
+        assert_eq!(lanshare.size_bytes, 200_000_000);
+        assert_eq!(lanshare.publisher.as_deref(), Some("eti Team"));
+        assert!(!cat.game("quake3").unwrap().tool);
         let q3 = cat.game("quake3").unwrap();
         assert_eq!(q3.title, "Quake 3 Arena");
         assert_eq!(q3.revision, "20160922");
@@ -745,7 +811,7 @@ mod tests {
             .unwrap();
         drop(conn);
         let cat = Catalog::load(&p).unwrap();
-        assert_eq!(cat.games.len(), 4);
+        assert_eq!(cat.games.len(), 5);
     }
 
     #[test]

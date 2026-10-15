@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.7.0
+
+- Werkzeuge aus dem ETI-Katalog: Der Battlefield-Masterserver, LANshare, die Sync-VM und die
+  übrigen Werkzeuge stehen jetzt in der Bibliothek unter „Werkzeuge“ und lassen sich wie Spiele
+  installieren, starten und entfernen (auch über die Kommandozeile). Spiele, deren Paket ihren
+  Server nennt (`server_start.id`, etwa Battlefield 3), zeigen „Server installieren“ bzw. „Zum
+  Server“ und führen zum passenden Werkzeug.
+
 ## 0.6.3
 
 - Startprofil für Barotrauma: deutsches Menü und keine Tutorial-Frage beim ersten „Server hosten“.

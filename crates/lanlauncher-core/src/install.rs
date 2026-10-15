@@ -276,9 +276,16 @@ impl Observation {
         // there: a game whose folder was emptied by hand is downloading
         // again, and for a folder-tree package there is no `.!sync` file to
         // notice that by.
-        let settled = receipt
-            .as_ref()
-            .is_some_and(|r| r.revision == game.revision)
+        // A tool's entry has no revision; its version.ini says what is
+        // current.
+        let current = if game.revision.is_empty() {
+            std::fs::read_to_string(&paths.version_file)
+                .map(|v| v.trim().to_string())
+                .unwrap_or_default()
+        } else {
+            game.revision.clone()
+        };
+        let settled = receipt.as_ref().is_some_and(|r| r.revision == current)
             && archive_len.is_some()
             && paths.local_dir.is_dir();
         let share_bytes = if settled && partial_len.is_none() {
@@ -636,7 +643,10 @@ impl Tracker {
         if !self.phase.is_busy() || self.phase == Phase::Queued {
             if let Some(r) = &obs.receipt {
                 if obs.local_present && !matches!(self.phase, Phase::Failed | Phase::Paused) {
-                    let newer_in_catalog = r.revision != obs.catalog_revision;
+                    // A tool's catalog entry has no revision: what is on
+                    // disk is current until version.ini says otherwise.
+                    let newer_in_catalog =
+                        !obs.catalog_revision.is_empty() && r.revision != obs.catalog_revision;
                     let newer_on_disk = obs
                         .version_ini
                         .as_deref()
@@ -2283,6 +2293,7 @@ mod tests {
             needs_master_server: false,
             genre_id: None,
             readme: Default::default(),
+            tool: false,
         };
         let obs = Observation::from_disk(&paths, &game, &[], &crate::library::DiskTable::default());
         assert_eq!(obs.share_bytes, 16 + 4096);
@@ -3013,6 +3024,7 @@ mod tests {
             needs_master_server: false,
             genre_id: None,
             readme: Default::default(),
+            tool: false,
         }
     }
 
@@ -3375,6 +3387,7 @@ mod tests {
             needs_master_server: false,
             genre_id: None,
             readme: Default::default(),
+            tool: false,
         });
         let r2 = root.clone();
         let mut manager = InstallManager::new(
