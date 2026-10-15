@@ -1,6 +1,8 @@
 //! Commands for the running launcher from the command line:
 //! `nextgen-lan-launcher --install <id>`, `--uninstall <id>`, `--play <id>`,
-//! `--components <id>`, `--server <id>`, `--status [<id>]`.
+//! `--components <id>`, `--server <id>`, `--status [<id>]`, and
+//! `--open-url <link>`, which the desktop runs for a game's own links
+//! (`launch::url_protocol`).
 //!
 //! They do what the buttons do, through the same code, in the launcher that
 //! is already running with its sync engine — a second launcher next to it
@@ -27,6 +29,9 @@ pub enum Command {
     Server(String),
     /// Every game the launcher tracks, or one.
     Status(Option<String>),
+    /// A link of a scheme a game registered (`bf3lan://…`), opened in that
+    /// game's prefix.
+    OpenUrl(String),
 }
 
 /// A game id as the catalog spells them: it goes into one line of the
@@ -48,7 +53,13 @@ impl Command {
         let at = args.iter().position(|a| {
             matches!(
                 *a,
-                "--install" | "--uninstall" | "--play" | "--components" | "--server" | "--status"
+                "--install"
+                    | "--uninstall"
+                    | "--play"
+                    | "--components"
+                    | "--server"
+                    | "--status"
+                    | "--open-url"
             )
         })?;
         // A command goes to the launcher that is running; options for a
@@ -68,6 +79,15 @@ impl Command {
             Some(id) => Err(format!("not a game id: {id}")),
             None => Err(format!("{} needs a game id", args[at])),
         };
+        if args[at] == "--open-url" {
+            return Some(match args.get(at + 1) {
+                Some(url) if crate::launch::url_protocol::scheme(url).is_some() => {
+                    Ok(Command::OpenUrl(url.to_string()))
+                }
+                Some(url) => Err(format!("not a game's link: {url}")),
+                None => Err("--open-url needs a link".into()),
+            });
+        }
         Some(match args[at] {
             "--install" => game(id).map(Command::Install),
             "--uninstall" => game(id).map(Command::Uninstall),
@@ -100,6 +120,7 @@ impl Command {
             },
             Command::Status(None) => "status".into(),
             Command::Status(Some(id)) => format!("status {id}"),
+            Command::OpenUrl(url) => format!("open-url {url}"),
         }
     }
 
@@ -127,6 +148,9 @@ impl Command {
             }),
             ["status"] => Some(Command::Status(None)),
             ["status", _] => id(1).map(|id| Command::Status(Some(id))),
+            ["open-url", url] if crate::launch::url_protocol::scheme(url).is_some() => {
+                Some(Command::OpenUrl(url.to_string()))
+            }
             _ => None,
         }
     }
@@ -162,6 +186,17 @@ mod tests {
         // Nothing that would end the line or start another word.
         assert!(matches!(parse(&["--install", "a b"]), Some(Err(_))));
         assert!(matches!(parse(&["--install", "a\nquit"]), Some(Err(_))));
+        // A link the desktop hands over: one word, a game's scheme.
+        assert_eq!(
+            parse(&["--open-url", "bf3lan://join/x"]),
+            Some(Ok(Command::OpenUrl("bf3lan://join/x".into())))
+        );
+        assert!(matches!(
+            parse(&["--open-url", "bf3lan://a b"]),
+            Some(Err(_))
+        ));
+        assert!(matches!(parse(&["--open-url", "https://x"]), Some(Err(_))));
+        assert!(matches!(parse(&["--open-url"]), Some(Err(_))));
 
         for command in [
             Command::Install("cod2".into()),
@@ -178,11 +213,13 @@ mod tests {
             },
             Command::Status(None),
             Command::Status(Some("aoe2".into())),
+            Command::OpenUrl("bf3lan://join/1.2.3.4:25200".into()),
         ] {
             assert_eq!(Command::from_line(&command.to_line()), Some(command));
         }
         assert_eq!(Command::from_line("show"), None);
         assert_eq!(Command::from_line("install ../x y"), None);
         assert_eq!(Command::from_line("uninstall .."), None);
+        assert_eq!(Command::from_line("open-url https://x"), None);
     }
 }

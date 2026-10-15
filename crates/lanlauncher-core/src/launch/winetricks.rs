@@ -567,7 +567,7 @@ const WINE_SYSTEM: [&str; 23] = [
     "srt-logger",
 ];
 
-fn is_wine_system(name: &str) -> bool {
+pub(crate) fn is_wine_system(name: &str) -> bool {
     WINE_SYSTEM.iter().any(|system| {
         name.eq_ignore_ascii_case(system)
             || (name.len() == 15

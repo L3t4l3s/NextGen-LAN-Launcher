@@ -7,6 +7,7 @@ mod fixes;
 mod player;
 mod state;
 mod tray;
+mod url_handlers;
 mod wine_setup;
 
 use lanlauncher_core::catalog::Catalog;
@@ -1669,7 +1670,19 @@ pub fn run() {
         // nothing of its own.
         let args: Vec<String> = std::env::args().skip(1).collect();
         if let Some(command) = lanlauncher_core::control::Command::from_args(&args) {
-            std::process::exit(send_command(command));
+            let link = match &command {
+                Ok(lanlauncher_core::control::Command::OpenUrl(url)) => Some(url.clone()),
+                _ => None,
+            };
+            let code = send_command(command);
+            // A link clicked while no launcher runs starts one, which
+            // opens it (`url_handlers::open_pending`).
+            match link {
+                Some(url) if code == 3 => {
+                    let _ = url_handlers::PENDING.set(url);
+                }
+                _ => std::process::exit(code),
+            }
         }
         // Before the graphics ladder writes its notes and the webview log
         // gets its header: a second start only shows the running window.
@@ -2048,6 +2061,7 @@ async fn refresh_event(state: &AppState, app: &tauri::AppHandle) {
 async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
     // The chat needs neither the engine nor the catalog; it starts first.
     crate::chat::apply_settings(&app, &state).await;
+    crate::url_handlers::keep_offered(state.clone());
     let lifecycle = state.transport_lifecycle.lock().await;
     let library = state.library.clone();
     // The catalog is loaded while the sync engine starts (which may take up
@@ -2120,6 +2134,7 @@ async fn start_services(app: tauri::AppHandle, state: Arc<AppState>) {
     drop(lifecycle);
     // Statuses exist only now; the UI re-reads the games once more.
     let _ = app.emit(CATALOG_EVENT, 0usize);
+    crate::url_handlers::open_pending(&app, &state).await;
 
     // Keep the shared library in sync with settings changes.
     let lib_sync = library.clone();

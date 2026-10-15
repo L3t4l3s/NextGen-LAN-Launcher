@@ -491,6 +491,26 @@ pub async fn cancel_download(state: State<'_, Arc<AppState>>, game_id: String) -
 #[tauri::command]
 pub async fn uninstall_game(state: State<'_, Arc<AppState>>, game_id: String) -> Cmd<()> {
     let _use = GameUse::claim(&state.prefix_use, &game_id)?;
+    // Not from under a program that still runs from the folder: the master
+    // server's script was removed while its window was open, and on Linux
+    // nothing stops that — the files go, the program keeps running in a
+    // folder that is gone. (Windows would refuse the open files halfway.)
+    // Tools are in no "running" list the interface could ask.
+    let share_dir = state
+        .settings
+        .read()
+        .await
+        .library
+        .game_paths(&game_id)
+        .map(|p| p.share_dir);
+    if let Some(dir) = share_dir {
+        let runs = tauri::async_runtime::spawn_blocking(move || launch::runs_from(&dir))
+            .await
+            .unwrap_or(false);
+        if runs {
+            return Err("err.uninstall_running".into());
+        }
+    }
     manager(&state)
         .await?
         .uninstall(&game_id)
@@ -964,59 +984,121 @@ pub async fn run_extra(
         };
         launch::extra_plan(extra, &ctx).map_err(err)?
     } else {
-        // macOS/Linux: the server runs in the game's prefix with its
-        // runner, so it is held like a start (`play_game`): not into a
-        // prefix being filled or a game being set up, repaired or removed;
-        // the setup caught up first; the prefix recorded as the game's.
-        _starting = GameUse::claim(&state.prefix_use, &game_id)?;
-        let (plan, manifest) =
-            with_launch_context(&state, &game_id, None, Some(paths.clone()), move |ctx| {
-                launch::extra_plan(extra, ctx)
-            })
-            .await?;
-        if prefix_being_filled(&state, &plan) {
-            return Err("err.components_busy_game".into());
-        }
-        existed_before = launch::unix::own_prefix_exists_before_start(&plan, &paths, &game_id);
-        crate::wine_setup::catch_up(state.inner(), &game_id, &plan).await?;
-        // The profile's values before a server too: Assetto Corsa's server
-        // must not insist on Kunos' lobby, or it ends after five attempts.
-        // What cannot be written is no reason not to start the server.
-        if let Err(e) =
-            crate::player::apply(state.inner(), &game_id, &paths, manifest.as_ref(), None).await
-        {
-            log::warn!("server {game_id}: profile values not set: {e}");
-        }
+        let (plan, before, claim) = plan_in_prefix(state.inner(), &game_id, &paths, move |ctx| {
+            launch::extra_plan(extra, ctx)
+        })
+        .await?;
+        existed_before = before;
+        _starting = claim;
         plan
     };
     if launch::unix::is_server_script(&plan) {
         crate::wine_setup::prepare_server(state.inner(), &game_id, &paths, &mut plan).await?;
     }
-    let attempt =
-        crate::state::LaunchAttempt::new(&game_id, &game_id, &format!("{extra:?}"), &plan);
+    spawn_extra(
+        state.inner(),
+        &game_id,
+        &format!("{extra:?}"),
+        plan,
+        paths,
+        existed_before,
+    )
+    .await
+}
+
+/// A program of a game other than its start, planned on macOS/Linux in the
+/// game's prefix with its runner, and held like a start (`play_game`): not
+/// into a prefix being filled or a game being set up, repaired or removed;
+/// the setup caught up first; the profile's values written. With whether
+/// the prefix existed before, and the claim to hold until it runs.
+async fn plan_in_prefix<'a>(
+    state: &'a Arc<AppState>,
+    game_id: &str,
+    paths: &lanlauncher_core::paths::GamePaths,
+    make: impl FnOnce(&LaunchContext<'_>) -> lanlauncher_core::Result<LaunchPlan> + Send + 'static,
+) -> Cmd<(LaunchPlan, bool, GameUse<'a>)> {
+    let claim = GameUse::claim(&state.prefix_use, game_id)?;
+    let (plan, manifest) =
+        with_launch_context(state, game_id, None, Some(paths.clone()), make).await?;
+    if prefix_being_filled(state, &plan) {
+        return Err("err.components_busy_game".into());
+    }
+    let existed_before = launch::unix::own_prefix_exists_before_start(&plan, paths, game_id);
+    crate::wine_setup::catch_up(state, game_id, &plan).await?;
+    // The profile's values before a server too: Assetto Corsa's server
+    // must not insist on Kunos' lobby, or it ends after five attempts.
+    // What cannot be written is no reason not to start the program.
+    if let Err(e) = crate::player::apply(state, game_id, paths, manifest.as_ref(), None).await {
+        log::warn!("{game_id}: profile values not set: {e}");
+    }
+    Ok((plan, existed_before, claim))
+}
+
+/// Start `plan`, a game's program other than its start (`what`: `Server`,
+/// `bf3lan`), with its output in its own log, the attempt on the
+/// diagnostics page, and on macOS/Linux the prefix recorded as the game's.
+async fn spawn_extra(
+    state: &Arc<AppState>,
+    game_id: &str,
+    what: &str,
+    plan: LaunchPlan,
+    paths: lanlauncher_core::paths::GamePaths,
+    existed_before: bool,
+) -> Cmd<u32> {
+    let allow_elevation = state.settings.read().await.allow_elevation;
+    let attempt = crate::state::LaunchAttempt::new(game_id, game_id, what, &plan);
     log::info!(
-        "starting extra {extra:?} for {game_id}: {} {}",
+        "starting {what} for {game_id}: {} {}",
         plan.program.display(),
         attempt.command_line
     );
-    let log = state.launch_log(&game_id, &format!("{extra:?}"));
+    let log = state.launch_log(game_id, what);
     let _ = std::fs::remove_file(&log);
-    let outcome = launch::spawn_for_user_watched(
-        &plan,
-        &state.run_dir(),
-        settings.allow_elevation,
-        Some(&log),
-    )
-    .await;
+    let outcome =
+        launch::spawn_for_user_watched(&plan, &state.run_dir(), allow_elevation, Some(&log)).await;
     let pid = state
-        .inner()
         .record_launch(attempt, Some(log), outcome)
         .await
         .map_err(err)?;
     if cfg!(not(windows)) {
-        crate::wine_setup::remember_prefix(plan, paths, game_id, existed_before).await;
+        crate::wine_setup::remember_prefix(plan, paths, game_id.to_string(), existed_before).await;
     }
     Ok(pid)
+}
+
+/// Open a link of a scheme a game registered for itself (`bf3lan://…`,
+/// `launch::url_protocol`): the program the game's prefix names for it, in
+/// that prefix. The desktop hands such links to the launcher
+/// (`--open-url`); which game they belong to is looked up again here, from
+/// the registries of the installed games.
+pub async fn open_game_url(state: &Arc<AppState>, url: String) -> Cmd<u32> {
+    use lanlauncher_core::launch::url_protocol;
+    if cfg!(target_os = "windows") {
+        // Windows opens these links itself, through the game's registration.
+        return Err("err.windows_only".into());
+    }
+    if state.demo {
+        return Err("err.demo_no_play".into());
+    }
+    let scheme = url_protocol::scheme(&url).ok_or_else(|| format!("err.url_unknown|{url}"))?;
+    let found = crate::url_handlers::find(state, &scheme).await;
+    let Some((game_id, handler)) = found else {
+        return Err(format!("err.url_unknown|{scheme}"));
+    };
+    let paths = state
+        .settings
+        .read()
+        .await
+        .library
+        .game_paths(&game_id)
+        .ok_or("err.no_library")?;
+    let args = handler.args_for(&url);
+    let program = handler.program.clone();
+    let (plan, existed_before, _starting) = plan_in_prefix(state, &game_id, &paths, move |ctx| {
+        launch::unix::url_plan(ctx, &program, args)
+    })
+    .await?;
+    spawn_extra(state, &game_id, &scheme, plan, paths, existed_before).await
 }
 
 /// Run a game's `game_setup.cmd` again, with its output captured.

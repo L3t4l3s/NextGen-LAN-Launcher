@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.7.2
+
+- Linux: Battlelog-Links (`bf3lan://…`) starten das Spiel. Das Setup von Battlefield 3 trägt
+  das Protokoll nur im Prefix des Spiels ein, wo der Browser nie nachsieht; der Launcher liest es
+  dort aus, meldet sich beim Desktop als Handler und startet beim Klick das eingetragene
+  Programm (`BFUlauncher.exe`) im Prefix. Läuft der Launcher nicht, startet der Klick ihn; geht
+  etwas schief, zeigt das Fenster den Grund. Auf der VM bis zum Titelbildschirm geprüft, gegen
+  einen echten Masterserver ungetestet.
+- Ein Paket ohne Archiv bleibt nicht mehr ewig bei 99,9 % stehen: Hat der Sync-Server nur eine
+  `build.txt` und kein `.eti` (zurzeit „LAN Server“), meldet der Launcher das. Liegt das Archiv
+  später auf dem Server, geht der Download von selbst weiter.
+- Deinstallieren wird abgelehnt, solange noch ein Programm aus dem Spielordner läuft. Bisher
+  löschte der Launcher etwa den Masterserver unter seinem offenen Fenster weg.
+
 ## 0.7.1
 
 - **Ladezustand beim Start.** Auf langsameren Rechnern stand nach dem Start erst „Noch kein

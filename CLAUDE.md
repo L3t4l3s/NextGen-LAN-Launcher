@@ -278,6 +278,16 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   nichts, und das Spiel bekam `xres=`. Die Tabellenform liefert, was das Spiel sieht; die
   bevorzugte Auflösung des Bildschirms aus `/sys/class/drm` war auf einem kleineren Desktop
   falsch (nachgestellt: 1280×800 statt 1280×731, „Initialization Failed“).
+- **Links aus dem Prefix (`bf3lan://`):** Setup-Skripte tragen URL-Protokolle unter
+  `HKLM\SOFTWARE\Classes` ein, unter Wine also nur im Prefix. `launch::url_protocol` liest sie
+  aus `system.reg` der `.nll-prefix*`-Ordner des Spiels (nur Programme unter `local/`; der Prefix
+  liegt im selben Ordner, sein `drive_c` zählt nicht), `src-tauri/src/url_handlers.rs` meldet den
+  Launcher einmal pro Minute als Handler an (versteckter Desktop-Eintrag, Standard in
+  `mimeapps.list` nur, wo kein anderes Programm eingetragen ist; Exec ist `$APPIMAGE`, nicht das
+  Programm im Mount), `--open-url` kommt über den Instanz-Socket und läuft wie „Server starten“
+  (`plan_in_prefix`/`spawn_extra`) direkt ohne `cmd.exe` (ein `&` im Link). Nur Linux. Tests mit
+  einer Testinstanz brauchen eigene `XDG_DATA_HOME`/`XDG_CONFIG_HOME`, sonst überschreibt sie den
+  Eintrag des echten Launchers.
 - **Spielername und Sprache (`player_settings`):** vor jedem Start, auf allen Plattformen,
   zusätzlich zum ETI-Skript (`player::apply` in `play_game`, nach Setup/Vorbereitung, vor dem
   Spawn). `[[settings]]` im Profil: INI-Schlüssel im Abschnitt, `line = "seta name"`, ganze Datei,

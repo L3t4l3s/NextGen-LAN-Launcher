@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
 /// Carry out `command` and say what came of it: the start's process id for
-/// `play` and `server`, the report for `components`, one JSON line per game for `status`,
+/// `play`, `server` and `open-url`, the report for `components`, one JSON line per game for `status`,
 /// nothing for `install`/`uninstall` (their progress shows in `status`).
 /// Errors are the commands' codes (`err.components_needed|dotnet48`).
 pub fn run(app: &tauri::AppHandle, command: Command) -> Result<String, String> {
@@ -37,6 +37,9 @@ pub fn run(app: &tauri::AppHandle, command: Command) -> Result<String, String> {
                     .await
                     .map(|pid| format!("{pid}\n"))
             }
+            Command::OpenUrl(url) => commands::open_game_url(state.inner(), url)
+                .await
+                .map(|pid| format!("{pid}\n")),
             Command::Components(id) => commands::install_components(state, id, false, None)
                 .await
                 .and_then(|report| json_line(&report)),
@@ -48,6 +51,12 @@ pub fn run(app: &tauri::AppHandle, command: Command) -> Result<String, String> {
             }),
         }
     });
+    // A link from the browser: what went wrong is shown in the window, the
+    // program the desktop started has no terminal to print it to.
+    if let (Err(e), Some("open-url")) = (&answer, line.split(' ').next()) {
+        crate::tray::show_window(app);
+        let _ = app.emit(crate::url_handlers::LINK_ERROR_EVENT, e);
+    }
     // The window reloads its library after its own install and uninstall
     // buttons; for these it has to be told.
     if answer.is_ok() && matches!(line.split(' ').next(), Some("install" | "uninstall")) {

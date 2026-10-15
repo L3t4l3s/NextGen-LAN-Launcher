@@ -12,6 +12,7 @@ pub mod fnr;
 pub mod proton;
 pub mod setup_script;
 pub mod unix;
+pub mod url_protocol;
 pub mod windows;
 pub mod winetricks;
 
@@ -824,7 +825,9 @@ pub fn list_executables(paths: &GamePaths, limit: usize) -> Vec<String> {
 /// at once and leaves the game running; under Wine the program is Wine, but
 /// it works in the game's folder. The pid of the start is no help: it is
 /// usually that starter, and Windows hands its number out again soon after.
-/// The launcher's own process never counts.
+/// The launcher's own process never counts, nor do Wine's own processes
+/// (`wineserver`, `explorer.exe`, …), which outlive a game by seconds with
+/// the prefix inside the game's folder as their working folder.
 pub fn runs_from(dir: &Path) -> bool {
     let dir = crate::paths::strip_verbatim(
         std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()),
@@ -837,6 +840,7 @@ pub fn runs_from(dir: &Path) -> bool {
     let own = std::process::id();
     let running = crate::transport::resilio::real_processes(&sys)
         .filter(|(id, p)| id.as_u32() != own && p.status() != sysinfo::ProcessStatus::Zombie)
+        .filter(|(_, p)| !winetricks::is_wine_system(&p.name().to_string_lossy()))
         .any(|(_, p)| {
             p.exe().is_some_and(|e| is_inside(e, &dir))
                 || p.cwd().is_some_and(|c| is_inside(c, &dir))

@@ -453,6 +453,9 @@ pub struct Tracker {
     /// The engine did not answer when the share was to be added: the tick
     /// adds it once the engine answers again, not before this time.
     share_retry_at: Option<Instant>,
+    /// Since when the engine has called the share complete while it holds
+    /// no package: a catalog entry whose share has nothing to install yet.
+    complete_without_archive_since: Option<Instant>,
 }
 
 impl Tracker {
@@ -482,6 +485,7 @@ impl Tracker {
             work_started_at: None,
             shown: None,
             share_retry_at: None,
+            complete_without_archive_since: None,
         }
     }
 
@@ -523,6 +527,7 @@ impl Tracker {
         self.problem = None;
         self.last_progress_at = Instant::now();
         self.indexing_since = None;
+        self.complete_without_archive_since = None;
         self.high_water = [0, 0];
         self.last_total = 0;
     }
@@ -542,6 +547,7 @@ impl Tracker {
         self.last_archive_len = None;
         self.last_progress_at = Instant::now();
         self.indexing_since = None;
+        self.complete_without_archive_since = None;
         self.high_water = [0, 0];
         self.last_total = 0;
         self.rate_sample = None;
@@ -894,6 +900,44 @@ impl Tracker {
                             }),
                     );
                     return Action::None;
+                }
+                // The engine has everything the share holds, and no package
+                // is among it: the sync server lists the "LAN Server" tool
+                // with a share that carries only a build.txt. Waiting looks
+                // like a download stuck at 99.9 %, and "repair" fetches the
+                // same 20 bytes again. Said once the engine has stayed
+                // complete for a while (a share it has just indexed can
+                // read complete before its file list arrives); the download
+                // goes on as soon as the server adds the archive.
+                // Only a share that holds next to nothing: a package that
+                // arrives as a folder tree is not this, it is something
+                // this launcher cannot install, and says so elsewhere.
+                let complete_without_archive = obs.archive_len.is_none()
+                    && obs.partial_len.is_none()
+                    && obs.share_bytes < 1_000_000
+                    && obs
+                        .transport
+                        .as_ref()
+                        .is_some_and(|t| t.state == ShareState::Complete && t.bytes_total > 0);
+                if !complete_without_archive {
+                    self.complete_without_archive_since = None;
+                    if self
+                        .problem
+                        .as_ref()
+                        .is_some_and(|p| p.code == "install.no_archive")
+                    {
+                        self.problem = None;
+                    }
+                } else {
+                    let since = *self.complete_without_archive_since.get_or_insert(now);
+                    if now.duration_since(since) >= policy.stable_for {
+                        self.problem = Some(
+                            Problem::new("install.no_archive", Severity::Warning)
+                                .param("id", &self.game_id)
+                                .step("install.no_archive.step.1"),
+                        );
+                        return Action::None;
+                    }
                 }
                 // A package that arrives as one huge file gives the engine
                 // nothing to count until it is done, so "no bytes" is not
@@ -2354,6 +2398,43 @@ mod tests {
             Some("folder not found")
         );
         assert!(matches!(problem.fix, Some(FixAction::RepairGame { .. })));
+    }
+
+    #[test]
+    fn a_complete_share_without_a_package_says_so() {
+        // The "LAN Server" tool's share holds a build.txt and nothing else:
+        // the engine is done, there is nothing to verify, and the row sat at
+        // 99.9 % for good.
+        let mut t = Tracker::new("eti_lanserver");
+        t.request_install();
+        let t0 = Instant::now();
+        let mut o = obs(None, None, None, Some(100));
+        o.share_bytes = 20;
+        t.step(&o, &policy(), t0);
+        t.step(&o, &policy(), t0 + Duration::from_secs(1));
+        assert!(t.problem.is_none(), "{:?}", t.problem);
+        t.step(&o, &policy(), t0 + Duration::from_secs(20));
+        assert_eq!(
+            t.problem.as_ref().map(|p| p.code.as_str()),
+            Some("install.no_archive")
+        );
+        // A stall warning does not replace it.
+        t.step(&o, &policy(), t0 + Duration::from_secs(600));
+        assert_eq!(
+            t.problem.as_ref().map(|p| p.code.as_str()),
+            Some("install.no_archive")
+        );
+        // The server adds the package: the download goes on.
+        let o = obs(None, Some(10), None, Some(1));
+        t.step(&o, &policy(), t0 + Duration::from_secs(610));
+        assert!(
+            t.problem
+                .as_ref()
+                .is_none_or(|p| p.code != "install.no_archive"),
+            "{:?}",
+            t.problem
+        );
+        assert_eq!(t.phase, Phase::Syncing);
     }
 
     #[test]

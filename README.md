@@ -226,6 +226,14 @@ again.
   player joined. Possible ways out:
   a fix in Wine/Proton, or the launcher writing `cfg/race.ini` `[REMOTE]` and starting `acs.exe`
   itself.
+- **Battlelog links on Linux (`bf3lan://`) — check at the LAN:** Battlefield 3's
+  `game_setup.cmd` registers the scheme in the game's prefix; the launcher reads it from the
+  prefix's `system.reg`, offers itself to the desktop for it (`mimeapps.list`, a hidden desktop
+  entry, `--open-url`) and runs the registered `BFUlauncher.exe` in the prefix. Checked on the VM:
+  the link reaches the launcher through `gio open`, and `BFUlauncher.exe` started Battlefield 3 to
+  its title screen. Not checked: a click in Battlelog against a real master server (Firefox as a
+  Flatpak goes through the desktop portal), joining a server, Battlefield 4/Hardline/BC2, a link
+  clicked while no launcher runs (it starts one, which opens the link), KDE.
 - **Dedicated servers on macOS/Linux — check at the LAN:** "Start server" runs a package's
   `server_start.cmd` in the game's prefix, or the server its profile names (`[server] exe`). Assetto
   Corsa's server (`acServer.exe`, through Wine's `cmd.exe`) ran on the VM in its console window

@@ -2,7 +2,7 @@
 
 import { api, listen } from "$lib/api";
 import { setByteUnits } from "$lib/format";
-import { setLanguage } from "$lib/i18n";
+import { setLanguage, userText } from "$lib/i18n";
 import { applyTheme, defaultTheme, builtinThemes } from "$lib/theme";
 import type { BootstrapInfo, EventBundle, GameStatus, GameView, LoadState, Settings, TransportHealth, Theme } from "$lib/types";
 
@@ -138,6 +138,11 @@ class AppStore {
       await listen("transport-rates", (payload) => {
         const rates = payload as { download_bps: number; upload_bps: number };
         if (this.health) this.health = { ...this.health, ...rates };
+      });
+      // A game's link (`bf3lan://`) that did not open: the click came from
+      // the browser, so the window is where the reason shows.
+      await listen("link-error", (payload) => {
+        this.toast("error", userText(payload));
       });
       await listen("catalog-updated", () => {
         // A failed read keeps what is shown; the next event reads again.

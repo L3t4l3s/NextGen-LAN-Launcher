@@ -639,6 +639,31 @@ pub fn server_plan(ctx: &LaunchContext<'_>) -> Result<Option<LaunchPlan>> {
     .map(Some)
 }
 
+/// A program of the game a link was registered for
+/// ([`super::url_protocol`]), run directly with the game's runner in its
+/// prefix, from its own folder: no `cmd.exe` in between, which would take
+/// a `&` in the link for the start of another command.
+pub fn url_plan(ctx: &LaunchContext<'_>, program: &Path, args: Vec<String>) -> Result<LaunchPlan> {
+    let platform = crate::manifest::Manifest::current_platform();
+    let spec = ctx.manifest.map(|m| m.launch_for(platform));
+    let wanted = spec.as_ref().map(|s| s.runner).unwrap_or(Runner::Auto);
+    if wanted == Runner::Native {
+        return Err(Error::Code("err.windows_only".into()));
+    }
+    let cwd = program
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| ctx.paths.local_dir.clone());
+    wine_plan(
+        ctx,
+        program.to_path_buf(),
+        args,
+        cwd,
+        wanted,
+        spec.map(|s| s.env).unwrap_or_default(),
+    )
+}
+
 /// Whether `plan` runs the game's start script ([`starts_through_script`]).
 pub fn is_script_start(plan: &LaunchPlan) -> bool {
     plan.args
