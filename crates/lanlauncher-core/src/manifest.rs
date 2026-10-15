@@ -198,6 +198,32 @@ pub struct Manifest {
     /// (`launch::setup_script`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub script_args: Vec<ScriptArgs>,
+    /// The dedicated server "Start server" runs on macOS and Linux in place
+    /// of the package's `server_start.cmd`.
+    #[serde(skip_serializing_if = "ServerSpec::is_empty")]
+    pub server: ServerSpec,
+}
+
+/// `[server]`: a dedicated server's own program, for a package whose
+/// `server_start.cmd` opens something that does not run under Wine
+/// (Assetto Corsa's manager, a WPF program). Run through Wine's `cmd.exe` in
+/// the game's prefix with the game's runner, from its own folder: the
+/// console window shows what the server says, and closing it ends the
+/// server, as on Windows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ServerSpec {
+    /// Relative to `local/`, found in any case.
+    pub exe: String,
+    /// Plain words only: they end up on a `cmd.exe` command line.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+}
+
+impl ServerSpec {
+    pub fn is_empty(&self) -> bool {
+        self.exe.is_empty()
+    }
 }
 
 /// `[[script_args]]`: what the start script's call of `exe` gets added.
@@ -323,6 +349,7 @@ impl Default for Manifest {
             platform: BTreeMap::new(),
             settings: Vec::new(),
             script_args: Vec::new(),
+            server: ServerSpec::default(),
         }
     }
 }
@@ -456,6 +483,20 @@ impl Manifest {
         }
         if !self.launch.exe.is_empty() && !is_safe_relative(&self.launch.exe) {
             return Err(err("launch.exe must be relative to local/"));
+        }
+        if !self.server.exe.is_empty() && !is_safe_relative(&self.server.exe) {
+            return Err(err("server.exe must be relative to local/"));
+        }
+        if self.server.exe.is_empty() && !self.server.args.is_empty() {
+            return Err(err("server.args without server.exe"));
+        }
+        if self.server.args.iter().any(|a| {
+            a.is_empty()
+                || !a
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-_.=+/:,".contains(c))
+        }) {
+            return Err(err("server.args: plain words only"));
         }
         if let Some(bad) = self.settings.iter().find_map(|s| s.kind().err()) {
             return Err(err(bad));
@@ -1205,6 +1246,14 @@ runner = "crossover"
             r#"to = "C:/Windows/x.ini""#,
         );
         assert!(Manifest::parse(&bad, Path::new("x.toml")).is_err());
+        let server =
+            |block: &str| Manifest::parse(&format!("{GOLDSRC}\n{block}"), Path::new("x.toml"));
+        let ok = server("[server]\nexe = \"server/acServer.exe\"\nargs = [\"-c\", \"cfg/a.ini\"]")
+            .unwrap();
+        assert_eq!(ok.server.exe, "server/acServer.exe");
+        assert!(server("[server]\nexe = \"../acServer.exe\"").is_err());
+        assert!(server("[server]\nexe = \"acServer.exe\"\nargs = [\"a&b\"]").is_err());
+        assert!(server("[server]\nargs = [\"x\"]").is_err());
         assert!(is_safe_relative("Among Us.exe"));
         assert!(is_safe_relative("bin\\x64\\game.exe"));
         assert!(!is_safe_relative("/abs"));

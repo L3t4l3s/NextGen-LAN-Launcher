@@ -319,11 +319,12 @@
         <button onclick={() => pause(true)} disabled={working || !busy}>{t("action.pause")}</button>
       {/if}
       <button onclick={openFolder} disabled={!game.shareDir}>📁 {t("action.open_folder")}</button>
-      <!-- ETI's keygen.exe and server_start.cmd are Windows programs. -->
+      <!-- ETI's keygen.exe is a Windows program; server_start.cmd runs in the
+           game's prefix elsewhere. -->
       {#if platform === "windows" && game.hasKeygen}
         <button onclick={() => runExtra("keygen")} disabled={working || !playable || app.bootstrap?.demo}>🔑 {t("action.keygen")}</button>
       {/if}
-      {#if platform === "windows" && game.hasServerScript}
+      {#if game.hasServerScript}
         <button onclick={() => runExtra("server")} disabled={working || !playable || app.bootstrap?.demo}>🖥 {t("action.server")}</button>
       {/if}
       <button class="danger" onclick={uninstall} disabled={working || !status || status.phase === "not_installed"}>{t("action.uninstall")}</button>

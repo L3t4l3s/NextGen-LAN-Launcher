@@ -84,11 +84,29 @@ pub enum Extra {
     Server,
 }
 
-/// Plan for a per-game extra. Both are Windows programs; on other platforms
-/// the UI does not offer them and this returns an error code.
+/// Plan for a per-game extra. Both are Windows programs. On macOS and Linux
+/// the server is the profile's (`[server]`, [`unix::server_plan`]) or else
+/// the server script, run like the start script through Wine's `cmd.exe` in
+/// the game's prefix with the game's runner (the server is mostly the game's
+/// own program, and a manager may need what the game's components put
+/// there); the script's files come from `setup_script::prepare` with
+/// `Script::Server` ([`unix::is_server_script`]). The keygen is offered on
+/// Windows only.
 pub fn extra_plan(extra: Extra, ctx: &LaunchContext<'_>) -> Result<LaunchPlan> {
     if !cfg!(target_os = "windows") {
-        return Err(Error::Code("err.windows_only".into()));
+        if extra == Extra::Server {
+            if let Some(plan) = unix::server_plan(ctx)? {
+                return Ok(plan);
+            }
+        }
+        return match extra {
+            Extra::Server if ctx.paths.server_script().is_file() => {
+                unix::script_plan(ctx, setup_script::Script::Server)?
+                    .ok_or_else(|| Error::Code("err.windows_only".into()))
+            }
+            Extra::Server => Err(Error::Code("err.extra_missing".into())),
+            Extra::Keygen => Err(Error::Code("err.windows_only".into())),
+        };
     }
     match extra {
         Extra::Keygen => {

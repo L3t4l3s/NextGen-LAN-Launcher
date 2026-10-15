@@ -1,5 +1,6 @@
 //! macOS/Linux: a game's ETI scripts, run inside the game's prefix —
-//! `game_setup.cmd` once, `game_start.cmd` at each start ([`Script`]).
+//! `game_setup.cmd` once, `game_start.cmd` at each start, `server_start.cmd`
+//! on request ([`Script`]).
 //!
 //! The setup script is what makes an ETI package complete: it writes the CD
 //! keys, the install paths and the player's profile into the registry, and
@@ -15,7 +16,7 @@
 //! [`filter`]. The filtered copy sits next to the original
 //! ([`Script::filtered_name`]), so `%~dp0` still is the game's folder.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Which of a game's ETI scripts runs in the prefix, and the files it gets
 /// in the game's folder: the filtered copy, and the one-line batch that
@@ -34,6 +35,9 @@ pub enum Script {
     /// (`player_settings::write_registry_script`); written by the launcher,
     /// not taken from the package.
     Settings,
+    /// `server_start.cmd`, the dedicated server some packages ship, started
+    /// from the game's details like on Windows.
+    Server,
 }
 
 impl Script {
@@ -43,6 +47,7 @@ impl Script {
             Script::Start => ".nll-start.cmd",
             Script::Preparation => ".nll-prep.cmd",
             Script::Settings => ".nll-settings.cmd",
+            Script::Server => ".nll-server.cmd",
         }
     }
 
@@ -52,15 +57,17 @@ impl Script {
             Script::Start => ".nll-start-run.cmd",
             Script::Preparation => ".nll-prep-run.cmd",
             Script::Settings => ".nll-settings-run.cmd",
+            Script::Server => ".nll-server-run.cmd",
         }
     }
 
     /// The package's script this one is made from; none for the settings,
     /// which the launcher writes itself.
-    fn source(self, paths: &crate::paths::GamePaths) -> Option<&Path> {
+    fn source(self, paths: &crate::paths::GamePaths) -> Option<PathBuf> {
         match self {
-            Script::Setup => Some(&paths.setup_script),
-            Script::Start | Script::Preparation => Some(&paths.start_script),
+            Script::Setup => Some(paths.setup_script.clone()),
+            Script::Start | Script::Preparation => Some(paths.start_script.clone()),
+            Script::Server => Some(paths.server_script()),
             Script::Settings => None,
         }
     }
@@ -846,12 +853,13 @@ pub fn prepare(
             Some(part) => part,
             None => return Ok(None),
         },
-        Script::Setup | Script::Start | Script::Settings => text,
+        Script::Setup | Script::Start | Script::Settings | Script::Server => text,
     };
     let filtered = match script {
         // Only a whole start script starts the game with what it asked:
         // a preparation's variables end with its own cmd.
         Script::Start => with_screen_query(with_arguments(filter(&text), extra)),
+        Script::Server => with_screen_query(filter(&text)),
         Script::Setup | Script::Preparation | Script::Settings => filter(&text),
     };
     write_if_changed(
@@ -1316,6 +1324,40 @@ mod tests {
         assert!(copy.starts_with("cd /d \"%~dp0\"\r\nrem "));
         assert!(
             std::fs::read_to_string(paths.share_dir.join(Script::Setup.wrapper_name()))
+                .unwrap()
+                .contains("%NLL_SCRIPT%")
+        );
+    }
+
+    /// Assetto Corsa's shape: into the server's folder, its manager started,
+    /// a stray word after it; the files of their own beside the start's.
+    #[test]
+    fn prepare_writes_the_server_script_beside_the_start_script() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::paths::GamePaths::new(dir.path(), "assetto");
+        assert_eq!(
+            prepare(&paths, Script::Server, "assetto", "de", &[], &[]).unwrap(),
+            None
+        );
+        std::fs::create_dir_all(&paths.share_dir).unwrap();
+        std::fs::write(
+            paths.server_script(),
+            "setlocal EnableDelayedExpansion\r\ncd /d \"%~dp0\"\r\n\r\ncd local\r\ncd server \r\n\"acServerManager.exe\"\r\nexit",
+        )
+        .unwrap();
+        let skipped = prepare(&paths, Script::Server, "assetto", "de", &[], &[])
+            .unwrap()
+            .unwrap();
+        assert!(skipped.is_empty());
+        let copy =
+            std::fs::read_to_string(paths.share_dir.join(Script::Server.filtered_name())).unwrap();
+        assert!(copy.contains("\"acServerManager.exe\""));
+        assert_ne!(
+            Script::Server.filtered_name(),
+            Script::Start.filtered_name()
+        );
+        assert!(
+            std::fs::read_to_string(paths.share_dir.join(Script::Server.wrapper_name()))
                 .unwrap()
                 .contains("%NLL_SCRIPT%")
         );

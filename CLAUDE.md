@@ -397,7 +397,7 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   Optionen (`--safe-graphics`, `--demo`) bittet den laufenden Launcher zu beenden (`Ask::Replace`)
   und übernimmt — sonst käme `--safe-graphics` nach einem weißen Fenster nie an, denn das
   Schließen hat den Launcher nur versteckt. Befehle von der Kommandozeile (`--install <id>`,
-  `--play`, `--uninstall`, `--components`, `--status`, `lanlauncher_core::control`) gehen unter
+  `--play`, `--uninstall`, `--components`, `--server`, `--status`, `lanlauncher_core::control`) gehen unter
   Linux als Zeile über denselben Socket (`instance::send`, Antwort `ok`/`err` + Ausgabe, eigener
   Thread pro Befehl, damit „show“ nicht wartet) und laufen in `src-tauri/src/control.rs` durch
   dieselben Commands wie die Knöpfe; unter Windows/macOS reicht das Plugin nur `argv` weiter, die

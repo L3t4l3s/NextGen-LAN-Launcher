@@ -74,7 +74,8 @@ pub struct GameView {
     /// `keygen.exe` present in the game folder (ETI packages with a key
     /// generator); the UI offers a button only then.
     pub has_keygen: bool,
-    /// `server_start.cmd` present (dedicated server script).
+    /// `server_start.cmd` present (dedicated server script), or on macOS and
+    /// Linux a server the profile names (`[server]`).
     pub has_server_script: bool,
 }
 
@@ -244,7 +245,11 @@ pub async fn get_games(state: State<'_, Arc<AppState>>) -> Cmd<Vec<GameView>> {
                 .as_ref()
                 .map(|p| p.share_dir.to_string_lossy().to_string()),
             has_keygen: paths.as_ref().and_then(|p| p.keygen()).is_some(),
-            has_server_script: paths.as_ref().is_some_and(|p| p.server_script().is_file()),
+            has_server_script: paths.as_ref().is_some_and(|p| {
+                p.server_script().is_file()
+                    || (!cfg!(target_os = "windows")
+                        && manifest.as_ref().is_some_and(|m| !m.server.is_empty()))
+            }),
         });
     }
     Ok(out)
@@ -893,7 +898,9 @@ pub async fn play_game(
 
 /// Start a per-game extra (`keygen.exe`, `server_start.cmd`) that an ETI
 /// package ships next to the game. Offered by the UI only when the file
-/// exists; Windows only like the scripts themselves.
+/// exists: both on Windows, the server script on macOS and Linux too, in the
+/// game's prefix with the game's runner (the profile and the runner chosen
+/// for the game decide, as for a start).
 #[tauri::command]
 pub async fn run_extra(
     state: State<'_, Arc<AppState>>,
@@ -908,15 +915,49 @@ pub async fn run_extra(
         .library
         .game_paths(&game_id)
         .ok_or("err.no_library")?;
-    let ctx = LaunchContext {
-        paths: &paths,
-        game_id: &game_id,
-        settings: &settings,
-        manifest: None,
-        receipt: None,
-        alternative: None,
+    // Windows: the package's own programs, nothing of the game's profile or
+    // prefix involved.
+    let mut existed_before = false;
+    let _starting;
+    let mut plan = if cfg!(target_os = "windows") {
+        let ctx = LaunchContext {
+            paths: &paths,
+            game_id: &game_id,
+            settings: &settings,
+            manifest: None,
+            receipt: None,
+            alternative: None,
+        };
+        launch::extra_plan(extra, &ctx).map_err(err)?
+    } else {
+        // macOS/Linux: the server runs in the game's prefix with its
+        // runner, so it is held like a start (`play_game`): not into a
+        // prefix being filled or a game being set up, repaired or removed;
+        // the setup caught up first; the prefix recorded as the game's.
+        _starting = GameUse::claim(&state.prefix_use, &game_id)?;
+        let (plan, manifest) =
+            with_launch_context(&state, &game_id, None, Some(paths.clone()), move |ctx| {
+                launch::extra_plan(extra, ctx)
+            })
+            .await?;
+        if prefix_being_filled(&state, &plan) {
+            return Err("err.components_busy_game".into());
+        }
+        existed_before = launch::unix::own_prefix_exists_before_start(&plan, &paths, &game_id);
+        crate::wine_setup::catch_up(state.inner(), &game_id, &plan).await?;
+        // The profile's values before a server too: Assetto Corsa's server
+        // must not insist on Kunos' lobby, or it ends after five attempts.
+        // What cannot be written is no reason not to start the server.
+        if let Err(e) =
+            crate::player::apply(state.inner(), &game_id, &paths, manifest.as_ref(), None).await
+        {
+            log::warn!("server {game_id}: profile values not set: {e}");
+        }
+        plan
     };
-    let plan = launch::extra_plan(extra, &ctx).map_err(err)?;
+    if launch::unix::is_server_script(&plan) {
+        crate::wine_setup::prepare_server(state.inner(), &game_id, &paths, &mut plan).await?;
+    }
     let attempt =
         crate::state::LaunchAttempt::new(&game_id, &game_id, &format!("{extra:?}"), &plan);
     log::info!(
@@ -933,11 +974,15 @@ pub async fn run_extra(
         Some(&log),
     )
     .await;
-    state
+    let pid = state
         .inner()
         .record_launch(attempt, Some(log), outcome)
         .await
-        .map_err(err)
+        .map_err(err)?;
+    if cfg!(not(windows)) {
+        crate::wine_setup::remember_prefix(plan, paths, game_id, existed_before).await;
+    }
+    Ok(pid)
 }
 
 /// Run a game's `game_setup.cmd` again, with its output captured.

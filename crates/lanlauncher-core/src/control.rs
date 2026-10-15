@@ -1,6 +1,6 @@
 //! Commands for the running launcher from the command line:
 //! `nextgen-lan-launcher --install <id>`, `--uninstall <id>`, `--play <id>`,
-//! `--components <id>`, `--status [<id>]`.
+//! `--components <id>`, `--server <id>`, `--status [<id>]`.
 //!
 //! They do what the buttons do, through the same code, in the launcher that
 //! is already running with its sync engine — a second launcher next to it
@@ -22,6 +22,9 @@ pub enum Command {
     },
     /// Install the profile's Windows components (winetricks), as the button.
     Components(String),
+    /// Start the package's dedicated server (`server_start.cmd`), as the
+    /// button.
+    Server(String),
     /// Every game the launcher tracks, or one.
     Status(Option<String>),
 }
@@ -45,7 +48,7 @@ impl Command {
         let at = args.iter().position(|a| {
             matches!(
                 *a,
-                "--install" | "--uninstall" | "--play" | "--components" | "--status"
+                "--install" | "--uninstall" | "--play" | "--components" | "--server" | "--status"
             )
         })?;
         // A command goes to the launcher that is running; options for a
@@ -69,6 +72,7 @@ impl Command {
             "--install" => game(id).map(Command::Install),
             "--uninstall" => game(id).map(Command::Uninstall),
             "--components" => game(id).map(Command::Components),
+            "--server" => game(id).map(Command::Server),
             "--play" => game(id).map(|game_id| Command::Play {
                 game_id,
                 skip_components: args.contains(&"--skip-components"),
@@ -86,6 +90,7 @@ impl Command {
             Command::Install(id) => format!("install {id}"),
             Command::Uninstall(id) => format!("uninstall {id}"),
             Command::Components(id) => format!("components {id}"),
+            Command::Server(id) => format!("server {id}"),
             Command::Play {
                 game_id,
                 skip_components,
@@ -111,6 +116,7 @@ impl Command {
             ["install", _] => id(1).map(Command::Install),
             ["uninstall", _] => id(1).map(Command::Uninstall),
             ["components", _] => id(1).map(Command::Components),
+            ["server", _] => id(1).map(Command::Server),
             ["play", _] => id(1).map(|game_id| Command::Play {
                 game_id,
                 skip_components: false,
@@ -161,6 +167,7 @@ mod tests {
             Command::Install("cod2".into()),
             Command::Uninstall("cod2".into()),
             Command::Components("assetto".into()),
+            Command::Server("assetto".into()),
             Command::Play {
                 game_id: "flat2".into(),
                 skip_components: false,

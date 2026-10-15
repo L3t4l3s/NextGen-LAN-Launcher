@@ -509,6 +509,31 @@ pub(crate) async fn prepare_start(
     Ok(())
 }
 
+/// Before a dedicated server through the package's `server_start.cmd`: its
+/// filtered copy and wrapper in the game's folder, and the find and replace
+/// for its `fnr.exe` calls, as before a start through the start script.
+pub(crate) async fn prepare_server(
+    state: &Arc<AppState>,
+    game_id: &str,
+    paths: &GamePaths,
+    plan: &mut LaunchPlan,
+) -> Result<(), String> {
+    let lang = state.settings.read().await.game_language.clone();
+    let prepared = {
+        let (paths, game_id) = (paths.clone(), game_id.to_string());
+        tauri::async_runtime::spawn_blocking(move || {
+            setup_script::prepare(&paths, Script::Server, &game_id, &lang, &[], &[])
+                .map_err(|e| format!("err.start_write|{}: {e}", paths.share_dir.display()))
+        })
+        .await
+        .map_err(|e| format!("err.start_write|{e}"))??
+    };
+    let skipped = prepared.ok_or("err.extra_missing")?;
+    log_skipped(game_id, "server", &skipped);
+    with_fnr(state, plan).await;
+    Ok(())
+}
+
 /// `plan` with [`launch::fnr::VAR`] naming the launcher's find and replace,
 /// which the scripts' `fnr.exe` calls became. Without it (the folder cannot
 /// be written) those calls fail as they would have before, and the script

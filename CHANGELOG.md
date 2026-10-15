@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.6.0
+
+- „Server starten“ gibt es jetzt auch unter Linux und macOS: `server_start.cmd` läuft wie das
+  Startskript im Prefix des Spiels, oder ein Profil nennt den Server selbst (`[server] exe`), wenn
+  das Skript etwas öffnet, das unter Wine nicht läuft. Neu auf der Kommandozeile: `--server <id>`.
+  Vor dem Serverstart setzt der Launcher dort die Werte des Profils und holt ein ausstehendes
+  Setup nach; ein Server startet nicht in einen Prefix, der gerade befüllt wird. Unter Windows
+  bleibt „Server starten“, wie es war.
+- Assetto Corsa: „Server starten“ startet unter Linux `acServer.exe` in einem Konsolenfenster
+  (Kunos' Server-Manager stürzt unter Wine ab, die Einstellungen stehen in
+  `server/cfg/server_cfg.ini`). Das Profil setzt `REGISTER_TO_LOBBY=0`: Mit dem Wert aus dem
+  Paket meldet sich der Server bei Kunos' Internet-Lobby an und beendet sich nach fünf
+  Fehlversuchen selbst, auf einer LAN also nach wenigen Minuten. Unter Windows setzt erst der
+  nächste Spielstart den Wert, und ob Kunos' Manager ihn beim Serverstart wieder überschreibt, ist
+  ungetestet. Auf der VM geprüft, Beitritt eines Spielers noch ungetestet.
+
 ## 0.5.1
 
 - Startprofil für Battlefield 1942: Das Menü ist jetzt deutsch (ETIs Startskript schreibt

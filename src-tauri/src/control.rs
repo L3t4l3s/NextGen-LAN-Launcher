@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
 /// Carry out `command` and say what came of it: the start's process id for
-/// `play`, the report for `components`, one JSON line per game for `status`,
+/// `play` and `server`, the report for `components`, one JSON line per game for `status`,
 /// nothing for `install`/`uninstall` (their progress shows in `status`).
 /// Errors are the commands' codes (`err.components_needed|dotnet48`).
 pub fn run(app: &tauri::AppHandle, command: Command) -> Result<String, String> {
@@ -32,6 +32,11 @@ pub fn run(app: &tauri::AppHandle, command: Command) -> Result<String, String> {
             } => commands::play_game(state, game_id, None, None, Some(skip_components))
                 .await
                 .map(|pid| format!("{pid}\n")),
+            Command::Server(id) => {
+                commands::run_extra(state, id, lanlauncher_core::launch::Extra::Server)
+                    .await
+                    .map(|pid| format!("{pid}\n"))
+            }
             Command::Components(id) => commands::install_components(state, id, false, None)
                 .await
                 .and_then(|report| json_line(&report)),

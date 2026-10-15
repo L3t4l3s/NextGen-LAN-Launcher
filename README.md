@@ -170,6 +170,7 @@ nextgen-lan-launcher --install <id>        # as "Install": register the share, t
 nextgen-lan-launcher --status [<id>]       # one JSON line per tracked game (phase, progress, problem)
 nextgen-lan-launcher --play <id> [--skip-components]   # prints the process id
 nextgen-lan-launcher --components <id>     # the profile's winetricks verbs; waits until done
+nextgen-lan-launcher --server <id>         # as "Start server"; prints the process id
 nextgen-lan-launcher --uninstall <id>
 ```
 
@@ -218,6 +219,16 @@ again.
   Proton 11 on the VM (`manifests/bf1942.toml`). The game starts without a CD key in the registry
   (ETI sets none either; the package's `local/game_setup.cmd` is not run); check at a LAN whether
   a server takes the players.
+- **Dedicated servers on macOS/Linux — check at the LAN:** "Start server" runs a package's
+  `server_start.cmd` in the game's prefix, or the server its profile names (`[server] exe`). Assetto
+  Corsa's server (`acServer.exe`, through Wine's `cmd.exe`) ran on the VM in its console window
+  with `REGISTER_TO_LOBBY=0` from the profile (with the package's 1 it ends itself after five failed
+  lobby attempts, on Windows too). Not checked: a client joining it, that closing the console
+  window ends it, a script-only server, macOS, a server beside the game in the same prefix inside
+  the Steam Linux Runtime (its `waitforexitandrun` may hold the second start until the first
+  ends; the runtime is not installed on the VM), whether Kunos' manager on Windows writes the
+  lobby setting back. Kunos' server manager (WPF) does not start under Wine; the server's
+  settings are its `cfg/*.ini`.
 - **Command-line commands on Windows and macOS — untested:** `--install <id>` and the others reach
   the running launcher through `tauri-plugin-single-instance` there; checked on Linux only (demo
   mode). Check that a second start with a command carries it out and logs the outcome.

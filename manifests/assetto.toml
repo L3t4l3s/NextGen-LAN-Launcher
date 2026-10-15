@@ -23,6 +23,17 @@ args = []
 proton = "ge"
 winetricks = ["dotnet48"]
 
+# "Start server": the package's server_start.cmd opens Kunos' server manager
+# (acServerManager.exe, WPF), which ends at once under Wine ("Initialization
+# of 'System.Windows.Controls.TextBlock' threw an exception" in
+# server/errors.log; Consolas and corefonts did not help). The server itself
+# runs, in a console window; its settings are server/cfg/server_cfg.ini and
+# entry_list.ini, which the manager would otherwise write. The package's
+# server/acServer is Kunos' Linux build, but it would run without a window to
+# close it by.
+[server]
+exe = "server/acServer.exe"
+
 [setup.platform_notes.linux]
 de = "Braucht GE-Proton (z. B. über ProtonPlus installieren). Mit Valves Proton lässt sich .NET 4.8 nicht installieren, der Assetto-Launcher startet dann nicht."
 en = "Needs GE-Proton (install it with ProtonPlus, for one). Valve's Proton cannot install .NET 4.8, and Assetto's launcher does not start without it."
@@ -65,3 +76,15 @@ value = { de = "german", en = "english" }
 # Corsa/cfg/launcher.ini [WINDOW] LANGUAGE). A launcher.ini without the
 # launcher's own LASTVER makes it warn of a folder from another version and
 # offer to delete everything in it, settings and saves included.
+
+# The server registers with Kunos' lobby on the internet and ends itself
+# after five failed attempts ("LOBBY COULD NOT BE RACHED, SHUTTING SERVER
+# DOWN", after about five minutes), which at a LAN without port forwarding is
+# always (on Windows too). Set before every start of the game, and on macOS
+# and Linux of the server; on Windows the package's manager starts the server
+# and may write its own value.
+[[settings]]
+file = "server/cfg/server_cfg.ini"
+section = "SERVER"
+key = "REGISTER_TO_LOBBY"
+value = "0"

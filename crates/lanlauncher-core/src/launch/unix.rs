@@ -600,11 +600,58 @@ pub fn script_plan(ctx: &LaunchContext<'_>, script: Script) -> Result<Option<Lau
     .map(Some)
 }
 
+/// The profile's dedicated server (`[server]`): `cmd.exe /c <exe> …` with
+/// the game's runner, in its prefix, from the server's folder (by its name:
+/// cmd strips the quotes of a `/c` path holding `(` or `&`). `None` when the
+/// profile names none; an error when the file is not there, or for a game
+/// that does not run through Wine.
+pub fn server_plan(ctx: &LaunchContext<'_>) -> Result<Option<LaunchPlan>> {
+    let Some(server) = ctx.manifest.map(|m| &m.server).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let exe = crate::paths::find_ignoring_case(&ctx.paths.local_dir, &server.exe)
+        .filter(|p| p.is_file())
+        .ok_or_else(|| Error::Code(format!("err.extra_missing|{}", server.exe)))?;
+    let platform = crate::manifest::Manifest::current_platform();
+    let spec = ctx.manifest.map(|m| m.launch_for(platform));
+    let wanted = spec.as_ref().map(|s| s.runner).unwrap_or(Runner::Auto);
+    if wanted == Runner::Native {
+        return Err(Error::Code("err.windows_only".into()));
+    }
+    let name = exe
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let cwd = exe
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| ctx.paths.local_dir.clone());
+    let mut args = vec!["/c".to_string(), name];
+    args.extend(server.args.iter().cloned());
+    wine_plan(
+        ctx,
+        PathBuf::from("cmd.exe"),
+        args,
+        cwd,
+        wanted,
+        spec.map(|s| s.env).unwrap_or_default(),
+    )
+    .map(Some)
+}
+
 /// Whether `plan` runs the game's start script ([`starts_through_script`]).
 pub fn is_script_start(plan: &LaunchPlan) -> bool {
     plan.args
         .last()
         .is_some_and(|a| a == Script::Start.wrapper_name())
+}
+
+/// Whether `plan` runs the package's `server_start.cmd` ([`Script::Server`]),
+/// whose files have to be written first.
+pub fn is_server_script(plan: &LaunchPlan) -> bool {
+    plan.args
+        .last()
+        .is_some_and(|a| a == Script::Server.wrapper_name())
 }
 
 /// The prefix a plan runs in, as one string to compare: the CrossOver
