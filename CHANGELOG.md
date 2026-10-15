@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.6.1
+
+- Assetto Corsa: Dokumentiert (Profilkommentar, offene Punkte), dass die LAN-Serversuche unter
+  Wine nicht funktioniert; am Verhalten ändert sich nichts.
+  Assettos Launcher setzt auf jedem Such-Socket eine UDP-Option, die Wine nicht kennt, und bricht
+  ab, bevor er etwas sendet. Linux-Spieler finden deshalb über die Suche keinen LAN-Server; ein Server
+  unter Linux funktioniert, ein Windows-Spieler ist beigetreten.
+
 ## 0.6.0
 
 - „Server starten“ gibt es jetzt auch unter Linux und macOS: `server_start.cmd` läuft wie das

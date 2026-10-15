@@ -2,11 +2,20 @@ schema = 1
 id = "assetto"
 title = "Assetto Corsa"
 revisions = ["20180217"]
-source = "NextGen LAN Launcher: start script, launcher and a race checked with GE-Proton 11-7 (2026-10); multiplayer unchecked"
+source = "NextGen LAN Launcher: start script, launcher, a race and the dedicated server checked with GE-Proton 11-7 (2026-10); the LAN server search does not work under Wine"
 script_start_checked = ["linux"]
 
 [tested_with]
 linux = ["GE-Proton11-7"]
+
+# Joining a LAN server does not work under Wine: the launcher's LAN search
+# (Online > LAN session) sets UDP_NOCHECKSUM (setsockopt level IPPROTO_UDP)
+# on each of its sockets, which Wine does not know ("Unknown level:
+# 0x00000011" with WINEDEBUG=+winsock), and gives up before it sends
+# anything; its log says "LAN scan start" and never "LAN scan end". The
+# launcher has no way to enter an address. The server itself answers the
+# search (a byte 200 to its UDP port, 9000 to 10000, answered with 200 and its
+# HTTP port), and a Windows player joined it.
 
 [launch]
 # No entry point of its own: the package's game_start.cmd starts

@@ -219,6 +219,13 @@ again.
   Proton 11 on the VM (`manifests/bf1942.toml`). The game starts without a CD key in the registry
   (ETI sets none either; the package's `local/game_setup.cmd` is not run); check at a LAN whether
   a server takes the players.
+- **Assetto Corsa: no LAN servers found under Wine — Wine bug:** the game's launcher sets
+  `UDP_NOCHECKSUM` (`setsockopt`, level `IPPROTO_UDP`) on each socket of its LAN search; Wine does
+  not know the level and the search ends before it sends anything (traced with GE-Proton 11-7).
+  A Linux player cannot join through the launcher's LAN search; hosting on Linux works, a Windows
+  player joined. Possible ways out:
+  a fix in Wine/Proton, or the launcher writing `cfg/race.ini` `[REMOTE]` and starting `acs.exe`
+  itself.
 - **Dedicated servers on macOS/Linux — check at the LAN:** "Start server" runs a package's
   `server_start.cmd` in the game's prefix, or the server its profile names (`[server] exe`). Assetto
   Corsa's server (`acServer.exe`, through Wine's `cmd.exe`) ran on the VM in its console window
