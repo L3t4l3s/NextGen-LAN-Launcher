@@ -14,6 +14,11 @@ use std::time::Duration;
 /// all the same.
 const REGISTRY_LIMIT: Duration = Duration::from_secs(60);
 
+/// How long the registry run waits for the prefix to come free before it
+/// takes the game for running: what ran there just before goes within a
+/// second or two.
+const IN_USE_GRACE: Duration = Duration::from_secs(5);
+
 /// Making a prefix the first time takes longer: Wine sets up the whole
 /// Windows folder tree, and Proton copies its files in.
 const PREFIX_LIMIT: Duration = Duration::from_secs(300);
@@ -209,9 +214,18 @@ async fn set_in_prefix(
 ) -> Result<(), String> {
     let claim = SetupClaim::claim(state, game_id, held_by_caller)?;
     // Not beside a running copy of the game: its registry is in use.
+    // What ran in the prefix just before (the start script's preparation)
+    // may take a moment to go; a game that runs stays.
     if let Ok(target) = launch::winetricks::target(&plan) {
         let in_use = tauri::async_runtime::spawn_blocking(move || {
-            launch::winetricks::prefix_in_use(&target)
+            let until = std::time::Instant::now() + IN_USE_GRACE;
+            loop {
+                let in_use = launch::winetricks::prefix_in_use(&target);
+                if !in_use || std::time::Instant::now() >= until {
+                    break in_use;
+                }
+                std::thread::sleep(Duration::from_millis(500));
+            }
         })
         .await
         .unwrap_or(false);

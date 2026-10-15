@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 
 const LOCK: &str = "instance.lock";
 const SOCKET: &str = "instance.sock";
+const VERSION: &str = "instance.version";
 const SHOW: &str = "show";
 const QUIT: &str = "quit";
 
@@ -59,6 +60,10 @@ pub enum Ask {
     /// Quit, this start takes over: it carries arguments (`--safe-graphics`,
     /// `--demo`) the running one never read.
     Replace,
+    /// Quit unless you are this version, which then shows its window — an
+    /// update started beside an older launcher. Asked again while waiting:
+    /// after a double click the other start may already be this version.
+    Update(&'static str),
     /// Nothing while the given process lives — the graphics ladder's
     /// successor: its predecessor still holds the lock for a second or two
     /// and would answer "shown" for a window that is about to go. It waits
@@ -73,6 +78,40 @@ pub enum Ask {
 pub struct Instance {
     _lock: File,
     listener: UnixListener,
+}
+
+/// The running launcher's version, as [`announce_version`] wrote it; `None`
+/// when no launcher wrote one (0.6.1 and older wrote none), or when the one
+/// that wrote it is gone — an older launcher running after it writes none.
+///
+/// A start of another version replaces the running launcher rather than
+/// showing its window: an update downloaded and started while the old one
+/// sat in the tray only brought the old one back, with the old profiles.
+pub fn running_version(dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(dir.join(VERSION)).ok()?;
+    let (version, pid) = text.trim().split_once(' ')?;
+    let pid = pid.trim().parse().ok()?;
+    (alive(pid) && !version.is_empty()).then(|| version.to_string())
+}
+
+/// Whether `version` is newer than `running` (`0.6.10` after `0.6.9`); a
+/// version that is not numbers counts as newer, so it is never stuck behind
+/// one it cannot compare with.
+pub fn is_newer(version: &str, running: &str) -> bool {
+    let numbers = |v: &str| -> Option<Vec<u64>> { v.split('.').map(|n| n.parse().ok()).collect() };
+    match (numbers(version), numbers(running)) {
+        (Some(new), Some(old)) => new > old,
+        _ => version != running,
+    }
+}
+
+/// Say which version the launcher holding the lock in `dir` is; for
+/// [`running_version`]. Written once the claim made this process the
+/// launcher, through a temporary file so that a start never reads half.
+pub fn announce_version(dir: &Path, version: &str) -> std::io::Result<()> {
+    let temporary = dir.join(format!("{VERSION}.{}", std::process::id()));
+    std::fs::write(&temporary, format!("{version} {}", std::process::id()))?;
+    std::fs::rename(&temporary, dir.join(VERSION))
 }
 
 /// `$XDG_RUNTIME_DIR/<app id>`, which belongs to the user and is cleared at
@@ -136,6 +175,15 @@ pub fn claim(dir: &Path, ask: Ask, wait: Duration) -> std::io::Result<Start> {
         Ask::Replace => {
             request(&socket, QUIT, ANSWER_WITHIN);
         }
+        Ask::Update(version) => {
+            if running_version(dir).as_deref() == Some(version) {
+                if request(&socket, SHOW, ANSWER_WITHIN) {
+                    return Ok(Start::Handed);
+                }
+            } else {
+                request(&socket, QUIT, ANSWER_WITHIN);
+            }
+        }
         Ask::AfterExitOf(_) => {}
     }
     let until = Instant::now() + wait;
@@ -156,6 +204,8 @@ pub fn claim(dir: &Path, ask: Ask, wait: Duration) -> std::io::Result<Start> {
         let what = match ask {
             Ask::Show => Some(SHOW),
             Ask::Replace => Some(QUIT),
+            Ask::Update(version) if running_version(dir).as_deref() == Some(version) => Some(SHOW),
+            Ask::Update(_) => Some(QUIT),
             Ask::AfterExitOf(pid) => (!alive(pid)).then_some(SHOW),
         };
         if let Some(what) = what {
@@ -586,6 +636,24 @@ mod tests {
         assert!(in_gamescope(env(&[("XDG_CURRENT_DESKTOP", "gamescope")])));
         assert!(!in_gamescope(env(&[("XDG_CURRENT_DESKTOP", "KDE")])));
         assert!(!in_gamescope(env(&[])));
+    }
+
+    #[test]
+    fn the_running_version_is_what_the_launcher_announced() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(running_version(dir.path()), None);
+        announce_version(dir.path(), "0.6.2").unwrap();
+        assert_eq!(running_version(dir.path()).as_deref(), Some("0.6.2"));
+        // Written by a launcher that is gone: an older one runs now.
+        let mut gone = std::process::Command::new("true").spawn().unwrap();
+        let pid = gone.id();
+        gone.wait().unwrap();
+        std::fs::write(dir.path().join(VERSION), format!("0.6.2 {pid}")).unwrap();
+        assert_eq!(running_version(dir.path()), None);
+        assert!(is_newer("0.6.10", "0.6.9"));
+        assert!(!is_newer("0.6.1", "0.6.2"));
+        assert!(!is_newer("0.6.2", "0.6.2"));
+        assert!(is_newer("0.7.0-dev", "0.6.2"));
     }
 
     #[test]

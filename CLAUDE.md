@@ -394,7 +394,11 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   auf die Sperre und fragt erst, wenn der Vorgänger (`NLL_GRAPHICS_PREDECESSOR`, PID) weg ist —
   nicht über `getppid`, im AppImage ist der Elternprozess die AppImage-Laufzeit. Ein Launcher, der gerade beendet (`tray::QUITTING`),
   antwortet „busy“; der neue Start wartet dann auf die Sperre und übernimmt. Ein Start mit eigenen
-  Optionen (`--safe-graphics`, `--demo`) bittet den laufenden Launcher zu beenden (`Ask::Replace`)
+  Optionen (`--safe-graphics`, `--demo`) bittet den laufenden Launcher zu beenden (`Ask::Replace`),
+  ein Start einer neueren Version ebenso (`Ask::Update`: `instance.version` neben der Sperre mit
+  Version und PID, `instance::running_version`; fehlt die Datei oder lebt die PID nicht mehr, gilt
+  der laufende als älter; beim Warten wird neu gelesen, damit ein Doppelklick den gerade gestarteten
+  neuen Launcher nicht wieder beendet; eine ältere Version zeigt nur das Fenster der neueren)
   und übernimmt — sonst käme `--safe-graphics` nach einem weißen Fenster nie an, denn das
   Schließen hat den Launcher nur versteckt. Befehle von der Kommandozeile (`--install <id>`,
   `--play`, `--uninstall`, `--components`, `--server`, `--status`, `lanlauncher_core::control`) gehen unter

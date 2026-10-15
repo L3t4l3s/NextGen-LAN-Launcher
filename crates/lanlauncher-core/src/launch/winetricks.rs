@@ -533,11 +533,15 @@ fn host_var(name: &str) -> String {
 
 /// Wine's own processes, which outlive a game or a run by a few seconds
 /// (`wineserver` waits before it goes), and those of the Steam Linux
-/// Runtime's container around them (`pv-adverb` stays as long as they do).
+/// Runtime's container around them (`pv-adverb` stays as long as they do),
+/// and Proton's `steam.exe`, which starts the program, and `xalia.exe`, its
+/// accessibility helper: both outlive a short run (a start script's
+/// preparation) by a moment — long enough to leave a profile's registry
+/// values unset right after it (Battlefield 1942, Proton 11).
 /// A running game always has a process of its own besides them.
 /// Linux keeps 15 characters of a name: `winemenubuilder.exe` shows as
 /// `winemenubuilder`.
-const WINE_SYSTEM: [&str; 21] = [
+const WINE_SYSTEM: [&str; 23] = [
     "wineserver",
     "wineserver64",
     "services.exe",
@@ -552,6 +556,8 @@ const WINE_SYSTEM: [&str; 21] = [
     "start.exe",
     "rundll32.exe",
     "tabtip.exe",
+    "steam.exe",
+    "xalia.exe",
     "_v2-entry-point",
     "pressure-vessel-wrap",
     "pressure-vessel-adverb",

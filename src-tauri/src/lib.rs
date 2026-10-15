@@ -1396,7 +1396,9 @@ fn send_command(command: Result<lanlauncher_core::control::Command, String>) -> 
 /// moment longer and would answer for a window that is about to go. It waits
 /// for the lock instead, which the predecessor gives up within seconds. A
 /// start with options of its own (`--safe-graphics` after a white window,
-/// `--demo`) replaces the running launcher, which never read them; the
+/// `--demo`) replaces the running launcher, which never read them, and so
+/// does a start of another version (`instance::running_version`): an update
+/// started beside the old launcher in the tray only showed the old one. The
 /// wait covers its sync engine shutting down (up to 10 s).
 #[cfg(target_os = "linux")]
 fn claim_the_launcher() -> bool {
@@ -1418,11 +1420,23 @@ fn claim_the_launcher() -> bool {
             .any(|a| matches!(a.as_str(), "--safe-graphics" | "--no-safe-graphics"))
     {
         Ask::Replace
+    } else if instance::running_version(&dir)
+        .is_none_or(|running| instance::is_newer(env!("CARGO_PKG_VERSION"), &running))
+    {
+        // An update next to an older launcher (or one from before versions
+        // were announced): showing it would keep its profiles and fixes. An
+        // older AppImage started by mistake only shows the newer launcher.
+        // Without a running launcher the lock is free and this is the
+        // launcher anyway.
+        Ask::Update(env!("CARGO_PKG_VERSION"))
     } else {
         Ask::Show
     };
     match instance::claim(&dir, ask, Duration::from_secs(20)) {
         Ok(Start::Primary(guard)) => {
+            if let Err(e) = instance::announce_version(&dir, env!("CARGO_PKG_VERSION")) {
+                let _ = INSTANCE_NOTE.set(format!("cannot write the launcher's version: {e}"));
+            }
             guard.serve(
                 || match LAUNCHER_HANDLE.get() {
                     Some(app) => {
@@ -1438,7 +1452,7 @@ fn claim_the_launcher() -> bool {
                     // still starting is seen by one of the two.
                     tray::QUITTING.store(true, std::sync::atomic::Ordering::SeqCst);
                     if let Some(app) = LAUNCHER_HANDLE.get() {
-                        log::info!("launcher started again with new options; quitting for it");
+                        log::info!("launcher started again with new options or as another version; quitting for it");
                         app.exit(0);
                     }
                 },
@@ -1724,7 +1738,7 @@ pub fn run() {
                 // Leaving before any state or service exists: the sync
                 // engine is not started just to be stopped again.
                 if tray::QUITTING.load(std::sync::atomic::Ordering::SeqCst) {
-                    log::info!("launcher started again with new options; quitting for it");
+                    log::info!("launcher started again with new options or as another version; quitting for it");
                     // Leaving on purpose, not a renderer that took the run
                     // down: the next start must not skip this step.
                     mark_the_window_came_up();

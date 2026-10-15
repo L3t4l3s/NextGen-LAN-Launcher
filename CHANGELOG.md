@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.6.2
+
+- Registry-Werte eines Profils werden unter Proton wieder gesetzt, wenn vorher die Vorbereitung
+  des Startskripts lief. Protons `steam.exe` und `xalia.exe` leben danach noch einen Augenblick,
+  der Launcher hielt das Spiel deshalb für schon laufend und ließ die Werte aus (Battlefield 1942
+  blieb englisch). Beide zählen jetzt wie Wines eigene Prozesse, und der Launcher wartet bis zu
+  fünf Sekunden, ob der Prefix frei wird.
+
+- Linux: Wer eine neue Version startet, während die alte im Infobereich läuft, bekommt jetzt die
+  neue. Bisher holte der Start nur das Fenster der alten Version nach vorn, mit ihren alten
+  Profilen (so lief Battlefield 1942 nach dem Update weiter englisch). Der Launcher legt seine
+  Version neben die Sperrdatei; ein Start einer neueren Version löst ihn ab, eine ältere holt nur
+  das Fenster der neueren nach vorn. Eine Version vor dieser hinterlegt nichts und gilt deshalb
+  als älter.
+
 ## 0.6.1
 
 - Assetto Corsa: Dokumentiert (Profilkommentar, offene Punkte), dass die LAN-Serversuche unter
