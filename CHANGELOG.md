@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.6.3
+
+- Startprofil für Barotrauma: deutsches Menü und keine Tutorial-Frage beim ersten „Server hosten“.
+  Beides steht als Attribut in `config_player.xml`; Profile können dafür jetzt Attribute eines
+  XML-Elements setzen (`xml` mit `key`). Der Name kommt wie bisher über den Emulator des Pakets.
+  Menü, Sprache und ein eigener Server mit dem Spielernamen auf der VM geprüft, Beitritt von einem
+  anderen Rechner ungetestet.
+
 ## 0.6.2
 
 - Registry-Werte eines Profils werden unter Proton wieder gesetzt, wenn vorher die Vorbereitung

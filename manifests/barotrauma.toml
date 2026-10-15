@@ -1,0 +1,38 @@
+schema = 1
+id = "barotrauma"
+title = "Barotrauma"
+revisions = ["20250304"]
+source = "NextGen LAN Launcher: start script, menu, language and hosting with the player's name checked with Proton 11 (2026-10); joining from another machine unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# Barotrauma.exe. The player's name comes from the package's gbe_fork
+# (steam_settings/configs.user.ini, set by the launcher without a profile);
+# config_player.xml's <player name=""> stays empty and the game takes the
+# emulator's. On the VM (no GPU) the loading screen takes minutes and waits
+# for a key; a VM without a microphone gets a voice capture error in the
+# settings.
+exe = ""
+args = []
+
+# The game's language is an attribute of config_player.xml's root
+# (language="English" in the package); the values are those of
+# Content/Texts/<Language>/*.xml.
+[[settings]]
+file = "config_player.xml"
+xml = "config"
+key = "language"
+value = { de = "German", en = "English", fr = "French" }
+
+# Asked "might be the first time you've played … tutorials?" at the first
+# Host Server; skipping it writes this, and with it preset (from the
+# package's "true") the question does not come.
+[[settings]]
+file = "config_player.xml"
+xml = "config"
+key = "tutorialskipwarning"
+value = "false"

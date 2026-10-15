@@ -309,7 +309,8 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   Launcher-Ordner), macht er eine neue. Platzhalter werden in einem Durchgang ersetzt (`fill`).
   Registry-Werte als Text oder `type = "dword"` (Zahl, beim Laden geprüft). `quote = false`
   schreibt eine Zeile `KEY Wert` ohne Anführungszeichen (Armagetron `user.cfg`). `xml = "element"`
-  setzt den Text eines vorhandenen Elements (Groß-/Kleinschreibung egal, Anno schreibt
+  setzt den Text eines vorhandenen Elements, mit `key` stattdessen dessen Attribut (fehlt es, wird
+  es angehängt; Barotrauma `<config language="…">`) (Groß-/Kleinschreibung egal, Anno schreibt
   `<LanguageTAG>…</LanguageTag>`); eine Datei ohne das Element bleibt, wie sie ist, und wird nie
   angelegt (AoM Titans: `<profilelanname>` in `Default.prf`, UTF-16). Lizenzdialoge alter
   Microsoft-Spiele schreiben beim Annehmen ein DWORD `FIRSTRUN=1` (AoE III unter

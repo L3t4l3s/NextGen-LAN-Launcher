@@ -49,6 +49,12 @@
 //! json = "onboarding.privacyPolicyVersion"
 //! type = "number"
 //! value = "4"
+//!
+//! [[settings]]                 # an XML element's text (`xml` alone) or,
+//! file = "config_player.xml"   # with `key`, one of its attributes:
+//! xml = "config"               # `<config language="English" …>`
+//! key = "language"             # (Barotrauma)
+//! value = { de = "German", en = "English" }
 //! ```
 //!
 //! `value` is text (`%player%`, `%game_lang%` filled in) or one per game
@@ -89,8 +95,10 @@ pub struct PlayerSetting {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub json: Option<String>,
     /// An element of an XML file whose text is set (`<profilelanname>` in Age
-    /// of Mythology's profile). The file must have it: an XML file this
-    /// launcher would start is no file the game can read.
+    /// of Mythology's profile), or with `key` one of its attributes, added
+    /// when missing (`<config language="…">` in Barotrauma's). The file must
+    /// have the element: an XML file this launcher would start is no file
+    /// the game can read.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub xml: Option<String>,
     /// Where `file` lies; the game's `local/` when not given.
@@ -209,6 +217,8 @@ pub enum Kind<'a> {
     Xml {
         file: &'a str,
         tag: &'a str,
+        /// The attribute set instead of the element's text.
+        attribute: Option<&'a str>,
     },
 }
 
@@ -261,18 +271,22 @@ impl PlayerSetting {
             return Err("settings: quote is for config lines");
         }
         if let Some(tag) = &self.xml {
+            let name = |n: &str| {
+                !n.is_empty()
+                    && n.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+            };
             if self.file.is_none()
                 || self.section.is_some()
-                || self.key.is_some()
                 || self.line.is_some()
                 || self.json.is_some()
                 || self.value_type.is_some_and(|t| t != ValueType::Text)
-                || tag.is_empty()
-                || !tag
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+                || !name(tag)
+                || self.key.as_deref().is_some_and(|k| !name(k))
             {
-                return Err("settings: xml needs a file and an element name, nothing else");
+                return Err(
+                    "settings: xml needs a file and an element name (and an attribute as key), nothing else",
+                );
             }
         }
         if self.value_type == Some(ValueType::Dword) && !all(is_dword) {
@@ -287,9 +301,10 @@ impl PlayerSetting {
             (Some(file), None, _, _) if !crate::manifest::is_safe_relative(file) => {
                 Err("settings: file must be relative to local/")
             }
-            (Some(file), None, None, None) if self.xml.is_some() => Ok(Kind::Xml {
+            (Some(file), None, None, attribute) if self.xml.is_some() => Ok(Kind::Xml {
                 file,
                 tag: self.xml.as_deref().unwrap_or_default(),
+                attribute,
             }),
             (Some(file), None, None, None) if self.json.is_some() => Ok(Kind::Json {
                 file,
@@ -681,14 +696,20 @@ fn write(
                 ))
             }
         },
-        Kind::Xml { tag, .. } => match set_xml(&old.text, tag, value) {
-            Some(new) => new,
-            None => {
-                return Err(std::io::Error::other(format!(
-                    "no <{tag}> in it (yet); left as it is"
-                )))
+        Kind::Xml { tag, attribute, .. } => {
+            let new = match attribute {
+                Some(attribute) => set_xml_attribute(&old.text, tag, attribute, value),
+                None => set_xml(&old.text, tag, value),
+            };
+            match new {
+                Some(new) => new,
+                None => {
+                    return Err(std::io::Error::other(format!(
+                        "no <{tag}> in it (yet); left as it is"
+                    )))
+                }
             }
-        },
+        }
         Kind::Registry { .. } => return Ok(false),
     };
     if new == old.text && path.exists() {
@@ -782,43 +803,116 @@ fn xml_declared(text: &str) -> Option<&str> {
 /// gets its text too) holding `value`, escaped; `None` when it has no such
 /// element outside comments.
 fn set_xml(text: &str, tag: &str, value: &str) -> Option<String> {
-    let lower = text.to_ascii_lowercase();
-    let name = tag.to_ascii_lowercase();
     let escaped = value
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;");
+    let (at, gt) = find_start_tag(text, tag)?;
+    let after = at + 1 + tag.len();
+    if text[at..gt].trim_end().ends_with('/') {
+        let open = text[at..gt].trim_end().trim_end_matches('/').trim_end();
+        return Some(format!(
+            "{}{open}>{escaped}</{}>{}",
+            &text[..at],
+            &text[at + 1..after],
+            &text[gt + 1..]
+        ));
+    }
+    let start = gt + 1;
+    let end = start
+        + text[start..]
+            .to_ascii_lowercase()
+            .find(&format!("</{}", tag.to_ascii_lowercase()))?;
+    Some(format!("{}{escaped}{}", &text[..start], &text[end..]))
+}
+
+/// Where the first `<tag …>` start tag outside comments begins and where its
+/// `>` is (outside quoted attribute values); not `<tag2>`.
+fn find_start_tag(text: &str, tag: &str) -> Option<(usize, usize)> {
+    let lower = text.to_ascii_lowercase();
+    let name = tag.to_ascii_lowercase();
     let mut from = 0;
     while let Some(found) = lower[from..].find(&format!("<{name}")) {
         let at = from + found;
         from = at + 1;
-        // `<!-- … -->` around it: not the element.
         if let Some(comment) = lower[..at].rfind("<!--") {
             if !lower[comment..at].contains("-->") {
                 continue;
             }
         }
         let after = at + 1 + name.len();
-        let gt = after + lower[after..].find('>')?;
-        let head = &lower[after..gt];
-        // `<name>`, `<name a="1">`, `<name/>` — not `<name2>`.
-        if !(head.is_empty() || head.starts_with(char::is_whitespace) || head == "/") {
+        if !lower[after..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_whitespace() || c == '>' || c == '/')
+        {
             continue;
         }
-        if head.trim_end().ends_with('/') {
-            let open = text[at..gt].trim_end().trim_end_matches('/').trim_end();
-            return Some(format!(
-                "{}{open}>{escaped}</{}>{}",
-                &text[..at],
-                &text[at + 1..after],
-                &text[gt + 1..]
-            ));
+        let mut quote = None;
+        for (i, c) in text[after..].char_indices() {
+            match (quote, c) {
+                (None, '"' | '\'') => quote = Some(c),
+                (Some(q), c) if c == q => quote = None,
+                (None, '>') => return Some((at, after + i)),
+                _ => {}
+            }
         }
-        let start = gt + 1;
-        let end = start + lower[start..].find(&format!("</{name}"))?;
-        return Some(format!("{}{escaped}{}", &text[..start], &text[end..]));
+        return None;
     }
     None
+}
+
+/// `text` with `attribute` of the first `<tag>` element (names in any case)
+/// holding `value`, escaped; added before the tag's end when it has none.
+/// `None` when there is no such element outside comments.
+fn set_xml_attribute(text: &str, tag: &str, attribute: &str, value: &str) -> Option<String> {
+    let (at, gt) = find_start_tag(text, tag)?;
+    let escaped = value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;");
+    // The attributes one by one, after the element's name: `name = "…"`.
+    let bytes = text.as_bytes();
+    let mut i = at + 1 + tag.len();
+    let skip_space = |mut i: usize| {
+        while i < gt && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        i
+    };
+    loop {
+        i = skip_space(i);
+        if i >= gt || bytes[i] == b'/' {
+            break;
+        }
+        let name_start = i;
+        while i < gt && !bytes[i].is_ascii_whitespace() && bytes[i] != b'=' && bytes[i] != b'/' {
+            i += 1;
+        }
+        let name = &text[name_start..i];
+        i = skip_space(i);
+        if bytes.get(i) != Some(&b'=') {
+            continue;
+        }
+        i = skip_space(i + 1);
+        let quote = *bytes.get(i).filter(|&&q| q == b'"' || q == b'\'')?;
+        let open = i + 1;
+        let close = open + text[open..gt].find(quote as char)?;
+        if name.eq_ignore_ascii_case(attribute) {
+            return Some(format!("{}{escaped}{}", &text[..open], &text[close..]));
+        }
+        i = close + 1;
+    }
+    // Not there yet: added at the end of the start tag (before `/>`).
+    let head = text[at..gt].trim_end();
+    let end = at + head.strip_suffix('/').unwrap_or(head).trim_end().len();
+    Some(format!(
+        "{} {attribute}=\"{escaped}\"{}",
+        &text[..end],
+        &text[end..]
+    ))
 }
 
 /// `text` (a JSON object, or nothing yet) with `key` (levels joined by dots)
@@ -1822,12 +1916,60 @@ mod tests {
             Some("<p><name>B</NAME></p>")
         );
         assert_eq!(set_xml("<p></p>", "name", "B"), None);
+        // An attribute: replaced in any case, added when missing, not one
+        // of another element or a longer name.
+        let config = "\u{feff}<config\n  languagepack=\"x\"\n  language=\"English\"\n  a='1'>\n  <player name=\"\" /></config>";
+        assert_eq!(
+            set_xml_attribute(config, "CONFIG", "Language", "German").as_deref(),
+            Some("\u{feff}<config\n  languagepack=\"x\"\n  language=\"German\"\n  a='1'>\n  <player name=\"\" /></config>")
+        );
+        assert_eq!(
+            set_xml_attribute(
+                "<p><!-- <config> --><config a=\"b>c\"/></p>",
+                "config",
+                "tutorialskipwarning",
+                "false"
+            )
+            .as_deref(),
+            Some("<p><!-- <config> --><config a=\"b>c\" tutorialskipwarning=\"false\"/></p>")
+        );
+        assert_eq!(
+            set_xml_attribute("<configs><config></config>", "config", "x", "a&\"").as_deref(),
+            Some("<configs><config x=\"a&amp;&quot;\"></config>")
+        );
+        assert_eq!(set_xml_attribute("<p/>", "config", "x", "1"), None);
+        // A name inside another attribute's value is not that attribute.
+        assert_eq!(
+            set_xml_attribute(
+                "<config title=\" language='x'\" language=\"English\">",
+                "config",
+                "language",
+                "D'Art"
+            )
+            .as_deref(),
+            Some("<config title=\" language='x'\" language=\"D&apos;Art\">")
+        );
+        assert_eq!(
+            set_xml("<p><name a=\"b>c\">old</name></p>", "name", "B").as_deref(),
+            Some("<p><name a=\"b>c\">B</name></p>")
+        );
+        assert!(
+            parse("file = 'a.xml'\nxml = 'config'\nkey = 'language'\nvalue = 'x'")
+                .kind()
+                .is_ok()
+        );
+        assert!(
+            parse("file = 'a.xml'\nxml = 'config'\nkey = 'a b'\nvalue = 'x'")
+                .kind()
+                .is_err()
+        );
         // UTF-8 without a declaration stays UTF-8 for a name ANSI holds.
         let plain = tmp.path().join("plain.xml");
         std::fs::write(&plain, "<p><name></name></p>").unwrap();
         let kind = Kind::Xml {
             file: "plain.xml",
             tag: "name",
+            attribute: None,
         };
         write(&plain, &kind, "Jürgen", false, ValueType::Text).unwrap();
         assert_eq!(
