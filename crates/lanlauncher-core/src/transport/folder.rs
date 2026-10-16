@@ -58,6 +58,7 @@ impl FolderTransport {
             ShareState::Complete
         };
         Some(ShareStatus {
+            source_short: false,
             dir: dir.to_path_buf(),
             state,
             bytes_done: done,

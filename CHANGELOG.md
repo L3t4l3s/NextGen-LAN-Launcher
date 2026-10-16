@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.7.8
+
+- Ein Download, dessen Quelle das Spiel selbst nicht vollständig hat, steht nicht mehr bei
+  99,9 %. Resilio nennt einen solchen Ordner „synchron“, solange alle verfügbaren Teile da sind.
+  Der Launcher zeigt jetzt, was wirklich angekommen ist, und meldet „Die Quelle hat das Spiel
+  nicht vollständig“. Gefunden bei Battlefield Hardline: Der Sync-Server lieferte 40 von 70 GB.
+
 ## 0.7.7
 
 - Battlefield 4 startet unter macOS/Linux über sein Startskript. Der Launcher las aus dessen

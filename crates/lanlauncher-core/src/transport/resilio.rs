@@ -746,11 +746,18 @@ impl ResilioClient {
                     status.bytes_received = 0;
                 }
                 status.bytes_known = countable;
-                if let Some(progress) = gui
+                let from_gui = gui
                     .values()
-                    .find(|g| super::normalise_dir(&g.dir) == super::normalise_dir(&dir))
-                    .filter(|g| g.bytes_known && g.bytes_total > 0)
-                {
+                    .find(|g| super::normalise_dir(&g.dir) == super::normalise_dir(&dir));
+                status.source_short = from_gui.is_some_and(|g| g.source_short);
+                if status.source_short {
+                    // The API counts what the peers announced; the GUI knows
+                    // the package is not all there.
+                    status.state = ShareState::Downloading;
+                    status.finished_known = false;
+                    status.bytes_done = status.bytes_done.min(status.bytes_total.saturating_sub(1));
+                }
+                if let Some(progress) = from_gui.filter(|g| g.bytes_known && g.bytes_total > 0) {
                     status.bytes_received = progress.bytes_received;
                     status.bytes_total = progress.bytes_total;
                     status.bytes_known = true;
@@ -837,6 +844,7 @@ pub fn parse_api_folder(f: &Value, peers: u32) -> ShareStatus {
         ShareState::Downloading
     };
     ShareStatus {
+        source_short: false,
         // Like the GUI answer, the API reports the Windows long-path
         // spelling; it would reach the log and the diagnostics card.
         dir: crate::paths::strip_verbatim(PathBuf::from(
@@ -1166,9 +1174,31 @@ pub fn parse_gui_folders(v: &Value) -> HashMap<PathBuf, ShareStatus> {
         } else {
             (ShareState::Downloading, 0, 0, false)
         };
+        // "Synced" with a file still in the download queue: synced with
+        // what the peers have. Its progress is what is on the disk, and the
+        // share is not complete (Battlefield Hardline stood at 99.9 % with
+        // 40 of 70 GB there).
+        // Only where a real part is missing: a small leftover in the queue
+        // (a file nobody has beside a whole archive) or an answer without
+        // `ondisk_size` keeps the share complete, as before; a file
+        // preallocated at its full size reads as there and changes nothing.
+        let queued = f
+            .get("queue_download_size")
+            .and_then(as_u64_lenient)
+            .unwrap_or(0);
+        let on_disk = f.get("ondisk_size").and_then(as_u64_lenient);
+        let short_by = on_disk.map(|d| size.saturating_sub(d)).unwrap_or(0);
+        let source_short =
+            state == ShareState::Complete && queued > 0 && short_by > 0 && short_by >= size / 100;
+        let (state, finished, received, known) = if source_short {
+            (ShareState::Downloading, 0, size - short_by, true)
+        } else {
+            (state, finished, received, known)
+        };
         out.insert(
             PathBuf::from(&path),
             ShareStatus {
+                source_short,
                 dir: PathBuf::from(&path),
                 state,
                 bytes_done: finished,
@@ -2717,8 +2747,24 @@ mod tests {
             {"path":"/lan/done","size":10000,"status":7},
             {"path":"/lan/indexing","size":10000,"status":7,"loading":true,"down_status":100},
             {"path":"/lan/remote-indexing","size":10000,"status":7,"remoteindexing":true,"down_status":100},
-            {"path":"/lan/error","size":10000,"status":3,"error":123}
+            {"path":"/lan/error","size":10000,"status":3,"error":123},
+            {"path":"/lan/short","size":10000,"status":7,"down_status":100,"queue_download_files":1,"queue_download_size":9000,"ondisk_size":5700},
+            {"path":"/lan/leftover","size":10000,"status":7,"queue_download_size":20,"ondisk_size":9980},
+            {"path":"/lan/unsaid","size":10000,"status":7,"queue_download_size":9000}
         ]}));
+        assert_eq!(
+            folders[Path::new("/lan/leftover")].state,
+            ShareState::Complete
+        );
+        assert_eq!(
+            folders[Path::new("/lan/unsaid")].state,
+            ShareState::Complete
+        );
+        let short = &folders[Path::new("/lan/short")];
+        assert_eq!(short.state, ShareState::Downloading);
+        assert_eq!(short.bytes_received, 5700);
+        assert!(short.source_short && !short.finished_known);
+        assert!(!folders[Path::new("/lan/done")].source_short);
         let fresh = &folders[Path::new("/lan/new")];
         assert_eq!(fresh.bytes_received, 0);
         assert!(fresh.bytes_known);

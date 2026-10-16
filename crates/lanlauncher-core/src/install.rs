@@ -1020,23 +1020,33 @@ impl Tracker {
                         .unwrap_or(true)
                 {
                     let peers = obs.transport.as_ref().map(|t| t.peers).unwrap_or(0);
-                    let code = if obs.transport.is_some() && peers == 0 {
+                    // The engine has all its peers have, and that is not the
+                    // whole package: the source's copy is short, also when
+                    // that source has gone since.
+                    let short = obs.transport.as_ref().is_some_and(|t| t.source_short);
+                    let code = if short {
+                        "sync.source_incomplete"
+                    } else if obs.transport.is_some() && peers == 0 {
                         "sync.no_peers"
                     } else {
                         "sync.stalled"
                     };
-                    self.problem = Some(
-                        Problem::new(code, Severity::Warning)
-                            .param(
-                                "minutes",
-                                (now.duration_since(self.last_progress_at).as_secs() / 60).max(1),
-                            )
-                            .step(format!("{code}.step.1"))
-                            .step(format!("{code}.step.2"))
-                            .with_fix(FixAction::RepairGame {
-                                game_id: self.game_id.clone(),
-                            }),
-                    );
+                    let problem = Problem::new(code, Severity::Warning)
+                        .param(
+                            "minutes",
+                            (now.duration_since(self.last_progress_at).as_secs() / 60).max(1),
+                        )
+                        .step(format!("{code}.step.1"))
+                        .step(format!("{code}.step.2"));
+                    // A repair would verify the part that is there and fail;
+                    // what helps is a source that has the rest.
+                    self.problem = Some(if short {
+                        problem
+                    } else {
+                        problem.with_fix(FixAction::RepairGame {
+                            game_id: self.game_id.clone(),
+                        })
+                    });
                 } else if !stalled
                     && self
                         .problem
@@ -2263,6 +2273,7 @@ mod tests {
         o.catalog_bytes = 60_000_000_000;
         o.share_bytes = 6_000_000_000;
         o.transport = Some(ShareStatus {
+            source_short: false,
             dir: "/x".into(),
             state: ShareState::Downloading,
             bytes_done: 0,
@@ -2293,6 +2304,7 @@ mod tests {
         assert_eq!(o.bytes_on_disk(), 4096);
         // The engine's own figure counts where it is the larger one …
         o.transport = Some(ShareStatus {
+            source_short: false,
             dir: "/x".into(),
             state: ShareState::Downloading,
             bytes_done: 9000,
@@ -2368,6 +2380,7 @@ mod tests {
             local_present: false,
             required_files_ok: false,
             transport: transport_pct.map(|p| ShareStatus {
+                source_short: false,
                 dir: "/x".into(),
                 state: if p >= 100 {
                     ShareState::Complete
@@ -2568,6 +2581,7 @@ mod tests {
         o.catalog_bytes = 85_885_187_222;
         o.share_bytes = 85_885_187_222;
         o.transport = Some(ShareStatus {
+            source_short: false,
             dir: "/x".into(),
             state: ShareState::Downloading,
             bytes_done: 8,
@@ -2820,6 +2834,7 @@ mod tests {
         let mut o = obs(None, None, None, None);
         o.share_bytes = 20;
         o.transport = Some(ShareStatus {
+            source_short: false,
             dir: "/x".into(),
             state: ShareState::Downloading,
             bytes_done: 5,
@@ -2956,6 +2971,7 @@ mod tests {
             "smoothed: 0.6 of the old rate plus 0.4 of the measured 200"
         );
         o.transport = Some(ShareStatus {
+            source_short: false,
             dir: "/x".into(),
             state: ShareState::Downloading,
             bytes_done: 600,
@@ -3073,6 +3089,26 @@ mod tests {
         t.step(&o, &policy(), t0);
         t.step(&o, &policy(), t0 + Duration::from_secs(1));
         assert!(t.problem.is_none(), "{:?}", t.problem);
+    }
+
+    #[test]
+    fn a_source_that_lacks_part_of_the_package_is_named() {
+        // Battlefield Hardline: the engine called the share synced with 40 of
+        // 70 GB there, and nothing more came.
+        let mut t = Tracker::new("bfhardline");
+        t.request_install();
+        let t0 = Instant::now();
+        let mut o = obs(None, Some(700), None, Some(57));
+        if let Some(tr) = o.transport.as_mut() {
+            tr.source_short = true;
+        }
+        t.step(&o, &policy(), t0);
+        t.step(&o, &policy(), t0 + Duration::from_secs(1));
+        t.step(&o, &policy(), t0 + Duration::from_secs(200));
+        assert_eq!(
+            t.problem.as_ref().map(|p| p.code.as_str()),
+            Some("sync.source_incomplete")
+        );
     }
 
     #[test]

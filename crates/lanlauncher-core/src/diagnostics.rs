@@ -976,6 +976,7 @@ mod tests {
         assert_eq!(connecting.severity, Severity::Info);
         assert!(!connecting.params.contains_key("progress"));
         let mut share = ShareStatus {
+            source_short: false,
             dir: "LAN/eti_launcher".into(),
             state: ShareState::Downloading,
             bytes_done: 8,

@@ -349,6 +349,10 @@ export const en: Messages = {
   "problem.sync.no_peers.step.1": "Is the LAN's sync server running? Ask the organisers or check the network profile in Diagnostics.",
   "problem.sync.no_peers.step.2": "Does another PC already have the full game? Then it should continue shortly.",
 
+  "problem.sync.source_incomplete.title": "The source does not have the whole game",
+  "problem.sync.source_incomplete.cause": "Nothing has arrived for {minutes} min. The sync service has everything the other PCs and the sync server have, and that is not the whole package.",
+  "problem.sync.source_incomplete.step.1": "Ask the organisers: the game is probably not complete on the sync server itself.",
+  "problem.sync.source_incomplete.step.2": "Once somebody has the whole game, the download continues by itself.",
   "problem.sync.stalled.title": "Download stalled",
   "problem.sync.stalled.cause": "No data for {minutes} min although peers are connected.",
   "problem.sync.stalled.step.1": "“Repair” checks whether the file is already complete and extracts it right away.",

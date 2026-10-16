@@ -31,6 +31,8 @@
   const trouble = $derived(
     status?.problem?.code === "sync.no_peers"
       ? { label: "card.no_source", title: "problem.sync.no_peers.title" }
+      : status?.problem?.code === "sync.source_incomplete"
+        ? { label: "card.stalled", title: "problem.sync.source_incomplete.title" }
       : status?.stalled
         ? { label: "card.stalled", title: "problem.sync.stalled.title" }
         : null,

@@ -70,6 +70,13 @@ pub struct ShareStatus {
     pub upload_bps: u64,
     /// Transport-specific error text, if any.
     pub error: Option<String>,
+    /// The engine is done with what its peers have, and the package is not
+    /// all there: Resilio calls such a share synced while a file still waits
+    /// in its download queue (Battlefield Hardline: 40 of 70 GB, the sync
+    /// server stopped sending). Waiting does not help; somebody has to have
+    /// the rest.
+    #[serde(default)]
+    pub source_short: bool,
 }
 
 impl ShareStatus {
@@ -369,6 +376,7 @@ mod tests {
 
     fn rated_share(dir: &str, peers: u32, down: u64, up: u64) -> ShareStatus {
         ShareStatus {
+            source_short: false,
             dir: PathBuf::from(dir),
             state: ShareState::Downloading,
             bytes_done: 0,

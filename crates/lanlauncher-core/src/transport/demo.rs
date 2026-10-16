@@ -101,6 +101,7 @@ impl DemoTransport {
             ShareState::Downloading
         };
         Ok(ShareStatus {
+            source_short: false,
             dir: dir.to_path_buf(),
             state,
             bytes_done: reported_done,

@@ -351,6 +351,10 @@ export const de: Messages = {
   "problem.sync.no_peers.step.1": "Läuft der Sync-Server der LAN? Frag die Orga oder schau in der Diagnose nach dem Netzwerkprofil.",
   "problem.sync.no_peers.step.2": "Hat ein anderer PC das Spiel schon vollständig? Dann sollte es nach kurzer Zeit weitergehen.",
 
+  "problem.sync.source_incomplete.title": "Die Quelle hat das Spiel nicht vollständig",
+  "problem.sync.source_incomplete.cause": "Seit {minutes} Min. kommt nichts mehr an. Der Sync-Dienst hat alles, was die anderen Rechner und der Sync-Server haben, und das ist nicht das ganze Paket.",
+  "problem.sync.source_incomplete.step.1": "Beim Veranstalter nachfragen: Auf dem Sync-Server ist das Spiel vermutlich selbst noch nicht vollständig.",
+  "problem.sync.source_incomplete.step.2": "Hat jemand das Spiel vollständig, geht der Download von selbst weiter.",
   "problem.sync.stalled.title": "Download hängt",
   "problem.sync.stalled.cause": "Seit {minutes} Min. kommen keine Daten mehr an, obwohl Teilnehmer verbunden sind.",
   "problem.sync.stalled.step.1": "„Reparieren“ prüft, ob die Datei vielleicht schon vollständig ist, und entpackt sie dann sofort.",
