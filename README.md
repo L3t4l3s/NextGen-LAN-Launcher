@@ -226,6 +226,12 @@ again.
   player joined. Possible ways out:
   a fix in Wine/Proton, or the launcher writing `cfg/race.ini` `[REMOTE]` and starting `acs.exe`
   itself.
+- **Bad Company 2's link on Windows — check at the LAN:** its `game_setup.cmd` registers
+  `bfbc2lan://` as `%game_path%\\local\\BC2LAN.exe` without ever setting `game_path`, so the
+  registry gets `\\local\\BC2LAN.exe`. On Linux the launcher reads such an entry relative to the
+  game's folder (`url_protocol::handlers_of`); on Windows the game's own registration is used and
+  may not work. Whether ETI's launcher sets `game_path` for its scripts is unknown (it is
+  shipped encrypted).
 - **Blur — check on real hardware:** under Proton 11 on the VM the game shows its German title
   screen and then stays there after Enter for minutes at full CPU (software rendering). Check
   with a GPU before writing a profile.

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.7.4
+
+- Linux: Auch Battlefield: Bad Company 2 öffnet seine Battlelog-Links (`bfbc2lan://`). Sein
+  Setup trägt das Programm als `\\local\\BC2LAN.exe` ein, ohne Spielordner, weil es
+  `%game_path%` nie setzt. Der Launcher liest einen solchen Eintrag jetzt relativ zum
+  Spielordner; das gilt auch für schon installierte Spiele.
+
 ## 0.7.3
 
 - Ein Paket, dessen Freigabe auf dem Sync-Server eine Datei enthält, die niemand hat, bleibt nicht

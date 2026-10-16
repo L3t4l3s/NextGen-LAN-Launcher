@@ -309,7 +309,16 @@ pub fn handlers_of(share_dir: &Path) -> Vec<Handler> {
             let Some(program) = words.next() else {
                 continue;
             };
-            let inside = host_path(&program, &drive_c)
+            // `%game_path%\\local\\…` from a setup that never set
+            // `game_path` (Bad Company 2's) is `\\local\\…`: no drive. Such a
+            // path is read inside the game's folder; only a program under
+            // `local/` passes the check below, anything else is not offered.
+            let located = if program.starts_with(['\\', '/']) {
+                crate::paths::find_ignoring_case(share_dir, &program)
+            } else {
+                host_path(&program, &drive_c)
+            };
+            let inside = located
                 .and_then(|p| p.canonicalize().ok())
                 .filter(|p| p.is_file() && p.starts_with(&game_dir));
             match inside {
@@ -568,6 +577,31 @@ mod tests {
             vec!["bf3lan://join/1"]
         );
         assert!(registries_changed(&game).is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_registered_without_the_games_folder_still_finds_its_program() {
+        // Bad Company 2's setup writes `%game_path%\\local\\BC2LAN.exe %%1`
+        // without setting game_path.
+        let tmp = tempfile::tempdir().unwrap();
+        let game = tmp.path().join("bfbc2");
+        std::fs::create_dir_all(game.join("local")).unwrap();
+        std::fs::write(game.join("local/BC2LAN.exe"), b"MZ").unwrap();
+        let pfx = game.join(".nll-prefix/pfx");
+        std::fs::create_dir_all(&pfx).unwrap();
+        std::fs::write(
+            pfx.join("system.reg"),
+            "[Software\\\\Classes\\\\bfbc2lan]\n\"URL Protocol\"=\"\"\n\
+             [Software\\\\Classes\\\\bfbc2lan\\\\shell\\\\open\\\\command]\n@=\"\\\\\\\\local\\\\\\\\BC2LAN.exe %1\"\n",
+        )
+        .unwrap();
+        let handlers = handlers_of(&game);
+        assert_eq!(handlers.len(), 1, "{handlers:?}");
+        assert_eq!(
+            handlers[0].program,
+            game.join("local/BC2LAN.exe").canonicalize().unwrap()
+        );
     }
 
     #[test]
