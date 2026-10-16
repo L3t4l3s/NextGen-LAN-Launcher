@@ -535,6 +535,9 @@ mod tests {
         );
     }
 
+    // `Z:` is the root of a Unix file system; the links are opened on Linux
+    // only.
+    #[cfg(unix)]
     #[test]
     fn a_handler_runs_only_a_program_of_its_game() {
         let tmp = tempfile::tempdir().unwrap();
