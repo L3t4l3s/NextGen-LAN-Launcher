@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.7.5
+
+- Startprofil für Battlefield 2142: Startskript bis zum deutschen EA-Login geprüft; ein Hinweis
+  nennt die IP-Abfrage für den Login-Server aus dem Paket. Mehrspieler ungetestet.
+
 ## 0.7.4
 
 - Linux: Auch Battlefield: Bad Company 2 öffnet seine Battlelog-Links (`bfbc2lan://`). Sein

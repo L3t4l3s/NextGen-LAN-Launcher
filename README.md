@@ -238,10 +238,11 @@ again.
 - **Black Mesa: CODEX emulator does not load under Wine:** `bin/codex.dll`'s initialisation fails
   ("Failed to load the launcher DLL", Proton 11 and GE-Proton 11-7 alike). The launcher does not
   set a name in its `steam_emu.ini` either.
-- **Battlefield 2142: package with a stray file — check after the next install:** the sync
-  server's share holds a 4 GB `__rar_…` file next to the archive that no peer has; the launcher
-  now asks the engine about the archive alone (`Transport::file_complete`). Unit-tested; the real
-  install and the game itself are still to be checked.
+- **Battlefield 2142 multiplayer — check at the LAN:** the install now gets past the stray
+  `__rar_…` file on the sync server (confirmed with 0.7.4), and the start script reaches the
+  German EA login. Logging in needs the package's login emulator (`server_start.cmd`: UwAmp with
+  MySQL and `fesl_login_server`); whether Wine honours the prefix's `hosts` file the script writes
+  for EA's and GameSpy's names is unchecked.
 - **Battlelog links on Linux (`bf3lan://`) — check at the LAN:** Battlefield 3's
   `game_setup.cmd` registers the scheme in the game's prefix; the launcher reads it from the
   prefix's `system.reg`, offers itself to the desktop for it (`mimeapps.list`, a hidden desktop

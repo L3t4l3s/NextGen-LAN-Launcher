@@ -1,0 +1,24 @@
+schema = 1
+id = "bf2142"
+title = "Battlefield 2142"
+revisions = ["20180915"]
+source = "NextGen LAN Launcher: install, start script and the German EA login screen checked with Proton 11 (2026-10); login emulator and multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's start script asks for the IP of the login emulator, points
+# EA's and GameSpy's hosts at it in the prefix's hosts file, sets the
+# language and starts bf2142.exe, which opens on an EA account login. The
+# emulator is the package's server_start.cmd (bf2142_server.exe unpacks
+# UwAmp with MySQL and fesl_login_server). The share on the sync server
+# holds a stray 4 GB "__rar_..." file; the launcher installs from the
+# archive regardless.
+exe = ""
+args = []
+
+[setup]
+notes.de = "Das Startskript fragt nach der IP-Adresse des Rechners, auf dem der Login-Server aus dem Paket läuft (server_start.cmd). Ohne ihn bleibt das Spiel beim EA-Login stehen."
+notes.en = "The start script asks for the IP address of the PC running the package's login server (server_start.cmd). Without it the game stops at the EA login."
