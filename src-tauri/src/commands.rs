@@ -331,7 +331,8 @@ async fn prepare_install_root(
         // The same snapshot the manager resolves paths from, so the folder is
         // created where the download will look for it.
         let library = state.library.read().ok().map(|l| l.clone());
-        let needed = game.size_bytes.saturating_mul(2);
+        // The same rule the download's space check uses.
+        let needed = lanlauncher_core::install::space_needed(game.size_bytes, None);
         if let Some((paths, leftovers, relocate)) = library.and_then(|l| {
             let paths = l.game_paths_for(&game.id, needed)?;
             let leftovers = l.empty_leftovers(&game.id, &paths.share_dir);

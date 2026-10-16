@@ -372,6 +372,21 @@ impl Default for Policy {
     }
 }
 
+/// Room a game takes once installed, its archive and the extraction beside
+/// it. The catalog's size is already that whole (Battlefield 3: 64 GB listed
+/// for a 32 GB archive; doubling it asked Battlefield 4 for 248 GB and called
+/// a disk with room for it full); a tenth on top for entries that round
+/// down. Once the engine knows the package, an archive and an extraction its
+/// size each is the floor, for an entry that lists less. An extraction larger
+/// than its archive is not known before it happens.
+pub fn space_needed(catalog_bytes: u64, package_bytes: Option<u64>) -> u64 {
+    let listed = catalog_bytes.saturating_add(catalog_bytes / 10);
+    match package_bytes.filter(|b| *b > 0) {
+        Some(package) => listed.max(package.saturating_mul(2)),
+        None => listed,
+    }
+}
+
 /// What the manager should do after a step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -782,10 +797,13 @@ impl Tracker {
                     // What the folder holds, not what has arrived: space the
                     // engine allocated for a file it has not filled yet is
                     // taken, and the disk reports it as taken.
-                    let needed = obs
-                        .catalog_bytes
-                        .saturating_mul(2)
-                        .saturating_sub(obs.bytes_on_disk_only());
+                    let package = obs
+                        .transport
+                        .as_ref()
+                        .filter(|t| t.bytes_known)
+                        .map(|t| t.bytes_total);
+                    let whole = space_needed(obs.catalog_bytes, package);
+                    let needed = whole.saturating_sub(obs.bytes_on_disk_only());
                     if obs.archive_len.is_none() && free < needed && needed > 0 {
                         self.problem = Some(
                             Problem::new("install.disk_full", Severity::Error)
@@ -3055,6 +3073,50 @@ mod tests {
         t.step(&o, &policy(), t0);
         t.step(&o, &policy(), t0 + Duration::from_secs(1));
         assert!(t.problem.is_none(), "{:?}", t.problem);
+    }
+
+    #[test]
+    fn the_room_a_game_needs() {
+        assert_eq!(space_needed(100, None), 110);
+        assert_eq!(space_needed(100, Some(40)), 110);
+        // A catalog entry that lists less than the package needs.
+        assert_eq!(space_needed(40, Some(30)), 60);
+        assert_eq!(space_needed(0, None), 0);
+    }
+
+    #[test]
+    fn the_catalog_size_is_the_whole_installation_not_half_of_it() {
+        // Battlefield 4: 124 GB in the catalog for a 62 GB package, on a disk
+        // with 134 GB free and the package's file already allocated.
+        let mut t = Tracker::new("bf4");
+        t.request_install();
+        let t0 = Instant::now();
+        let mut o = obs(None, Some(62_000_000_000), None, Some(39));
+        o.catalog_bytes = 124_000_000_000;
+        if let Some(tr) = o.transport.as_mut() {
+            tr.bytes_total = 62_000_000_000;
+        }
+        o.share_bytes = 62_000_000_000;
+        o.disk_free = Some(134_000_000_000);
+        t.step(&o, &policy(), t0);
+        t.step(&o, &policy(), t0 + Duration::from_secs(1));
+        assert!(t.problem.is_none(), "{:?}", t.problem);
+        // Before the engine knows the package: the catalog's whole, not twice.
+        if let Some(tr) = o.transport.as_mut() {
+            tr.bytes_known = false;
+        }
+        t.step(&o, &policy(), t0 + Duration::from_secs(2));
+        assert!(t.problem.is_none(), "{:?}", t.problem);
+        if let Some(tr) = o.transport.as_mut() {
+            tr.bytes_known = true;
+        }
+        // Too little for the extraction next to the archive: said.
+        o.disk_free = Some(50_000_000_000);
+        t.step(&o, &policy(), t0 + Duration::from_secs(2));
+        assert_eq!(
+            t.problem.as_ref().map(|p| p.code.as_str()),
+            Some("install.disk_full")
+        );
     }
 
     #[test]

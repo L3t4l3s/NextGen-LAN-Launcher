@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.7.6
+
+- Keine falsche Meldung „Festplatte voll“ mehr bei großen Spielen: Der Launcher rechnete mit der
+  doppelten Katalogsgröße, die aber schon Archiv und entpacktes Spiel zusammen ist. Battlefield 4
+  verlangte so 248 statt rund 124 GB. Kennt der Sync-Dienst die Paketgröße, zählt mindestens
+  das Doppelte davon.
+
 ## 0.7.5
 
 - Startprofil für Battlefield 2142: Startskript bis zum deutschen EA-Login geprüft; ein Hinweis
