@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.7.7
+
+- Battlefield 4 startet unter macOS/Linux über sein Startskript. Der Launcher las aus dessen
+  Firewall-Regel den Namen `BF4LAN` (ohne `.exe`) als Startdatei, hielt ihn für ein natives
+  Programm und ließ das Skript aus. Ein Name ohne Endung bekommt jetzt wie in `cmd` ein `.exe`.
+- Keine Warnung „Pflichtdateien fehlen“ mehr für Dateien, die der Launcher nur aus dem
+  Startskript geraten hat (bei BF4 `BF4LAN`, bei BF3 löscht das Skript `BF34Launcher.exe` selbst).
+  Was ein Startprofil ausdrücklich verlangt, wird weiter geprüft.
+
 ## 0.7.6
 
 - Keine falsche Meldung „Festplatte voll“ mehr bei großen Spielen: Der Launcher rechnete mit der

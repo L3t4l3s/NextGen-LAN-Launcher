@@ -983,9 +983,6 @@ impl ManifestStore {
                     if m.launch.args.is_empty() {
                         m.launch.args = probe.launch.args;
                     }
-                    if m.launch.required_files.is_empty() {
-                        m.launch.required_files = probe.launch.required_files;
-                    }
                     // Without these the "choose another executable" list is
                     // empty for exactly the games whose note says to pick the
                     // multiplayer binary by hand.

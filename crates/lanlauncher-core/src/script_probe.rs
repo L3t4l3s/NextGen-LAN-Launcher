@@ -93,6 +93,26 @@ fn normalise(path: &str) -> String {
     path.replace('\\', "/").trim_start_matches("./").to_string()
 }
 
+/// A program name as cmd finds it: one without an executable extension
+/// gets `.exe` (Battlefield 4's firewall rule names `BF4LAN`, the file is
+/// `BF4LAN.exe`). Left bare, it read as a native program, and the start
+/// script was passed over.
+fn as_windows_program(path: String) -> String {
+    let executable = std::path::Path::new(&path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| {
+            ["exe", "com", "bat", "cmd"]
+                .iter()
+                .any(|x| e.eq_ignore_ascii_case(x))
+        });
+    if executable {
+        path
+    } else {
+        format!("{path}.exe")
+    }
+}
+
 impl ScriptProbe {
     pub fn analyse(script: &str) -> Self {
         let mut probe = ScriptProbe::default();
@@ -128,7 +148,7 @@ impl ScriptProbe {
                 probe.uses_player_name = true;
             }
             for cap in FIREWALL_PROGRAM_RE.captures_iter(line) {
-                let exe = normalise(&cap[1]);
+                let exe = as_windows_program(normalise(&cap[1]));
                 if !firewall.contains(&exe) {
                     firewall.push(exe);
                 }
@@ -203,7 +223,12 @@ impl ScriptProbe {
             exe: first.exe.clone(),
             args: first.args.clone(),
             runner: Runner::Auto,
-            required_files: vec![first.exe.clone()],
+            // A guess is no requirement: the script may name a file it
+            // never had, or delete it on its first run (Battlefield 3's
+            // `BF34Launcher.exe`), and the warning then stood on a game
+            // that starts. Only `local/` has to exist, as on Windows
+            // (`install::required_files_for`).
+            required_files: Vec::new(),
             alternatives: self
                 .candidates
                 .iter()
@@ -240,6 +265,21 @@ impl ScriptProbe {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_guessed_executable_is_no_required_file() {
+        // Battlefield 4: the first rule names a file without its extension.
+        let script = "cd /d \"%~dp0\"\r\nnetsh advfirewall firewall add rule name=\"%game_id%\" dir=in action=allow program=\"%game_path%\\local\\BF4LAN\" profile=any enable=yes\r\nnetsh advfirewall firewall add rule name=\"%game_id%\" dir=in action=allow program=\"%game_path%\\local\\bf4.exe\" profile=any enable=yes\r\n";
+        let m = ScriptProbe::analyse(script).to_manifest("bf4").unwrap();
+        assert_eq!(m.launch.exe, "BF4LAN.exe");
+        assert_eq!(as_windows_program("a/Server.v2".into()), "a/Server.v2.exe");
+        assert_eq!(as_windows_program("run.BAT".into()), "run.BAT");
+        assert!(
+            m.launch.required_files.is_empty(),
+            "{:?}",
+            m.launch.required_files
+        );
+    }
 
     const QUAKE3: &str = "set game_path=%1\nset game_id=%2\nset game_lang=%3\nset player=%4\n\necho off\ncls\nsetlocal EnableDelayedExpansion\ncd /d \"%~dp0\"\ncd local\n\n\nnetsh advfirewall firewall add rule name=\"%game_id%\" dir=in action=allow program=\"%game_path%\\local\\quake3.exe\" profile=any enable=yes >nul\n\n\"quake3.exe\"\n\nnetsh advfirewall firewall delete rule name=\"%game_id%\" >nul\n\nexit";
 
