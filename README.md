@@ -226,6 +226,16 @@ again.
   player joined. Possible ways out:
   a fix in Wine/Proton, or the launcher writing `cfg/race.ini` `[REMOTE]` and starting `acs.exe`
   itself.
+- **Blur — check on real hardware:** under Proton 11 on the VM the game shows its German title
+  screen and then stays there after Enter for minutes at full CPU (software rendering). Check
+  with a GPU before writing a profile.
+- **Black Mesa: CODEX emulator does not load under Wine:** `bin/codex.dll`'s initialisation fails
+  ("Failed to load the launcher DLL", Proton 11 and GE-Proton 11-7 alike). The launcher does not
+  set a name in its `steam_emu.ini` either.
+- **Battlefield 2142: package with a stray file — check after the next install:** the sync
+  server's share holds a 4 GB `__rar_…` file next to the archive that no peer has; the launcher
+  now asks the engine about the archive alone (`Transport::file_complete`). Unit-tested; the real
+  install and the game itself are still to be checked.
 - **Battlelog links on Linux (`bf3lan://`) — check at the LAN:** Battlefield 3's
   `game_setup.cmd` registers the scheme in the game's prefix; the launcher reads it from the
   prefix's `system.reg`, offers itself to the desktop for it (`mimeapps.list`, a hidden desktop

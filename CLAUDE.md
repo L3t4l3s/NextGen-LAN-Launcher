@@ -328,6 +328,22 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   beidseitig geprüft) — gesetzt vorab, erscheint der Dialog nicht, der sonst gern hinter dem
   Vollbild hängt. Herausfinden: `user.reg`/`system.reg` des Prefix vor und nach dem Klick
   vergleichen (der Wineserver schreibt die Dateien erst beim Beenden bzw. zeitverzögert).
+- **Weitere Formen in `player_settings`:** `xml = "var[name=language]"` wählt das erste Element mit
+  diesem Attributwert (Blobby Volley 2, `<var name="…" value="…"/>`); `create_only = true` legt
+  eine ganze Datei nur an, wenn sie fehlt (Battlefield 2 listet ein Konto nur mit
+  `General/Audio/Video/ServerSettings/mapList.con` daneben, leere reichen; per Halbierung
+  ermittelt). Steam-Emulatoren werden zusätzlich unter `<Ordner>/Plugins` (6 Ebenen) gesucht:
+  Battalion 1944 hat Goldberg in `Battalion/Plugins/OnlineSubsystemSteam/…/Win64`.
+- **ColdClientLoader unter Proton:** Mit Goldbergs/gbe_forks `ColdClientLoader.ini` in `local/`
+  (oder eine Ebene tiefer) setzt der Proton-Plan `WINEDLLOVERRIDES=lsteamclient=d`
+  (`add_dll_override`, eine vorhandene Angabe zur DLL gewinnt). Sonst lädt Protons Brücke zum
+  echten Steam in den Spielprozess und das Spiel meldet „Steam must be running“ (Borderlands 2,
+  32 bit; per `WINEDEBUG=+loaddll` gefunden).
+- **Freigabe mit fremder Datei:** Meldet die Engine eine Freigabe nie als vollständig, obwohl
+  `<id>.eti` liegt und kein `.!sync` mehr da ist, fragt `tick` höchstens alle 30 s
+  `Transport::file_complete` (Resilio `get_files` mit `path`, nur mit API-Key) nach dem Archiv
+  allein (`Observation::archive_confirmed`). Anlass: `__rar_…`-Rest im BF2142-Share. Eine
+  Freigabe, die fertig ist und (fast) nichts enthält, meldet `install.no_archive` („LAN Server“).
 - **Einstellungen im Windows-Benutzerordner:** `folder = "locallow"` usw. (`player_settings::Folder`)
   plus `json = "a.b"` (`set_json`, fehlende Ebenen werden angelegt, Nicht-JSON bleibt stehen, gleicher
   Wert schreibt nicht). Der Ordner ist `launch::windows_profile(plan)`: Windows `USERPROFILE`,

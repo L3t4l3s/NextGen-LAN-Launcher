@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.7.3
+
+- Ein Paket, dessen Freigabe auf dem Sync-Server eine Datei enthält, die niemand hat, bleibt nicht
+  mehr bei 99,9 % stehen: Ist das Archiv selbst vollständig, fragt der Launcher den Sync-Dienst
+  danach und installiert. Bei Battlefield 2142 liegt neben dem Archiv eine 4 GB große
+  WinRAR-Restdatei.
+- Proton: Spiele mit Goldbergs ColdClientLoader starten ohne Protons Steam-Brücke
+  (`lsteamclient`). Borderlands 2 brach sonst mit „Steam must be running“ ab.
+- Spielername auch für Steam-Emulatoren in Unreal-Plugins (Battalion 1944 hieß bei allen
+  „ChangeMe“).
+- Profile können ein XML-Element über ein Attribut wählen (`var[name=language]`) und eine Datei
+  nur anlegen, wenn sie fehlt (`create_only`).
+- Neue Startprofile: Blobby Volley 2 (deutsch, Name), Battlefield 2 (deutsch, lokales Konto mit
+  dem Spielernamen statt „defaultPlayer“), BlazeRush, Blood II, Bloodsports.TV, Battalion 1944,
+  Borderlands 2. Auf der VM geprüft, Mehrspieler zwischen Rechnern ungetestet.
+
 ## 0.7.2
 
 - Linux: Battlelog-Links (`bf3lan://…`) starten das Spiel. Das Setup von Battlefield 3 trägt

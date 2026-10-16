@@ -1,0 +1,17 @@
+schema = 1
+id = "blaze"
+title = "BlazeRush"
+revisions = ["20211227"]
+source = "NextGen LAN Launcher: start script and menu checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's start script starts game.exe; the launcher sets the name in
+# the package's Goldberg emulator (settings/, steam_settings/). The menu
+# stays English: the game has no language option, and neither Goldberg's
+# "german" nor `setLanguage german` in an autoexec.cfg changes it.
+exe = ""
+args = []

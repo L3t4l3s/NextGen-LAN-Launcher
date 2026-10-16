@@ -251,6 +251,14 @@ pub trait Transport: Send + Sync {
         Ok(Vec::new())
     }
     async fn list_shares(&self) -> Result<Vec<ShareStatus>>;
+    /// Whether the engine has every block of one file of a share (`name`,
+    /// relative to it); `None` when it cannot tell. Asked for the package
+    /// when the share as a whole never completes: a share on the sync server
+    /// can carry a file nobody has (`__rar_16140.31467`, what WinRAR left
+    /// behind next to Battlefield 2142's archive).
+    async fn file_complete(&self, _dir: &Path, _name: &str) -> Result<Option<bool>> {
+        Ok(None)
+    }
     /// Switch between LAN-only and internet mode.
     async fn set_lan_mode(&self, lan_only: bool) -> Result<()>;
 }

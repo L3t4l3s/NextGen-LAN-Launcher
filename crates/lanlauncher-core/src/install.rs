@@ -140,6 +140,9 @@ pub struct Observation {
     /// progress, including while indexing or during an API outage.
     pub managed_sync: bool,
     pub disk_free: Option<u64>,
+    /// The engine has every block of the archive itself, though the share
+    /// as a whole is not complete ([`Transport::file_complete`]).
+    pub archive_confirmed: bool,
 }
 
 /// Whose figure an [`Observation`] speaks with. A change from one to the
@@ -343,6 +346,7 @@ impl Observation {
             transport: None,
             managed_sync: false,
             disk_free: disks.free_for(&paths.share_dir),
+            archive_confirmed: false,
         }
     }
 }
@@ -456,6 +460,11 @@ pub struct Tracker {
     /// Since when the engine has called the share complete while it holds
     /// no package: a catalog entry whose share has nothing to install yet.
     complete_without_archive_since: Option<Instant>,
+    /// When the engine was last asked about the archive alone
+    /// ([`Observation::archive_confirmed`]), and since when an answer counts:
+    /// one from before a repair or a failed check is about the old file.
+    archive_asked_at: Option<Instant>,
+    archive_answers_from: Instant,
 }
 
 impl Tracker {
@@ -486,6 +495,8 @@ impl Tracker {
             shown: None,
             share_retry_at: None,
             complete_without_archive_since: None,
+            archive_asked_at: None,
+            archive_answers_from: Instant::now(),
         }
     }
 
@@ -528,6 +539,7 @@ impl Tracker {
         self.last_progress_at = Instant::now();
         self.indexing_since = None;
         self.complete_without_archive_since = None;
+        self.forget_archive_answers();
         self.high_water = [0, 0];
         self.last_total = 0;
     }
@@ -548,6 +560,7 @@ impl Tracker {
         self.last_progress_at = Instant::now();
         self.indexing_since = None;
         self.complete_without_archive_since = None;
+        self.forget_archive_answers();
         self.high_water = [0, 0];
         self.last_total = 0;
         self.rate_sample = None;
@@ -623,6 +636,12 @@ impl Tracker {
         self.problem = Some(problem);
     }
 
+    /// An answer about the archive given before now no longer counts.
+    fn forget_archive_answers(&mut self) {
+        self.archive_asked_at = None;
+        self.archive_answers_from = Instant::now();
+    }
+
     pub fn verification_failed(&mut self, detail: String, archive_len: Option<u64>) {
         log::warn!(
             "verify: {} archive incomplete, back to the download ({detail})",
@@ -631,6 +650,7 @@ impl Tracker {
         self.phase = Phase::Syncing;
         self.verify_failed_at = Some(Instant::now());
         self.verify_failed_len = archive_len;
+        self.forget_archive_answers();
         self.archive_stable_since = None;
         self.problem = Some(
             Problem::new("install.archive_incomplete", Severity::Warning)
@@ -791,7 +811,10 @@ impl Tracker {
                 // where it knows, it decides, and nothing overrides that. A
                 // check asked for by hand would read the same placeholder,
                 // and waiting turns it into an archive just as little.
-                let engine_mostly_done = (!obs.managed_sync || obs.transport.is_some())
+                // The archive itself confirmed whole counts as well: a share
+                // with a file nobody has never completes.
+                let engine_mostly_done = obs.archive_confirmed
+                    || (!obs.managed_sync || obs.transport.is_some())
                     && obs.transport.as_ref().is_none_or(|t| {
                     let nine_tenths =
                         |bytes: u64| (bytes as u128) * 10 >= (t.bytes_total as u128) * 9;
@@ -1189,6 +1212,10 @@ pub struct InstallManager {
     work: Mutex<HashMap<String, ActiveWork>>,
     generation: std::sync::atomic::AtomicU64,
     progress: Arc<std::sync::Mutex<HashMap<String, f64>>>,
+    /// What the engine said about a game's archive alone: its size, when.
+    /// Asked off the tick ([`Transport::file_complete`]), which holds the
+    /// trackers and must not wait on an engine that is slow to answer.
+    archive_answers: Arc<std::sync::Mutex<HashMap<String, (u64, Instant)>>>,
     results: Arc<std::sync::Mutex<Vec<WorkResult>>>,
     pub policy: Policy,
     pub lan_only: bool,
@@ -1270,6 +1297,7 @@ impl InstallManager {
             work: Mutex::new(HashMap::new()),
             generation: std::sync::atomic::AtomicU64::new(0),
             progress: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            archive_answers: Arc::new(std::sync::Mutex::new(HashMap::new())),
             results: Arc::new(std::sync::Mutex::new(Vec::new())),
             policy: Policy::default(),
             lan_only: true,
@@ -1834,6 +1862,57 @@ impl InstallManager {
                 .get(&crate::transport::normalise_dir(&paths.share_dir))
                 .cloned();
             let tracker = trackers.get_mut(&id).expect("tracker exists");
+            // The archive is there and no longer written, but the engine
+            // does not call the share complete: ask about the archive alone,
+            // every half minute at most.
+            let waiting_for_share = tracker.phase == Phase::Syncing
+                && obs.archive_len.is_some()
+                && obs.partial_len.is_none()
+                && obs
+                    .transport
+                    .as_ref()
+                    .is_some_and(|t| t.state != ShareState::Complete);
+            let answer = self
+                .archive_answers
+                .lock()
+                .ok()
+                .and_then(|a| a.get(&id).copied());
+            let confirmed = answer.is_some_and(|(len, at)| {
+                Some(len) == obs.archive_len && at >= tracker.archive_answers_from
+            });
+            if waiting_for_share
+                && !confirmed
+                && tracker
+                    .archive_asked_at
+                    .is_none_or(|at| now.duration_since(at) >= Duration::from_secs(30))
+            {
+                tracker.archive_asked_at = Some(now);
+                let (transport, answers) = (self.transport.clone(), self.archive_answers.clone());
+                let (dir, name, len) = (
+                    paths.share_dir.clone(),
+                    format!("{id}.eti"),
+                    obs.archive_len,
+                );
+                let game = id.clone();
+                tokio::spawn(async move {
+                    match transport.file_complete(&dir, &name).await {
+                        Ok(Some(true)) => {
+                            log::info!(
+                                "{game}: the engine has all of {name}, though not the whole share; going on with it"
+                            );
+                            if let (Some(len), Ok(mut answers)) = (len, answers.lock()) {
+                                answers.insert(game, (len, Instant::now()));
+                            }
+                        }
+                        Ok(Some(false)) => {}
+                        Ok(None) => {
+                            log::debug!("{game}: the engine cannot say whether {name} is whole")
+                        }
+                        Err(e) => log::info!("{game}: could not ask the engine about {name}: {e}"),
+                    }
+                });
+            }
+            obs.archive_confirmed = waiting_for_share && confirmed;
             if let Some(p) = progress_snapshot.get(&id) {
                 tracker.work_progress = *p;
             }
@@ -2290,6 +2369,7 @@ mod tests {
             }),
             disk_free: Some(1 << 40),
             managed_sync: false,
+            archive_confirmed: false,
         }
     }
 
@@ -2398,6 +2478,29 @@ mod tests {
             Some("folder not found")
         );
         assert!(matches!(problem.fix, Some(FixAction::RepairGame { .. })));
+    }
+
+    #[test]
+    fn an_archive_the_engine_has_whole_is_verified_though_the_share_is_not() {
+        // Battlefield 2142's share on the sync server holds a 4 GB
+        // `__rar_…` file WinRAR left behind, which nobody has: the engine
+        // never calls the share complete, the archive itself is whole.
+        let mut t = Tracker::new("bf2142");
+        t.request_install();
+        let t0 = Instant::now();
+        let mut o = obs(Some(2_362_902_533), None, Some("20180915"), Some(36));
+        o.managed_sync = true;
+        t.step(&o, &policy(), t0);
+        assert_eq!(
+            t.step(&o, &policy(), t0 + Duration::from_secs(20)),
+            Action::None
+        );
+        o.archive_confirmed = true;
+        t.step(&o, &policy(), t0 + Duration::from_secs(21));
+        assert_eq!(
+            t.step(&o, &policy(), t0 + Duration::from_secs(40)),
+            Action::Verify
+        );
     }
 
     #[test]

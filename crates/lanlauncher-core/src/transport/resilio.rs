@@ -1798,6 +1798,28 @@ impl Transport for ResilioTransport {
         }))
     }
 
+    async fn file_complete(&self, dir: &Path, name: &str) -> Result<Option<bool>> {
+        // Only the documented API lists a share's files.
+        if !self.client.has_api_key() {
+            return Ok(None);
+        }
+        let Some(secret) = self.secret_for(dir).await else {
+            return Ok(None);
+        };
+        let files = self
+            .client
+            .api("get_files", &[("secret", &secret), ("path", name)])
+            .await?;
+        Ok(files.as_array().and_then(|files| {
+            let file = files
+                .iter()
+                .find(|f| f.get("name").and_then(Value::as_str) == Some(name))?;
+            let have = file.get("have_pieces").and_then(Value::as_u64)?;
+            let total = file.get("total_pieces").and_then(Value::as_u64)?;
+            Some(total > 0 && have == total)
+        }))
+    }
+
     async fn share_peers(&self, dir: &Path) -> Result<Vec<SharePeer>> {
         // Only the documented API lists peers per share; the web-UI folder
         // list carries no usable per-peer figures.

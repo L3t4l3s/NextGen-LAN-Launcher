@@ -1,0 +1,60 @@
+schema = 1
+id = "blobby"
+title = "Blobby Volley 2"
+revisions = ["20250218"]
+source = "NextGen LAN Launcher: start script, menu, language and player name checked with Proton 11 (2026-10); network game unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# blobby.exe from local/.
+exe = ""
+args = []
+
+# The settings are <var name="…" value="…"/> entries of config.xml. The game
+# reads the user's copy (AppData\Roaming\org.dk\blobby, written once
+# something is changed in the options) before the package's data/config.xml;
+# both are set, a copy that is not there is not made. The languages are
+# data/lang_<code>.xml. Both sides get the name: a network game uses the
+# side the player picks.
+[[settings]]
+file = "data/config.xml"
+xml = "var[name=language]"
+key = "value"
+value = { de = "de", en = "en", fr = "fr" }
+
+[[settings]]
+file = "data/config.xml"
+xml = "var[name=left_player_name]"
+key = "value"
+value = "%player%"
+
+[[settings]]
+file = "data/config.xml"
+xml = "var[name=right_player_name]"
+key = "value"
+value = "%player%"
+
+[[settings]]
+folder = "appdata"
+file = "org.dk/blobby/config.xml"
+xml = "var[name=language]"
+key = "value"
+value = { de = "de", en = "en", fr = "fr" }
+
+[[settings]]
+folder = "appdata"
+file = "org.dk/blobby/config.xml"
+xml = "var[name=left_player_name]"
+key = "value"
+value = "%player%"
+
+[[settings]]
+folder = "appdata"
+file = "org.dk/blobby/config.xml"
+xml = "var[name=right_player_name]"
+key = "value"
+value = "%player%"

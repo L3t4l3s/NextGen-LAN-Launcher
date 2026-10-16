@@ -1,0 +1,84 @@
+schema = 1
+id = "bf2"
+title = "Battlefield 2 Complete Edition"
+revisions = ["20211227"]
+source = "NextGen LAN Launcher: start script, menu, language, player profile and a singleplayer map checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts BF2.exe
+# from local/ (patch 1.5, no GameSpy).
+exe = ""
+args = []
+
+# The language: BF2.exe reads Language under this key; the values are the
+# folders of mods/bf2/Localization. The plain key counts in a win32 prefix,
+# WOW6432Node in a win64 one.
+[[settings]]
+registry = 'HKLM\SOFTWARE\Electronic Arts\EA Games\Battlefield 2'
+key = "Language"
+value = { de = "German", en = "English", fr = "French" }
+
+[[settings]]
+registry = 'HKLM\SOFTWARE\WOW6432Node\Electronic Arts\EA Games\Battlefield 2'
+key = "Language"
+value = { de = "German", en = "English", fr = "French" }
+
+# The player's name is a local account: without one the game greets a
+# "Recruit" and makes one called "defaultPlayer" for everybody, and its
+# "multiplayer" asks for a GameSpy registration that no longer exists. The
+# launcher keeps account 0001 named after the player and the default one;
+# it is picked in the login list (the logos before it play every start).
+# The game lists an account only when its folder also holds General.con,
+# Audio.con, Video.con, ServerSettings.con and mapList.con (empty ones are
+# enough, the game fills them); those are made only where they are missing.
+[[settings]]
+folder = "documents"
+file = "Battlefield 2/Profiles/Global.con"
+line = "GlobalSettings.setDefaultUser"
+value = "0001"
+
+[[settings]]
+folder = "documents"
+file = "Battlefield 2/Profiles/0001/Profile.con"
+line = "LocalProfile.setName"
+value = "%player%"
+
+[[settings]]
+folder = "documents"
+file = "Battlefield 2/Profiles/0001/Profile.con"
+line = "LocalProfile.setNick"
+value = "%player%"
+
+[[settings]]
+folder = "documents"
+file = "Battlefield 2/Profiles/0001/General.con"
+value = ""
+create_only = true
+
+[[settings]]
+folder = "documents"
+file = "Battlefield 2/Profiles/0001/Audio.con"
+value = ""
+create_only = true
+
+[[settings]]
+folder = "documents"
+file = "Battlefield 2/Profiles/0001/Video.con"
+value = ""
+create_only = true
+
+[[settings]]
+folder = "documents"
+file = "Battlefield 2/Profiles/0001/ServerSettings.con"
+value = ""
+create_only = true
+
+[[settings]]
+folder = "documents"
+file = "Battlefield 2/Profiles/0001/mapList.con"
+value = ""
+create_only = true

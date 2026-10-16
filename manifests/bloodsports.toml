@@ -1,0 +1,17 @@
+schema = 1
+id = "bloodsports"
+title = "Bloodsports.TV"
+revisions = ["20200110"]
+source = "NextGen LAN Launcher: start script and menu with the player's name checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's start script starts SmartSteamLoader.exe; the launcher sets
+# the name in its SmartSteamEmu.ini (shown in the menu). The menu is
+# English. The first start asks for the player's experience and offers the
+# tutorial; the answers go into the emulator's save data.
+exe = ""
+args = []

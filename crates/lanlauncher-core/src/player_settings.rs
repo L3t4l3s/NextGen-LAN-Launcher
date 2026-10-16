@@ -55,6 +55,12 @@
 //! xml = "config"               # `<config language="English" …>`
 //! key = "language"             # (Barotrauma)
 //! value = { de = "German", en = "English" }
+//!
+//! [[settings]]                 # the element picked by an attribute:
+//! file = "data/config.xml"     # `<var name="language" value="en"/>`
+//! xml = "var[name=language]"   # (Blobby Volley 2)
+//! key = "value"
+//! value = { de = "de", en = "en" }
 //! ```
 //!
 //! `value` is text (`%player%`, `%game_lang%` filled in) or one per game
@@ -107,6 +113,12 @@ pub struct PlayerSetting {
     /// The value's type; text when not given.
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub value_type: Option<ValueType>,
+    /// A whole file written only where there is none yet; one the game
+    /// wrote stays as it is. Battlefield 2 lists a profile only when its
+    /// folder holds `General.con`, `Audio.con`, `Video.con`,
+    /// `ServerSettings.con` and `mapList.con`, and fills empty ones itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub create_only: Option<bool>,
 }
 
 /// The folder a setting's `file` is relative to.
@@ -276,18 +288,37 @@ impl PlayerSetting {
                     && n.chars()
                         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
             };
+            let (element, filter) = selector(tag);
+            let selector_ok = name(element)
+                && filter.is_none_or(|(attribute, value)| {
+                    name(attribute)
+                        && !value.is_empty()
+                        && !value
+                            .chars()
+                            .any(|c| "\"'<>[]&".contains(c) || c.is_control())
+                });
             if self.file.is_none()
                 || self.section.is_some()
                 || self.line.is_some()
                 || self.json.is_some()
                 || self.value_type.is_some_and(|t| t != ValueType::Text)
-                || !name(tag)
+                || !selector_ok
                 || self.key.as_deref().is_some_and(|k| !name(k))
             {
                 return Err(
-                    "settings: xml needs a file and an element name (and an attribute as key), nothing else",
+                    "settings: xml needs a file and an element name, optionally `name[attribute=value]` (and an attribute as key), nothing else",
                 );
             }
+        }
+        if self.create_only == Some(true)
+            && (self.section.is_some()
+                || self.key.is_some()
+                || self.line.is_some()
+                || self.json.is_some()
+                || self.xml.is_some()
+                || self.registry.is_some())
+        {
+            return Err("settings: create_only is for a whole file");
         }
         if self.value_type == Some(ValueType::Dword) && !all(is_dword) {
             return Err("settings: a dword value must be a number (decimal or 0x…)");
@@ -578,6 +609,10 @@ pub fn apply(
         // A file the package does not have yet is made, folders and all:
         // Call of Duty 2 makes its player profile only when asked for one.
         let path = existing_or_new(&root, file);
+        if setting.create_only == Some(true) && path.exists() {
+            done.push(Applied::Unchanged(path));
+            continue;
+        }
         let utf8 = matches!(kind, Kind::Json { .. });
         let typed = setting.value_type.unwrap_or_default();
         done.push(if root == local {
@@ -798,17 +833,31 @@ fn xml_declared(text: &str) -> Option<&str> {
     Some(&rest[..rest.find(quote)?])
 }
 
-/// `text` with the first `<tag>` element (any case, as Anno writes
-/// `<LanguageTAG>…</LanguageTag>`; attributes allowed; an empty `<tag/>`
-/// gets its text too) holding `value`, escaped; `None` when it has no such
-/// element outside comments.
+/// An element as a setting names it: `var[name=language]` is the first
+/// `<var>` whose `name` attribute is `language`, `config` the first
+/// `<config>`.
+fn selector(tag: &str) -> (&str, Option<(&str, &str)>) {
+    match tag.strip_suffix(']').and_then(|t| t.split_once('[')) {
+        Some((element, filter)) => match filter.split_once('=') {
+            Some((attribute, value)) => (element, Some((attribute, value))),
+            None => (tag, None),
+        },
+        None => (tag, None),
+    }
+}
+
+/// `text` with the first element `tag` names ([`selector`]; any case, as
+/// Anno writes `<LanguageTAG>…</LanguageTag>`; attributes allowed; an empty
+/// `<tag/>` gets its text too) holding `value`, escaped; `None` when it has
+/// no such element outside comments.
 fn set_xml(text: &str, tag: &str, value: &str) -> Option<String> {
     let escaped = value
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;");
+    let name = selector(tag).0;
     let (at, gt) = find_start_tag(text, tag)?;
-    let after = at + 1 + tag.len();
+    let after = at + 1 + name.len();
     if text[at..gt].trim_end().ends_with('/') {
         let open = text[at..gt].trim_end().trim_end_matches('/').trim_end();
         return Some(format!(
@@ -822,17 +871,55 @@ fn set_xml(text: &str, tag: &str, value: &str) -> Option<String> {
     let end = start
         + text[start..]
             .to_ascii_lowercase()
-            .find(&format!("</{}", tag.to_ascii_lowercase()))?;
+            .find(&format!("</{}", name.to_ascii_lowercase()))?;
     Some(format!("{}{escaped}{}", &text[..start], &text[end..]))
 }
 
-/// Where the first `<tag …>` start tag outside comments begins and where its
-/// `>` is (outside quoted attribute values); not `<tag2>`.
+/// The attributes of the start tag from `from` (after its name) to `gt`:
+/// each name with where its value starts and ends, inside the quotes.
+/// `None` for a tag this cannot read.
+fn attributes(text: &str, from: usize, gt: usize) -> Option<Vec<(&str, usize, usize)>> {
+    let bytes = text.as_bytes();
+    let skip_space = |mut i: usize| {
+        while i < gt && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        i
+    };
+    let mut found = Vec::new();
+    let mut i = from;
+    loop {
+        i = skip_space(i);
+        if i >= gt || bytes[i] == b'/' {
+            return Some(found);
+        }
+        let name_start = i;
+        while i < gt && !bytes[i].is_ascii_whitespace() && bytes[i] != b'=' && bytes[i] != b'/' {
+            i += 1;
+        }
+        let name = &text[name_start..i];
+        i = skip_space(i);
+        if bytes.get(i) != Some(&b'=') {
+            continue;
+        }
+        i = skip_space(i + 1);
+        let quote = *bytes.get(i).filter(|&&q| q == b'"' || q == b'\'')?;
+        let open = i + 1;
+        let close = open + text[open..gt].find(quote as char)?;
+        found.push((name, open, close));
+        i = close + 1;
+    }
+}
+
+/// Where the first start tag `tag` names ([`selector`]) outside comments
+/// begins and where its `>` is (outside quoted attribute values); not
+/// `<tag2>`.
 fn find_start_tag(text: &str, tag: &str) -> Option<(usize, usize)> {
+    let (element, filter) = selector(tag);
     let lower = text.to_ascii_lowercase();
-    let name = tag.to_ascii_lowercase();
+    let name = element.to_ascii_lowercase();
     let mut from = 0;
-    while let Some(found) = lower[from..].find(&format!("<{name}")) {
+    'candidates: while let Some(found) = lower[from..].find(&format!("<{name}")) {
         let at = from + found;
         from = at + 1;
         if let Some(comment) = lower[..at].rfind("<!--") {
@@ -853,7 +940,20 @@ fn find_start_tag(text: &str, tag: &str) -> Option<(usize, usize)> {
             match (quote, c) {
                 (None, '"' | '\'') => quote = Some(c),
                 (Some(q), c) if c == q => quote = None,
-                (None, '>') => return Some((at, after + i)),
+                (None, '>') => {
+                    let gt = after + i;
+                    if let Some((attribute, value)) = filter {
+                        let matches = attributes(text, after, gt).is_some_and(|list| {
+                            list.iter().any(|(n, open, close)| {
+                                n.eq_ignore_ascii_case(attribute) && &text[*open..*close] == value
+                            })
+                        });
+                        if !matches {
+                            continue 'candidates;
+                        }
+                    }
+                    return Some((at, gt));
+                }
                 _ => {}
             }
         }
@@ -862,9 +962,9 @@ fn find_start_tag(text: &str, tag: &str) -> Option<(usize, usize)> {
     None
 }
 
-/// `text` with `attribute` of the first `<tag>` element (names in any case)
-/// holding `value`, escaped; added before the tag's end when it has none.
-/// `None` when there is no such element outside comments.
+/// `text` with `attribute` of the first element `tag` names ([`selector`];
+/// names in any case) holding `value`, escaped; added before the tag's end
+/// when it has none. `None` when there is no such element outside comments.
 fn set_xml_attribute(text: &str, tag: &str, attribute: &str, value: &str) -> Option<String> {
     let (at, gt) = find_start_tag(text, tag)?;
     let escaped = value
@@ -873,37 +973,12 @@ fn set_xml_attribute(text: &str, tag: &str, attribute: &str, value: &str) -> Opt
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;");
-    // The attributes one by one, after the element's name: `name = "…"`.
-    let bytes = text.as_bytes();
-    let mut i = at + 1 + tag.len();
-    let skip_space = |mut i: usize| {
-        while i < gt && bytes[i].is_ascii_whitespace() {
-            i += 1;
-        }
-        i
-    };
-    loop {
-        i = skip_space(i);
-        if i >= gt || bytes[i] == b'/' {
-            break;
-        }
-        let name_start = i;
-        while i < gt && !bytes[i].is_ascii_whitespace() && bytes[i] != b'=' && bytes[i] != b'/' {
-            i += 1;
-        }
-        let name = &text[name_start..i];
-        i = skip_space(i);
-        if bytes.get(i) != Some(&b'=') {
-            continue;
-        }
-        i = skip_space(i + 1);
-        let quote = *bytes.get(i).filter(|&&q| q == b'"' || q == b'\'')?;
-        let open = i + 1;
-        let close = open + text[open..gt].find(quote as char)?;
-        if name.eq_ignore_ascii_case(attribute) {
-            return Some(format!("{}{escaped}{}", &text[..open], &text[close..]));
-        }
-        i = close + 1;
+    let from = at + 1 + selector(tag).0.len();
+    if let Some((_, open, close)) = attributes(text, from, gt)?
+        .into_iter()
+        .find(|(name, _, _)| name.eq_ignore_ascii_case(attribute))
+    {
+        return Some(format!("{}{escaped}{}", &text[..open], &text[close..]));
     }
     // Not there yet: added at the end of the start tag (before `/>`).
     let head = text[at..gt].trim_end();
@@ -1128,9 +1203,13 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>, 
             .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
             .map(|e| e.path()),
     );
+    // Or as an engine plugin of the game, in
+    // `Battalion/Plugins/OnlineSubsystemSteam/Binaries/ThirdParty/Steamv141/Win64/`
+    // (Battalion 1944, Goldberg there named everybody "ChangeMe").
     for top in engines {
         let third_party = top.join("Engine").join("Binaries").join("ThirdParty");
         found.extend(find_files(&third_party, 3, wanted));
+        found.extend(find_files(&top.join("Plugins"), 6, wanted));
     }
     found.sort();
     found.dedup();
@@ -1662,6 +1741,45 @@ mod tests {
     }
 
     #[test]
+    fn a_file_made_only_where_there_is_none() {
+        // Battlefield 2's profile needs five companion files; the game's own
+        // must survive every start.
+        let tmp = tempfile::tempdir().unwrap();
+        let local = tmp.path().join("local");
+        let profile = tmp.path().join("user");
+        std::fs::create_dir_all(&local).unwrap();
+        let made = setting(
+            "folder = 'documents'\nfile = 'Battlefield 2/Profiles/0001/Video.con'\nvalue = ''\ncreate_only = true",
+        );
+        assert!(matches!(made.kind(), Ok(Kind::WholeFile { .. })));
+        let (done, _) = apply(
+            &local,
+            Some(&profile),
+            std::slice::from_ref(&made),
+            &player(),
+        );
+        assert!(matches!(done[0], Applied::Written(_)), "{done:?}");
+        let video = profile.join("Documents/Battlefield 2/Profiles/0001/Video.con");
+        assert_eq!(std::fs::read_to_string(&video).unwrap(), "");
+        std::fs::write(&video, "VideoSettings.setResolution 1280x720@60Hz\r\n").unwrap();
+        let (done, _) = apply(
+            &local,
+            Some(&profile),
+            std::slice::from_ref(&made),
+            &player(),
+        );
+        assert!(matches!(done[0], Applied::Unchanged(_)), "{done:?}");
+        assert!(std::fs::read_to_string(&video)
+            .unwrap()
+            .contains("1280x720"));
+        assert!(
+            setting("file = 'a.cfg'\nline = 'seta name'\nvalue = 'x'\ncreate_only = true")
+                .kind()
+                .is_err()
+        );
+    }
+
+    #[test]
     fn the_forms_a_profile_can_give() {
         let ini = setting(
             "file = 'System/User.ini'\nsection = 'DefaultPlayer'\nkey = 'Name'\nvalue = '%player%'",
@@ -1901,6 +2019,26 @@ mod tests {
         assert!(parse("file = 'a.xml'\nxml = 'a b'\nvalue = 'x'")
             .kind()
             .is_err());
+        // An element picked by an attribute (Blobby Volley 2's config.xml).
+        let vars = "<userconfig>\n\t<var name=\"left_player_name\" value=\"Left Player\"/>\n\t<var name=\"language\" value=\"en\"/>\n</userconfig>";
+        assert_eq!(
+            set_xml_attribute(vars, "var[name=language]", "value", "de").as_deref(),
+            Some("<userconfig>\n\t<var name=\"left_player_name\" value=\"Left Player\"/>\n\t<var name=\"language\" value=\"de\"/>\n</userconfig>")
+        );
+        assert_eq!(
+            set_xml_attribute(vars, "var[name=missing]", "value", "de"),
+            None
+        );
+        assert!(
+            parse("file = 'a.xml'\nxml = 'var[name=language]'\nkey = 'value'\nvalue = 'x'")
+                .kind()
+                .is_ok()
+        );
+        assert!(
+            parse("file = 'a.xml'\nxml = 'var[name=a\"b]'\nkey = 'value'\nvalue = 'x'")
+                .kind()
+                .is_err()
+        );
         // Empty, with attributes, in a comment, a longer name.
         assert_eq!(
             set_xml(
@@ -2087,6 +2225,28 @@ mod tests {
         assert_eq!(done.len(), 4);
         assert_eq!(
             std::fs::read_to_string(dir.join("steam_settings/force_account_name.txt")).unwrap(),
+            "Jürgen"
+        );
+    }
+
+    #[test]
+    fn goldberg_in_an_unreal_plugin_is_found() {
+        // Battalion 1944: an older Goldberg (only `settings/`) in the game's
+        // Steam plugin, seven levels below `local/`.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp
+            .path()
+            .join("Battalion/Plugins/OnlineSubsystemSteam/Binaries/ThirdParty/Steamv141/Win64");
+        std::fs::create_dir_all(dir.join("settings")).unwrap();
+        std::fs::write(
+            dir.join("steam_api64.dll"),
+            b"MZ...account_name.txt...local_save.txt",
+        )
+        .unwrap();
+        std::fs::write(dir.join("settings/account_name.txt"), "ChangeMe").unwrap();
+        assert!(!goldberg(tmp.path(), &player()).is_empty());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("settings/account_name.txt")).unwrap(),
             "Jürgen"
         );
     }

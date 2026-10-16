@@ -1,0 +1,19 @@
+schema = 1
+id = "blands2"
+title = "Borderlands 2"
+revisions = ["20260627"]
+source = "NextGen LAN Launcher: start script, German main menu with the player's name checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's start script starts its gbe_fork ColdClientLoader
+# (Borderlands2.exe in local/), which starts the game; the launcher sets name
+# and language in steam_settings/configs.user.ini. Under Proton the launcher
+# keeps Proton's Steam bridge out (lsteamclient), as for every package with a
+# ColdClientLoader: with it the game ended with "Steam must be running". The
+# first start looks for downloadable content for about a minute.
+exe = ""
+args = []

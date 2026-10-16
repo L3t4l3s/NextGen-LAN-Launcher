@@ -1,0 +1,18 @@
+schema = 1
+id = "blood2"
+title = "Blood II: The Chosen"
+revisions = ["20231117"]
+source = "NextGen LAN Launcher: setup, start script, launcher, menu and hosting a Bloodbath game checked with Proton 11 (2026-10); joining from another machine unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's start script starts BLOOD2.EXE, Monolith's launcher
+# ("Launch Blood2"). The game keeps no player name: its multiplayer wizard
+# asks for one on every join and host, filled in with the name of the
+# character picked (Caleb), so there is nothing for the launcher to set.
+# The menu is English only.
+exe = ""
+args = []
