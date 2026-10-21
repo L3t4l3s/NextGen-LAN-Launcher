@@ -1,0 +1,23 @@
+schema = 1
+id = "cod6"
+title = "Call of Duty: Modern Warfare 2"
+revisions = ["20200315"]
+source = "NextGen LAN Launcher: start script, IW4x menu and the player name checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts IW4x
+# (iw4x.exe). The package is English only.
+exe = ""
+args = []
+
+# Without a name IW4x opens on "Player Name: Unknown Soldier". On the very
+# first start the script empties players\ (the package ships one guid.dat
+# for everyone) after this was written, so the game asks once.
+[[settings]]
+file = "players/iw4x_config.cfg"
+line = "seta name"
+value = "%player%"

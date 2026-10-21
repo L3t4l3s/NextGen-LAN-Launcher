@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.7.10
+
+- macOS/Linux: Ein Startskript, das etwas an `clip` weiterreicht, läuft jetzt durch. Wine hat kein
+  `clip`, und Wines cmd bricht das ganze Skript ab, wenn das Programm hinter einem `|` fehlt
+  (Call of Duty: Black Ops endete so sofort, ohne Fenster).
+- Neue Startprofile: Call of Duty: Black Ops (Hinweis zum Ablauf mit Host und Dedicated Server),
+  Modern Warfare 2 (IW4x, Spielername) und World at War (Profil mit Spielername, ohne das die
+  Profilanlage offline scheitert). Auf der VM geprüft, Mehrspieler ungetestet.
+
 ## 0.7.9
 
 - macOS/Linux: `robocopy` in ETI-Skripten läuft jetzt als gleichwertiges `xcopy`. Wines robocopy

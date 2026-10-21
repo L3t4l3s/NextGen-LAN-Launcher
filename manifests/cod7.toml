@@ -1,0 +1,24 @@
+schema = 1
+id = "cod7"
+title = "Call of Duty: Black Ops"
+revisions = ["20250430"]
+source = "NextGen LAN Launcher: install, start script, bgT5 launcher and the multiplayer menu checked with Proton 11 (2026-10); dedicated server and multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's start script asks for the host's IP, writes it with the
+# player's name into bgset.ini and opens bgT5launcher.exe (host mode,
+# singleplayer/zombies, multiplayer, dedicated server). The package is
+# English only. Its `echo … | clip` ended the whole script under Wine
+# until the launcher took clip out. At the LAN the host enters their own
+# IP, activates host mode in bgT5 and starts the dedicated server (map
+# mp_zoo); everyone else picks Multiplayer and joins.
+exe = ""
+args = []
+
+[setup]
+notes.de = "Das Startskript fragt nach der IP-Adresse des Hosts; der Host gibt seine eigene ein."
+notes.en = "The start script asks for the host's IP address; the host enters their own."

@@ -236,7 +236,12 @@ again.
   not been initialised" in `CArrayGet`), Red Alert 2 ("String Manager failed to initialize",
   independent of language and name), Generals Zero Hour ("DirectX 8.1 … video card") and Crashday
   ("Shader konnte nicht erstellt werden") stop on the VM without a GPU; whether they run with a GPU
-  is unchecked.
+  is unchecked. Modern Warfare 2 (IW4x) dies a few seconds in with DXVK on the VM (a crash inside
+  a 32-bit graphics library) and reaches its menu with `PROTON_USE_WINED3D=1`; check DXVK with a
+  GPU before putting that into the profile.
+- **Call of Duty: World at War, Modern Warfare 2, Black Ops — check at the LAN:** the profiles
+  reach the multiplayer menus under Proton 11 on the VM; joining a game, World at War's prewritten
+  offline profile across PCs and Black Ops' bgT5 host mode with its dedicated server are untested.
 - **Call of Juarez: Bound in Blood — open:** its start script now copies the game into the prefix
   (robocopy runs as xcopy), but `start /affinity AA` fails under Wine (its start takes `AA` for the
   program), and without a CPU limit the game crashes in `engine_x86.dll`. With

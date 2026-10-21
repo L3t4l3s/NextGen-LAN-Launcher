@@ -163,7 +163,10 @@ fn denied(base: &str) -> Option<Reason> {
         "dism" => Reason::WindowsFeature,
         "taskkill" => Reason::EndsProcesses,
         "pause" | "timeout" | "choice" => Reason::WaitsForKey,
-        "powershell" | "pwsh" | "bcdedit" | "shutdown" | "runas" => {
+        // Wine has no `clip`, and its cmd ends the whole script with 255
+        // when the program after a `|` is missing (Black Ops copies its
+        // console commands with `echo … | clip`).
+        "powershell" | "pwsh" | "bcdedit" | "shutdown" | "runas" | "clip" => {
             Reason::NotInWine(base.to_string())
         }
         _ => return None,
@@ -1130,6 +1133,24 @@ mod tests {
         let filtered = filter(b"cd local\r\nrobocopy /e src dst\r\n");
         assert!(String::from_utf8_lossy(&filtered.bytes).contains("xcopy \"src\\*\" \"dst\" /e"));
         assert_eq!(filtered.skipped[0].reason, Reason::Robocopy);
+    }
+
+    #[test]
+    fn a_pipe_into_clip_does_not_end_the_script() {
+        let filtered = filter(b"echo /statsetbyname rank 49;uploadstats| clip\r\nstart.exe\r\n");
+        let text = String::from_utf8_lossy(&filtered.bytes);
+        assert!(
+            text.starts_with("echo /statsetbyname rank 49;uploadstats| ver>nul"),
+            "{text}"
+        );
+        assert!(text.contains("\nstart.exe"));
+        assert_eq!(filtered.skipped[0].reason, Reason::NotInWine("clip".into()));
+        // On its own line it becomes a remark, in a block only it goes.
+        let filtered = filter(b"clip < key.txt\r\nif exist x (type x | clip) else (echo n)\r\n");
+        let text = String::from_utf8_lossy(&filtered.bytes);
+        assert!(text.starts_with("rem "), "{text}");
+        assert!(text.contains("if exist x (type x | ver>nul"), "{text}");
+        assert_eq!(filtered.skipped.len(), 2);
     }
 
     fn args(exe: &str, words: &[&str]) -> crate::manifest::ScriptArgs {

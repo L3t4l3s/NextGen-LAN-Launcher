@@ -1,0 +1,38 @@
+schema = 1
+id = "cod5"
+title = "Call of Duty: World at War"
+revisions = ["20160920"]
+source = "NextGen LAN Launcher: setup, start script, the player profile and the multiplayer menu checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# "CoDWaW LanFixed.exe" (solo/co-op, switches to CoDWaWmp.exe). The setup
+# unpacks the LAN maps into %LOCALAPPDATA%\Activision\CoDWaW\mods. English
+# only. Multiplayer says "Unable to initialize Punkbuster" once.
+exe = ""
+args = []
+
+# Without a profile the game asks for an "online profile", and creating one
+# fails offline ("Profile could not be created"). A profile written ahead
+# works: players/profiles/active.txt names it, its configs hold the name; a
+# fixed profile name, as a player's name may hold what a folder name cannot.
+[[settings]]
+folder = "localappdata"
+file = "Activision/CoDWaW/players/profiles/active.txt"
+value = "LAN"
+
+[[settings]]
+folder = "localappdata"
+file = "Activision/CoDWaW/players/profiles/LAN/config_mp.cfg"
+line = "seta name"
+value = "%player%"
+
+[[settings]]
+folder = "localappdata"
+file = "Activision/CoDWaW/players/profiles/LAN/config.cfg"
+line = "seta name"
+value = "%player%"
