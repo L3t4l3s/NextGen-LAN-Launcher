@@ -1,0 +1,22 @@
+schema = 1
+id = "cube2"
+title = "Cube 2 - Sauerbraten"
+revisions = ["20200810"]
+source = "NextGen LAN Launcher: start script and the name in the main menu checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's start script starts bin64/sauerbraten.exe from local/,
+# where the game keeps its config. English only.
+exe = ""
+args = []
+
+# autoexec.cfg runs at every start, after the game's own config.cfg; the
+# package has none, the menu says "unnamed".
+[[settings]]
+file = "autoexec.cfg"
+line = "name"
+value = "%player%"

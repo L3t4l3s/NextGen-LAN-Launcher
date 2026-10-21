@@ -1,0 +1,32 @@
+schema = 1
+id = "civ4"
+title = "Civilization IV"
+revisions = ["20210503"]
+source = "NextGen LAN Launcher: start script, language and name checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's start script starts Civilization4.exe. The game reads its
+# CivilizationIV.ini from My Games/<name of its folder>, "local" here, not
+# the copy in the package.
+exe = ""
+args = []
+
+# English(0), French(1), German(2), as the ini's own comment says.
+[[settings]]
+folder = "documents"
+file = "My Games/local/CivilizationIV.ini"
+section = "CONFIG"
+key = "Language"
+value = { de = "2", en = "0", fr = "1" }
+
+# The multiplayer name ("Account Username"; the package says ChangeMe).
+[[settings]]
+folder = "documents"
+file = "My Games/local/CivilizationIV.ini"
+section = "GAME"
+key = "Nickname"
+value = "%player%"

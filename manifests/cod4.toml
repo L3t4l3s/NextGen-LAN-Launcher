@@ -1,0 +1,28 @@
+schema = 1
+id = "cod4"
+title = "Call of Duty 4: Modern Warfare"
+revisions = ["20160921"]
+source = "NextGen LAN Launcher: start script, German menu and the player profile checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts the
+# multiplayer binary (iw3mp.exe). The package is German only (zone/german).
+exe = ""
+args = []
+
+# Without a profile the game opens on "Sie benötigen ein Spielerprofil".
+# players/profiles/active.txt names the profile, its config_mp.cfg holds the
+# name; a fixed profile name, as a player's name may hold what a folder name
+# cannot.
+[[settings]]
+file = "players/profiles/active.txt"
+value = "LAN"
+
+[[settings]]
+file = "players/profiles/LAN/config_mp.cfg"
+line = "seta name"
+value = "%player%"

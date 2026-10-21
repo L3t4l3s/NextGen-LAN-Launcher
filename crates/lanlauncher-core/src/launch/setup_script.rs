@@ -104,6 +104,9 @@ pub enum Reason {
     /// Not left out: a line added after the first that asks Wine for the
     /// screen size in a form its wmic answers (`with_screen_query`); line 0.
     ScreenQuery,
+    /// Not left out: Wine's robocopy is a stub (copies nothing, ends with
+    /// 16); the line runs as the same copy through xcopy ([`as_xcopy`]).
+    Robocopy,
 }
 
 /// Written into a `rem` line that may stand inside an `if` block, so it holds
@@ -126,6 +129,7 @@ impl std::fmt::Display for Reason {
                 f.write_str("the profile's arguments found no such program in the script")
             }
             Reason::ScreenQuery => f.write_str("Wine's wmic answers no /format:value"),
+            Reason::Robocopy => f.write_str("Wine's robocopy copies nothing, xcopy does it"),
         }
     }
 }
@@ -562,6 +566,122 @@ fn swap_fnr(line: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// A line that is nothing but `robocopy <from> <to> [options]` as the same
+/// copy through xcopy: Wine's robocopy is a stub that copies nothing and
+/// ends with 16, and Call of Juarez: Bound in Blood copies its whole game
+/// into the prefix that way before it starts it from there. `/e` and `/s`
+/// carry over, `/d` copies only what is newer (robocopy skips files that
+/// are the same, and the copy runs at every start), `/i` takes the target
+/// for a folder. `None` for anything else: chained or in a block, a file
+/// mask, or an option whose meaning xcopy has no word for — above all the
+/// ones that delete (`/mir`, `/purge`, `/move`).
+fn as_xcopy(line: &[u8]) -> Option<Vec<u8>> {
+    // Byte for byte: the scripts are in the ANSI code page, and every
+    // character this looks for is ASCII.
+    let text: String = line.iter().map(|&b| b as char).collect();
+    let content = text.trim_end_matches(['\r', '\n']);
+    let body = content.trim_start().trim_start_matches('@').trim_start();
+    // Redirections at the end (`>nul 2>&1`) go with the copy.
+    let (body, redirect) = split_redirections(body);
+    let mut quoted = false;
+    for c in body.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            '&' | '|' | '<' | '>' if !quoted => return None,
+            _ => {}
+        }
+    }
+    // `%ProgramFiles(x86)%` or a quoted "Games (LAN)" are no block.
+    if quoted || !block_parentheses(body.as_bytes()).is_empty() {
+        return None;
+    }
+    let mut words = Vec::new();
+    let mut word = String::new();
+    for c in body.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            c if c.is_whitespace() && !quoted => {
+                if !word.is_empty() {
+                    words.push(std::mem::take(&mut word));
+                }
+            }
+            c => word.push(c),
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    let (first, rest) = words.split_first()?;
+    let program = first.rsplit(['\\', '/']).next()?.to_ascii_lowercase();
+    if program != "robocopy" && program != "robocopy.exe" {
+        return None;
+    }
+    let (options, paths): (Vec<&String>, Vec<&String>) =
+        rest.iter().partition(|w| w.starts_with('/'));
+    // robocopy's default mask changes nothing.
+    let (from, to) = match paths.as_slice() {
+        [from, to] => (from, to),
+        [from, to, mask] if *mask == "*.*" || *mask == "*" => (from, to),
+        _ => return None,
+    };
+    let mut tree = "";
+    let mut newer_only = true;
+    for option in options {
+        let name = option.to_ascii_lowercase();
+        let name = name.split(':').next().unwrap_or("");
+        match name {
+            "/e" => tree = "/e",
+            "/s" if tree.is_empty() => tree = "/s",
+            // Copy even what is the same: no `/d`.
+            "/is" | "/it" => newer_only = false,
+            "/s" | "/np" | "/nfl" | "/ndl" | "/njh" | "/njs" | "/nc" | "/ns" | "/nds" | "/xo"
+            | "/r" | "/w" | "/mt" | "/z" | "/b" | "/zb" | "/copy" | "/dcopy" | "/eta" | "/tee" => {}
+            _ => return None,
+        }
+    }
+    let from = from.trim_end_matches('\\');
+    // `D:\` stays the root: `D:` alone is the current folder there.
+    let to = match to.trim_end_matches('\\') {
+        root if root.ends_with(':') => format!("{root}\\."),
+        to => to.to_string(),
+    };
+    let indent = &content[..content.len() - content.trim_start().len()];
+    let eol = &text[content.len()..];
+    let tree = if tree.is_empty() {
+        String::new()
+    } else {
+        format!(" {tree}")
+    };
+    let newer = if newer_only { " /d" } else { "" };
+    let out = format!(
+        "{indent}xcopy \"{from}\\*\" \"{to}\"{tree} /i /y{newer} /h /k /r /q{redirect}{eol}"
+    );
+    Some(out.chars().map(|c| c as u8).collect())
+}
+
+/// `body` without the redirections at its end (`>nul`, `2>&1`,
+/// `>"log.txt"`), and those as they were, with a space in front.
+fn split_redirections(body: &str) -> (&str, String) {
+    let mut end = body.trim_end().len();
+    let mut taken = Vec::new();
+    loop {
+        let head = body[..end].trim_end();
+        let Some(space) = head.rfind(char::is_whitespace) else {
+            break;
+        };
+        let word = &head[space + 1..];
+        let redirect = word.trim_start_matches(|c: char| c.is_ascii_digit());
+        if !(redirect.starts_with('>') && redirect.len() > 1) {
+            break;
+        }
+        taken.push(word);
+        end = space;
+    }
+    taken.reverse();
+    let redirect = taken.iter().map(|w| format!(" {w}")).collect();
+    (body[..end].trim_end(), redirect)
+}
+
 /// `line` with a profile's arguments right after each program they belong
 /// to (`wanted`: base name and the arguments as one string), where it
 /// begins a command; the line's own arguments follow them. `None` when the
@@ -726,6 +846,16 @@ pub fn filter(script: &[u8]) -> Filtered {
                 line: index + 1,
                 text: line.to_string(),
                 reason: Reason::FindAndReplace,
+                inline: true,
+            });
+        }
+        let copied = as_xcopy(raw);
+        let raw = copied.as_deref().unwrap_or(raw);
+        if copied.is_some() {
+            skipped.push(Skipped {
+                line: index + 1,
+                text: line.to_string(),
+                reason: Reason::Robocopy,
                 inline: true,
             });
         }
@@ -963,6 +1093,44 @@ fn starts_one_of(content: &[u8], names: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn robocopy_runs_as_xcopy() {
+        // Call of Juarez: Bound in Blood copies the game into the prefix.
+        let out = as_xcopy(b"robocopy /e \"%CD%\\local\" \"%reg_path%\"\r\n").unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "xcopy \"%CD%\\local\\*\" \"%reg_path%\" /e /i /y /d /h /k /r /q\r\n"
+        );
+        let out = as_xcopy(b"  robocopy C:\\a\\ D:\\b /NFL /R:2\n").unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "  xcopy \"C:\\a\\*\" \"D:\\b\" /i /y /d /h /k /r /q\n"
+        );
+        // Deleting, chained, a file mask: left as they are.
+        assert!(as_xcopy(b"robocopy a b /mir").is_none());
+        assert!(as_xcopy(b"robocopy a b && echo x").is_none());
+        assert!(as_xcopy(b"robocopy a b *.ini").is_none());
+        // Redirections, Program Files (x86), the default mask, ANSI, a root.
+        let out = as_xcopy(
+            b"robocopy \"%~dp0local\" \"%ProgramFiles(x86)%\\G\" *.* /e /is >nul 2>&1\r\n",
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "xcopy \"%~dp0local\\*\" \"%ProgramFiles(x86)%\\G\" /e /i /y /h /k /r /q >nul 2>&1\r\n"
+        );
+        let out = as_xcopy(b"robocopy \"C:\\Sp\xe4\" D:\\\n").unwrap();
+        assert_eq!(
+            out,
+            b"xcopy \"C:\\Sp\xe4\\*\" \"D:\\.\" /i /y /d /h /k /r /q\n".to_vec()
+        );
+        assert!(as_xcopy(b"if exist x ( robocopy a b )").is_none());
+        assert!(as_xcopy(b"echo robocopy a b").is_none());
+        let filtered = filter(b"cd local\r\nrobocopy /e src dst\r\n");
+        assert!(String::from_utf8_lossy(&filtered.bytes).contains("xcopy \"src\\*\" \"dst\" /e"));
+        assert_eq!(filtered.skipped[0].reason, Reason::Robocopy);
+    }
 
     fn args(exe: &str, words: &[&str]) -> crate::manifest::ScriptArgs {
         crate::manifest::ScriptArgs {

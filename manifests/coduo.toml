@@ -1,0 +1,24 @@
+schema = 1
+id = "coduo"
+title = "Call of Duty: United Offensive"
+revisions = ["20180908"]
+source = "NextGen LAN Launcher: start script, German multiplayer menu and name checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd copies the
+# language files, writes the name into uo/uoconfig_mp.cfg and starts
+# CoDUOMP.exe. The engine copies OpenGL's extension list into a fixed buffer;
+# today's lists are longer, and the game crashed right after its first
+# dialog. The variables shorten the list: Mesa's (AMD, Intel, the VM's
+# llvmpipe, checked) and NVIDIA's (unchecked).
+exe = ""
+args = []
+env = { MESA_EXTENSION_MAX_YEAR = "2003", __GL_ExtensionStringVersion = "17700" }
+
+[setup]
+notes.de = "Beim ersten Start fragt das Spiel, ob es sich für die Hardware einstellen soll; beide Antworten gehen."
+notes.en = "At the first start the game asks whether to configure itself for the hardware; either answer works."

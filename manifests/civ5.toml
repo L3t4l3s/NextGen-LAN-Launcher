@@ -1,0 +1,25 @@
+schema = 1
+id = "civ5"
+title = "Civilization V"
+revisions = ["20210503"]
+source = "NextGen LAN Launcher: language and name checked with Proton 11 (2026-10); multiplayer unchecked"
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The DirectX 9 game straight away. The package's game_start.cmd starts
+# Launcher.exe, the picker between DirectX 9, 10/11 and the touch version;
+# started from the script under Wine it died with an X error (BadWindow,
+# X_UnmapWindow), alone it opened. Name and language are set in the package's
+# ALI213.ini by the launcher.
+exe = "CivilizationV.exe"
+args = []
+required_files = ["CivilizationV.exe"]
+
+[setup]
+# The package's game_setup.cmd only opens Configuration.exe, a settings
+# dialog that waits for a click; unattended it ran into the setup's time
+# limit, and the setup is tried again before the next start.
+notes.de = "Bei der Installation öffnet sich ein Einstellungsfenster (Configuration.exe). Einmal speichern oder schließen, sonst wartet der Start darauf."
+notes.en = "The install opens a settings window (Configuration.exe). Save or close it once, or the start waits for it."

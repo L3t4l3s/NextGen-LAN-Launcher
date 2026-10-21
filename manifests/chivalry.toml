@@ -1,0 +1,16 @@
+schema = 1
+id = "chivalry"
+title = "Chivalry: Medieval Warfare"
+revisions = ["20190322"]
+source = "NextGen LAN Launcher: start script and German main menu checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's start script starts Binaries/Win64/CMW.exe; the launcher sets
+# name and language in its Goldberg emulator (settings/ beside the DLL).
+# Loads for about two minutes on the VM.
+exe = ""
+args = []

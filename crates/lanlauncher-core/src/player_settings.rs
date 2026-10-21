@@ -1169,8 +1169,8 @@ pub fn epic_emu(local: &Path, player: &Player) -> Vec<Applied> {
 }
 
 /// The emulators from one walk through the package: [`goldberg`] (with
-/// gbe_fork), [`smart_steam_emu`] (with RELOADED's `steam_rld.ini`) and
-/// [`epic_emu`].
+/// gbe_fork), [`smart_steam_emu`] (with RELOADED's `steam_rld.ini` and
+/// ALI213's `ALI213.ini`) and [`epic_emu`].
 pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>, Vec<Applied>) {
     let language = steam_language(&player.lang);
     // Goldberg as `steam_api`, or as `steamclient` behind its
@@ -1187,6 +1187,7 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>, 
                 | "steamclient64.ccl.dll"
                 | "smartsteamemu.ini"
                 | "steam_rld.ini"
+                | "ali213.ini"
                 | "nemirtingasepicemu.json"
         )
     };
@@ -1301,13 +1302,16 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>, 
     for ini in found.iter().filter(|path| is_ini(path)) {
         // RELOADED's emulator (Aliens versus Predator Classic 2000) keeps
         // the same in `[Settings]` of its `steam_rld.ini`.
-        let rld = ini
+        // ALI213's (Civilization V) in `[Settings]` of its `ALI213.ini`,
+        // the name as `PlayerName`.
+        let name = ini
             .file_name()
-            .is_some_and(|n| n.eq_ignore_ascii_case("steam_rld.ini"));
-        let (file, section, name_key) = if rld {
-            ("steam_rld.ini", "Settings", "UserName")
-        } else {
-            ("SmartSteamEmu.ini", "SmartSteamEmu", "PersonaName")
+            .map(|n| n.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        let (file, section, name_key) = match name.as_str() {
+            "steam_rld.ini" => ("steam_rld.ini", "Settings", "UserName"),
+            "ali213.ini" => ("ALI213.ini", "Settings", "PlayerName"),
+            _ => ("SmartSteamEmu.ini", "SmartSteamEmu", "PersonaName"),
         };
         for (key, value) in [
             (name_key, Some(player.name.as_str())),
@@ -2114,6 +2118,26 @@ mod tests {
             std::fs::read_to_string(&plain).unwrap(),
             "<p><name>Jürgen</name></p>"
         );
+    }
+
+    #[test]
+    fn ali213s_emulator_gets_the_name_in_its_settings() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("ALI213.ini"),
+            "[Settings]\r\nAppID=8930\r\nPlayerName=ChangeMe\r\nLanguage=english\r\n[DLC]\r\n16860=x\r\n",
+        )
+        .unwrap();
+        let player = Player {
+            name: "Bazzite".into(),
+            lang: "de".into(),
+            id: TEST_ID.into(),
+        };
+        smart_steam_emu(tmp.path(), &player);
+        let text = std::fs::read_to_string(tmp.path().join("ALI213.ini")).unwrap();
+        assert!(text.contains("PlayerName=Bazzite\r\n"), "{text}");
+        assert!(text.contains("Language=german\r\n"));
+        assert!(!text.contains("PersonaName"));
     }
 
     #[test]

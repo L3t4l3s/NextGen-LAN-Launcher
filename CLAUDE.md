@@ -244,6 +244,12 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   später auf Wine umgestellt, läuft sein Setup dann. Die Diagnose-Seite zeigt ein Setup nach
   Installation oder vor dem Start nur, wenn es nicht starten oder nicht rechtzeitig enden konnte
   (ein Exit-Code ≠ 0 sagt unter Wine wenig, er steht im Log), „Setup wiederholen“ immer.
+- **robocopy in Skripten:** Wines `robocopy.exe` ist ein Stub (schreibt „robocopy stub“, kopiert
+  nichts, Exit-Code 16). `setup_script::as_xcopy` macht aus einer Zeile, die nur `robocopy <von>
+  <nach> [Optionen]` ist, `xcopy "<von>\*" "<nach>" [/e|/s] /i /y /d /h /k /r /q` (`Reason::Robocopy`,
+  inline). Nicht übersetzt: verkettete Zeilen, Dateimasken, unbekannte Optionen und alles, was
+  löscht (`/mir`, `/purge`, `/move`). Wines `start` kennt `/affinity` nicht (nimmt den Wert als
+  Programm) — offen, Call of Juarez: Bound in Blood braucht die Kernbegrenzung.
 - **Startskripte unter macOS/Linux:** `launch::unix::starts_through_script` entscheidet: Stammt
   die Startdatei nur aus `game_start.cmd` (`exe_from_script`, oder kein Profil) und hat niemand
   gewählt (keine Alternative, kein `exe_override`, keine eigene Konfiguration), startet das ganze
@@ -301,7 +307,7 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   hinter dem ColdClientLoader), gbe_fork (DLL nennt `configs.user.ini` → `[user::general]
   account_name/language`, UTF-8; nur wo dessen `configs.*.ini` liegen), älteres Goldberg ohne
   `force_*` (DLL nennt nur `account_name.txt` → nur `settings/`, AvP), RELOADED (`steam_rld.ini`
-  `[Settings] UserName/Language`), SmartSteamEmu (jede
+  `[Settings] UserName/Language`), ALI213 (`ALI213.ini` `[Settings] PlayerName/Language`), SmartSteamEmu (jede
   `SmartSteamEmu.ini`: `[SmartSteamEmu] PersonaName/Language`) und Nemirtingas' Epic-Emulator
   (jede vorhandene `NemirtingasEpicEmu.json`: `EOSEmu.User.UserName/Language`, Sprache als
   `de`/`en`/`fr`, dazu eigene `EpicId`/`ProductUserId` aus `%player_id%`: das Paket bringt

@@ -232,6 +232,15 @@ again.
   game's folder (`url_protocol::handlers_of`); on Windows the game's own registration is used and
   may not work. Whether ETI's launcher sets `game_path` for its scripts is unknown (it is
   shipped encrypted).
+- **Round C on the VM — check on real hardware:** C-Dogs SDL ends at once (assertion "array has
+  not been initialised" in `CArrayGet`), Red Alert 2 ("String Manager failed to initialize",
+  independent of language and name), Generals Zero Hour ("DirectX 8.1 … video card") and Crashday
+  ("Shader konnte nicht erstellt werden") stop on the VM without a GPU; whether they run with a GPU
+  is unchecked.
+- **Call of Juarez: Bound in Blood — open:** its start script now copies the game into the prefix
+  (robocopy runs as xcopy), but `start /affinity AA` fails under Wine (its start takes `AA` for the
+  program), and without a CPU limit the game crashes in `engine_x86.dll`. With
+  `WINE_CPU_TOPOLOGY=4:1,3,5,7` it ran in the foreground and quit when started detached.
 - **Blur — check on real hardware:** under Proton 11 on the VM the game shows its German title
   screen and then stays there after Enter for minutes at full CPU (software rendering). Check
   with a GPU before writing a profile.

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.7.9
+
+- macOS/Linux: `robocopy` in ETI-Skripten läuft jetzt als gleichwertiges `xcopy`. Wines robocopy
+  kopiert gar nichts (Call of Juarez: Bound in Blood kopiert sich so in den Prefix). Übersetzt
+  werden nur einfache Zeilen; Optionen, die löschen (`/mir`, `/purge`, `/move`), bleiben unberührt.
+- Spielername und Sprache auch für den ALI213-Emulator (`ALI213.ini`, Civilization V).
+- Neue Startprofile: Call of Duty 4 (Spielerprofil mit Namen), Call of Duty: United Offensive
+  (Absturz nach dem ersten Dialog behoben, die OpenGL-Erweiterungsliste wird gekürzt), Chivalry,
+  Civilization IV und V, Cosmoteer, Cube 2. Auf der VM geprüft, Mehrspieler ungetestet.
+
 ## 0.7.8
 
 - Ein Download, dessen Quelle das Spiel selbst nicht vollständig hat, steht nicht mehr bei
