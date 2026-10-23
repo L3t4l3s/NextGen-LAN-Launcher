@@ -56,6 +56,12 @@
 //! key = "language"             # (Barotrauma)
 //! value = { de = "German", en = "English" }
 //!
+//! [[settings]]                 # a profile of EA's SAGE games (C&C 3, Red
+//! folder = "appdata"           # Alert 3): `directory.ini` naming it and
+//! file = "Red Alert 3/Profiles" # its folder, written only where the game
+//! sage_profiles = true         # has none yet; the name is asked for
+//! value = "%player%"           # otherwise
+//!
 //! [[settings]]                 # the element picked by an attribute:
 //! file = "data/config.xml"     # `<var name="language" value="en"/>`
 //! xml = "var[name=language]"   # (Blobby Volley 2)
@@ -119,6 +125,13 @@ pub struct PlayerSetting {
     /// `ServerSettings.con` and `mapList.con`, and fills empty ones itself.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub create_only: Option<bool>,
+    /// `file` is the profiles folder of an EA SAGE game (C&C 3, Kane's
+    /// Wrath, Red Alert 3): where it has no `directory.ini` yet, one is
+    /// written that names a profile called `value` as the only and current
+    /// one, with its folder, so the game asks for no name. One the game
+    /// wrote stays as it is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sage_profiles: Option<bool>,
 }
 
 /// The folder a setting's `file` is relative to.
@@ -232,6 +245,10 @@ pub enum Kind<'a> {
         /// The attribute set instead of the element's text.
         attribute: Option<&'a str>,
     },
+    /// The profiles folder of an EA SAGE game (`sage_profiles`).
+    SageProfiles {
+        file: &'a str,
+    },
 }
 
 impl PlayerSetting {
@@ -309,6 +326,29 @@ impl PlayerSetting {
                     "settings: xml needs a file and an element name, optionally `name[attribute=value]` (and an attribute as key), nothing else",
                 );
             }
+        }
+        if self.sage_profiles == Some(true) {
+            return match self.file.as_deref() {
+                // The game keeps them in the Windows user's folders: one in
+                // the package would be no place it reads, and could lead
+                // anywhere through a link.
+                Some(file)
+                    if crate::manifest::is_safe_relative(file)
+                        && self.folder.is_some_and(|f| f != Folder::Game)
+                        && self.quote.is_none()
+                        && self.section.is_none()
+                        && self.key.is_none()
+                        && self.line.is_none()
+                        && self.json.is_none()
+                        && self.xml.is_none()
+                        && self.registry.is_none()
+                        && self.create_only.is_none()
+                        && self.value_type.is_none() =>
+                {
+                    Ok(Kind::SageProfiles { file })
+                }
+                _ => Err("settings: sage_profiles needs a user folder and the profiles folder as file, nothing else"),
+            };
         }
         if self.create_only == Some(true)
             && (self.section.is_some()
@@ -592,7 +632,8 @@ pub fn apply(
             | Kind::Line { file, .. }
             | Kind::WholeFile { file }
             | Kind::Json { file, .. }
-            | Kind::Xml { file, .. } => file,
+            | Kind::Xml { file, .. }
+            | Kind::SageProfiles { file } => file,
         };
         let root = match setting.folder.unwrap_or_default().below_profile() {
             None => local.to_path_buf(),
@@ -609,6 +650,10 @@ pub fn apply(
         // A file the package does not have yet is made, folders and all:
         // Call of Duty 2 makes its player profile only when asked for one.
         let path = existing_or_new(&root, file);
+        if let Kind::SageProfiles { .. } = kind {
+            done.push(sage_profiles(&path, &value));
+            continue;
+        }
         if setting.create_only == Some(true) && path.exists() {
             done.push(Applied::Unchanged(path));
             continue;
@@ -626,6 +671,80 @@ pub fn apply(
         });
     }
     (done, registry)
+}
+
+/// A SAGE game's profiles folder with `name` as its only and current
+/// profile, where the game keeps none yet. `directory.ini` spells each byte
+/// of the UTF-16 text as itself when it is a letter or digit and as `_XX`
+/// otherwise (`Profiles_3D_00…` for `Profiles=`); checked with Red Alert 3,
+/// which took `Kevin Ü` from it without asking.
+fn sage_profiles(dir: &Path, name: &str) -> Applied {
+    use std::fmt::Write as _;
+    let index = existing_or_new(dir, "directory.ini");
+    // Profiles the game made stay its own, an index or not.
+    if std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some()) {
+        return Applied::Unchanged(index);
+    }
+    let folder = profile_folder(name);
+    let escape = |text: &str| -> String {
+        let mut out = String::new();
+        for unit in text.encode_utf16() {
+            for byte in unit.to_le_bytes() {
+                if byte.is_ascii_alphanumeric() {
+                    out.push(byte as char);
+                } else {
+                    let _ = write!(out, "_{byte:02X}");
+                }
+            }
+        }
+        out
+    };
+    let text = format!(
+        "{}\n{}\n\n",
+        escape(&format!("Profiles={folder}")),
+        escape(&format!("CurrentProfile={folder}"))
+    );
+    let written =
+        std::fs::create_dir_all(dir.join(&folder)).and_then(|()| std::fs::write(&index, text));
+    match written {
+        Ok(()) => Applied::Written(index),
+        Err(e) => Applied::Left(format!("{}: {e}", index.display())),
+    }
+}
+
+/// A player's name as a folder Windows can make and open: no character it
+/// refuses, no dot or space at the end (it drops them), no device name.
+fn profile_folder(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || "\\/:*?\"<>|".contains(c) {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let mut folder = cleaned
+        .trim_start()
+        .trim_end_matches(['.', ' '])
+        .to_string();
+    if folder.is_empty() {
+        folder = "Player".to_string();
+    }
+    let stem = folder
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit());
+    if device {
+        folder.push('_');
+    }
+    folder
 }
 
 /// The file in whatever case it is there, or where a new one goes: below
@@ -718,6 +837,7 @@ fn write(
     }
     let new = match kind {
         Kind::WholeFile { .. } => value.to_string(),
+        Kind::SageProfiles { .. } => unreachable!("written by sage_profiles"),
         Kind::Ini { section, key, .. } => set_ini(&old.text, *section, key, value, old.eol),
         Kind::Line { line, quoted, .. } => set_line(&old.text, line, value, *quoted, old.eol),
         Kind::Json { path: key, .. } => match set_json(&old.text, key, value, typed) {
@@ -2117,6 +2237,43 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&plain).unwrap(),
             "<p><name>Jürgen</name></p>"
+        );
+    }
+
+    #[test]
+    fn a_sage_game_gets_its_profile_where_it_has_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let profile = tmp.path().join("user");
+        let s = setting(
+            "folder = 'appdata'\nfile = 'Red Alert 3/Profiles'\nsage_profiles = true\nvalue = '%player%'",
+        );
+        let player = Player {
+            name: "Kevin Ü/1".into(),
+            lang: "de".into(),
+            id: String::new(),
+        };
+        let (done, _) = apply(
+            tmp.path(),
+            Some(&profile),
+            std::slice::from_ref(&s),
+            &player,
+        );
+        let dir = profile.join("AppData/Roaming/Red Alert 3/Profiles");
+        assert_eq!(done, vec![Applied::Written(dir.join("directory.ini"))]);
+        // As Red Alert 3 wrote it for a profile it made itself.
+        assert_eq!(
+            std::fs::read_to_string(dir.join("directory.ini")).unwrap(),
+            "P_00r_00o_00f_00i_00l_00e_00s_00_3D_00K_00e_00v_00i_00n_00_20_00_DC_00_5F_001_00\n\
+             C_00u_00r_00r_00e_00n_00t_00P_00r_00o_00f_00i_00l_00e_00_3D_00K_00e_00v_00i_00n_00_20_00_DC_00_5F_001_00\n\n"
+        );
+        assert!(dir.join("Kevin Ü_1").is_dir());
+        // One the game keeps stays.
+        let (done, _) = apply(tmp.path(), Some(&profile), &[s], &player);
+        assert_eq!(done, vec![Applied::Unchanged(dir.join("directory.ini"))]);
+        assert!(
+            setting("file = 'P'\nsage_profiles = true\nkey = 'x'\nvalue = 'a'")
+                .kind()
+                .is_err()
         );
     }
 

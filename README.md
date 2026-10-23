@@ -245,6 +245,9 @@ again.
   a drive letter on the game's own file system the check passes, and the game then fails under
   Ares' Syringe on the VM (an access violation in `cryptbase.dll`). Whether the launcher should
   give the library its own drive letter is to be decided; check on real hardware first.
+- **Kane's Wrath — check on real hardware:** the game ends right after its shader builder on the
+  VM without a GPU. Its profile gets the same prewritten `directory.ini` as Red Alert 3, where the
+  format was checked; for Kane's Wrath it is untested.
 - **Company of Heroes — check on real hardware:** the setup's maps and profile now arrive
   (`unrar.exe` stand-in, checked with Proton 11); the game itself says "Ein funktionierender
   Vollbildmodus konnte nicht gefunden werden" on the VM without a GPU.

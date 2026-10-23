@@ -1,0 +1,21 @@
+schema = 1
+id = "cnc4"
+title = "Command & Conquer 4: Tiberian Twilight"
+revisions = ["20170204"]
+source = "NextGen LAN Launcher: start script with the server prompt and the game's start checked with Proton 11 (2026-10); the login server and multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd asks for the IP
+# of the login emulator (CNC4SERVER.exe in local/), points EA's hosts at it
+# in the prefix's hosts file and starts Data\CNC4.exe with a persona of
+# "Spieler" and a random number from 1 to 10, not the player's name.
+exe = ""
+args = []
+
+[setup]
+notes.de = "Das Startskript fragt nach der IP-Adresse des C&C-4-Servers (CNC4SERVER.exe im Spielordner); wer ihn betreibt, gibt 127.0.0.1 ein."
+notes.en = "The start script asks for the IP address of the C&C 4 server (CNC4SERVER.exe in the game folder); whoever runs it enters 127.0.0.1."

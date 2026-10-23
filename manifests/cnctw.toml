@@ -1,0 +1,23 @@
+schema = 1
+id = "cnctw"
+title = "Command & Conquer 3: Kane's Wrath"
+revisions = ["20160128"]
+source = "NextGen LAN Launcher: setup and start script checked with Proton 11 (2026-10); the game ends right after starting on a VM without GPU, unchecked on real hardware"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd sets the language
+# in the registry and starts Addon\cnc3ep1.exe (RetailExe\1.2\cnc3ep1.dat).
+exe = ""
+args = []
+
+# The game's profiles keep the name; the same form as Red Alert 3's, where
+# it was checked (here only the folder the game wrote on the VM).
+[[settings]]
+folder = "appdata"
+file = "Command and Conquer 3 Kanes Wrath/Profiles"
+sage_profiles = true
+value = "%player%"

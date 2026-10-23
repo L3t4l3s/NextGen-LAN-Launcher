@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.7.12
+
+- Spielername für Red Alert 3: Das Spiel fragt beim ersten Start nach einem Profilnamen. Der
+  Launcher legt das Profil jetzt vorab mit dem Spielernamen an (`directory.ini` im Profilordner,
+  nur wenn das Spiel dort noch nichts hat). Mit Red Alert 3 geprüft, auch mit Umlaut und
+  Leerzeichen im Namen. Kane's Wrath bekommt dasselbe, dort ungetestet (das Spiel startete auf
+  der Test-VM nicht).
+- Neue Startprofile: Red Alert 3, Kane's Wrath, C&C 4 (Hinweis auf die Server-Abfrage).
+
 ## 0.7.11
 
 - macOS/Linux: `unrar.exe` des alten ETI-Launchers in Setup- und Startskripten entpackt jetzt

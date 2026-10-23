@@ -1,0 +1,24 @@
+schema = 1
+id = "cncra3"
+title = "Command & Conquer: Red Alert 3 / Generals Evolution"
+revisions = ["20260610"]
+source = "NextGen LAN Launcher: start script menu, the German main menu and the prewritten player profile checked with Proton 11 (2026-10); multiplayer and the Generals Evolution mod unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd asks for Red
+# Alert 3 or the Generals Evolution mod, sets the language in the registry
+# and starts RA3.exe.
+exe = ""
+args = []
+
+# Without a profile the game asks for a name at its first start; with this
+# one the player's name is the profile.
+[[settings]]
+folder = "appdata"
+file = "Red Alert 3/Profiles"
+sage_profiles = true
+value = "%player%"
