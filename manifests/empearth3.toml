@@ -1,0 +1,24 @@
+schema = 1
+id = "empearth3"
+title = "Empire Earth III"
+revisions = ["20170601"]
+source = "NextGen LAN Launcher: start script, PhysX through winetricks and the German main menu checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts EE3.exe,
+# which needs NVIDIA's PhysX system software (PhysXLoader.dll); the package
+# does not bring it. The package's game_setup.cmd imports install.reg from
+# the game folder while the file lies in local/, so it imports nothing, on
+# Windows too; the game starts without it (checked), whether multiplayer
+# misses the CD key it holds is unchecked.
+exe = ""
+args = []
+winetricks = ["physx"]
+
+[setup]
+notes.de = "Braucht NVIDIAs PhysX-Laufzeit (Legacy). Unter Windows vorher installieren; unter Linux und macOS bietet der Launcher sie vor dem ersten Start an, das braucht einmal Internet."
+notes.en = "Needs NVIDIA's PhysX runtime (legacy). On Windows install it beforehand; on Linux and macOS the launcher offers it before the first start, which needs the internet once."

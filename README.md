@@ -250,6 +250,10 @@ again.
   format was checked; for Kane's Wrath it is untested.
 - **Die Siedler II – Die nächste Generation — check on real hardware:** under Proton 11 on the VM
   without a GPU the game shows only a white window at full load on one core (also with WineD3D).
+- **Empire Earth III, Factorio, Far Cry 2 — check at the LAN:** the profiles reach the main menus
+  under Proton 11; multiplayer is untested. Empire Earth III's setup imports `install.reg` from
+  the game folder while the file lies in `local/` (on Windows too) — whether multiplayer misses
+  its data is open; the file holds a CD key, so the profile cannot carry it.
 - **Company of Heroes 2 — open:** its server comes as `server_setup.cmd` with `coh2_server.exe`
   beside `local/`, not as `server_start.cmd`, so the launcher offers no "Start server" for it
   (`[server] exe` is relative to `local/`). The game reaches its German main menu under Proton 11;

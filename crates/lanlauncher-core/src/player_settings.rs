@@ -119,8 +119,10 @@ pub struct PlayerSetting {
     /// The value's type; text when not given.
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub value_type: Option<ValueType>,
-    /// A whole file written only where there is none yet; one the game
-    /// wrote stays as it is. Battlefield 2 lists a profile only when its
+    /// A whole file (or a JSON key, in a new file) written only where there
+    /// is none yet; one the game wrote stays as it is. Factorio's
+    /// `player-data.json` on Windows is the bought game's too, with the
+    /// account's token. Battlefield 2 lists a profile only when its
     /// folder holds `General.con`, `Audio.con`, `Video.con`,
     /// `ServerSettings.con` and `mapList.con`, and fills empty ones itself.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -354,11 +356,10 @@ impl PlayerSetting {
             && (self.section.is_some()
                 || self.key.is_some()
                 || self.line.is_some()
-                || self.json.is_some()
                 || self.xml.is_some()
                 || self.registry.is_some())
         {
-            return Err("settings: create_only is for a whole file");
+            return Err("settings: create_only is for a whole file or a JSON key");
         }
         if self.value_type == Some(ValueType::Dword) && !all(is_dword) {
             return Err("settings: a dword value must be a number (decimal or 0x…)");
@@ -1965,6 +1966,36 @@ mod tests {
                 .kind()
                 .is_err()
         );
+    }
+
+    #[test]
+    fn a_json_key_only_where_the_file_is_missing() {
+        // Factorio's player-data.json: a bought game's keeps its account.
+        let tmp = tempfile::tempdir().unwrap();
+        let profile = tmp.path().join("user");
+        let s = setting(
+            "folder = 'appdata'\nfile = 'Factorio/player-data.json'\njson = 'service-username'\nvalue = '%player%'\ncreate_only = true",
+        );
+        let player = Player {
+            name: "Bazzite".into(),
+            lang: "de".into(),
+            id: String::new(),
+        };
+        let path = profile.join("AppData/Roaming/Factorio/player-data.json");
+        let (done, _) = apply(
+            tmp.path(),
+            Some(&profile),
+            std::slice::from_ref(&s),
+            &player,
+        );
+        assert_eq!(done, vec![Applied::Written(path.clone())]);
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("\"service-username\": \"Bazzite\""));
+        std::fs::write(&path, r#"{"service-username":"Owner","service-token":"t"}"#).unwrap();
+        let (done, _) = apply(tmp.path(), Some(&profile), &[s], &player);
+        assert_eq!(done, vec![Applied::Unchanged(path.clone())]);
+        assert!(std::fs::read_to_string(&path).unwrap().contains("Owner"));
     }
 
     #[test]

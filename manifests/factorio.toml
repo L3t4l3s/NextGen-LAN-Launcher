@@ -1,0 +1,31 @@
+schema = 1
+id = "factorio"
+title = "Factorio"
+revisions = ["20200721"]
+source = "NextGen LAN Launcher: start script, the German interface and the multiplayer name file checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# bin\x64\factorio.exe (0.17.79), which keeps its data in %APPDATA%\Factorio
+# (config-path.cfg).
+exe = ""
+args = []
+
+# The name in multiplayer games without a Factorio account, written only
+# where there is no player-data.json yet: on Windows the folder is the one
+# a bought Factorio uses too, and its file (with the account's token) stays
+# as it is.
+[[settings]]
+folder = "appdata"
+file = "Factorio/player-data.json"
+json = "service-username"
+value = "%player%"
+create_only = true
+
+# No language setting: a config.ini the launcher would start holds only that
+# key, and the game asks to reset it ("Die Konfigurationsdatei enthält
+# ungültige Inhalte"); left empty, it follows the system's language.

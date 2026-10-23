@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.7.16
+
+- Neue Startprofile: Empire Earth III (bietet NVIDIAs PhysX-Laufzeit über winetricks an, ohne die
+  das Spiel nicht startet), Factorio (Spielername für LAN-Spiele, nur wenn das Spiel noch keine Spielerdaten hat), Far Cry 2.
+
 ## 0.7.15
 
 - „Update verfügbar“ richtet sich nach der `version.ini` der Freigabe, also danach, was der

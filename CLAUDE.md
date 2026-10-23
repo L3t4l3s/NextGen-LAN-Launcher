@@ -351,7 +351,8 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   vergleichen (der Wineserver schreibt die Dateien erst beim Beenden bzw. zeitverzögert).
 - **Weitere Formen in `player_settings`:** `xml = "var[name=language]"` wählt das erste Element mit
   diesem Attributwert (Blobby Volley 2, `<var name="…" value="…"/>`); `create_only = true` legt
-  eine ganze Datei nur an, wenn sie fehlt (Battlefield 2 listet ein Konto nur mit
+  eine ganze Datei (oder einen JSON-Schlüssel in einer neuen Datei; Factorios `player-data.json`,
+  unter Windows die des gekauften Spiels samt Konto) nur an, wenn sie fehlt (Battlefield 2 listet ein Konto nur mit
   `General/Audio/Video/ServerSettings/mapList.con` daneben, leere reichen; per Halbierung
   ermittelt). Steam-Emulatoren werden zusätzlich unter `<Ordner>/Plugins` (6 Ebenen) gesucht:
   Battalion 1944 hat Goldberg in `Battalion/Plugins/OnlineSubsystemSteam/…/Win64`.
