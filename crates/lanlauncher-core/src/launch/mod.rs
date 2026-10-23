@@ -12,6 +12,7 @@ pub mod fnr;
 pub mod proton;
 pub mod setup_script;
 pub mod unix;
+pub mod unrar;
 pub mod url_protocol;
 pub mod windows;
 pub mod winetricks;

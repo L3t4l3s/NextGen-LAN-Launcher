@@ -222,7 +222,7 @@ pub(crate) async fn start(
         .await
         .unwrap_or(true)
     };
-    with_fnr(state, &mut plan).await;
+    with_helpers(state, &mut plan).await;
     let watch = match launch::spawn(&plan, Some(&log)).await {
         Ok((pid, watch)) => {
             attempt.pid = Some(pid);
@@ -505,7 +505,7 @@ pub(crate) async fn prepare_start(
     };
     let skipped = prepared.ok_or("err.start_script_missing")?;
     log_skipped(game_id, "start", &skipped);
-    with_fnr(state, plan).await;
+    with_helpers(state, plan).await;
     Ok(())
 }
 
@@ -530,8 +530,51 @@ pub(crate) async fn prepare_server(
     };
     let skipped = prepared.ok_or("err.extra_missing")?;
     log_skipped(game_id, "server", &skipped);
-    with_fnr(state, plan).await;
+    with_helpers(state, plan).await;
     Ok(())
+}
+
+/// `plan` with the launcher's stand-ins for the old ETI launcher's helpers
+/// the scripts call (`fnr.exe`, `unrar.exe`).
+async fn with_helpers(state: &AppState, plan: &mut LaunchPlan) {
+    with_fnr(state, plan).await;
+    with_unrar(state, plan).await;
+}
+
+/// The old ETI launcher's `unrar.exe` as the launcher's own
+/// (`launch::unrar`): a script that calls the launcher's binary back. Under
+/// an AppImage that binary is the image (`$APPIMAGE`); the program inside
+/// its mount is gone once the launcher ends, and a game may outlive it.
+async fn with_unrar(state: &AppState, plan: &mut LaunchPlan) {
+    // Written once per run: the binary does not change while it runs.
+    static INSTALLED: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    if let Some(installed) = INSTALLED.get() {
+        if let Some(path) = installed {
+            plan.env
+                .insert(launch::unrar::VAR.to_string(), path.clone());
+        }
+        return;
+    }
+    let dir = state.dirs.data.join("tools").join("unrar");
+    let Some(launcher) = crate::url_handlers::exec() else {
+        log::warn!(
+            "cannot name the launcher's own binary: the scripts' unrar.exe calls do nothing"
+        );
+        return;
+    };
+    let installed =
+        tauri::async_runtime::spawn_blocking(move || launch::unrar::install(&dir, &launcher))
+            .await
+            .map_err(std::io::Error::other)
+            .and_then(|r| r);
+    match installed {
+        Ok(script) => {
+            let path = setup_script::wine_path(&script);
+            let _ = INSTALLED.set(Some(path.clone()));
+            plan.env.insert(launch::unrar::VAR.to_string(), path);
+        }
+        Err(e) => log::warn!("cannot write the helper for unrar.exe: {e}"),
+    }
 }
 
 /// `plan` with [`launch::fnr::VAR`] naming the launcher's find and replace,
@@ -626,7 +669,7 @@ pub(crate) async fn run_preparation(
             return Ok(());
         }
     }
-    with_fnr(state, &mut plan).await;
+    with_helpers(state, &mut plan).await;
     let log = state.launch_log(game_id, "prepare");
     // The last run's transcript must not pass for this one's.
     {

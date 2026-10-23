@@ -1,0 +1,23 @@
+schema = 1
+id = "tibcri2"
+title = "C&C Tiberium Crisis 2"
+revisions = ["20260410"]
+source = "NextGen LAN Launcher: start script, the client's menus and the LAN lobby name checked with Proton 11 (2026-10); a match unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts the
+# CnCNet-style client (TiberiumCrisis.exe), which starts gamemd.exe for a
+# match. The client ships only its English translation.
+exe = ""
+args = []
+
+# The LAN lobby name (the package says ChangeMe).
+[[settings]]
+file = "RA2MD.ini"
+section = "MultiPlayer"
+key = "Handle"
+value = "%player%"

@@ -1,0 +1,24 @@
+schema = 1
+id = "cossacks"
+title = "Cossacks 3"
+revisions = ["20200526"]
+source = "NextGen LAN Launcher: start script with the LAN server prompt, the configuration utility and the game's start checked with Proton 11 (2026-10); the server and multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd pings the LAN
+# server (cossacks3.servers.lan), asks for its IP until it answers, writes it
+# into data\resources\servers.dat and starts cossacks.exe, whose
+# configuration utility asks for a player profile (Documents\cossacks\
+# profiles\<name>\profile.dat holds `name = …`; the active one is kept in
+# resource.lib). Its `ping … -4` never answered under Wine until the
+# launcher took the -4 out.
+exe = ""
+args = []
+
+[setup]
+notes.de = "Das Startskript fragt nach der IP-Adresse des Cossacks-3-Servers (Server starten auf einem Rechner der LAN)."
+notes.en = "The start script asks for the IP address of the Cossacks 3 server (Start server on one PC of the LAN)."

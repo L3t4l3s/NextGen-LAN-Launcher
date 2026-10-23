@@ -108,7 +108,7 @@ pub async fn find(state: &Arc<AppState>, scheme: &str) -> Option<(String, Handle
 
 /// Where the desktop starts this launcher: the AppImage, not the program
 /// inside its mount, which is gone once it ends.
-fn exec() -> Option<PathBuf> {
+pub(crate) fn exec() -> Option<PathBuf> {
     std::env::var_os("APPIMAGE")
         .map(PathBuf::from)
         .filter(|p| p.is_file())

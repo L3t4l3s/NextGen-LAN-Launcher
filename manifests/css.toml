@@ -1,0 +1,16 @@
+schema = 1
+id = "css"
+title = "Counter-Strike: Source"
+revisions = ["20240623"]
+source = "NextGen LAN Launcher: start script, the German menu and Goldberg's name checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts hl2.exe
+# -game cstrike. The launcher sets Goldberg's name and language
+# (bin/steam_settings).
+exe = ""
+args = []

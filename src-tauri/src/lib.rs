@@ -1664,6 +1664,15 @@ fn warn_about_a_blank_window(app: &tauri::AppHandle) {
 }
 
 pub fn run() {
+    // Called back by a game's script in its prefix (`launch::unrar`): unpack
+    // and end, before anything of the launcher itself starts.
+    #[cfg(unix)]
+    {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        if args.first().map(String::as_str) == Some(lanlauncher_core::launch::unrar::FLAG) {
+            std::process::exit(lanlauncher_core::launch::unrar::run(&args[1..]));
+        }
+    }
     #[cfg(target_os = "linux")]
     {
         // A request for the running launcher (`--install <id>` …) starts

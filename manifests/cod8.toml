@@ -1,0 +1,17 @@
+schema = 1
+id = "cod8"
+title = "Call of Duty: Modern Warfare 3"
+revisions = ["20250430"]
+source = "NextGen LAN Launcher: start script, the TeknoMW3 launcher and the multiplayer menu with the player's name checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd writes the name
+# into TeknoMW3\teknogods.ini and starts TeknoMW3_Client_Launcher.exe
+# (PLAY starts iw5mp.exe). With internet access the Tekno launcher updates
+# itself first; the package is English only.
+exe = ""
+args = []

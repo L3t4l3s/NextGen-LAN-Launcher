@@ -250,6 +250,19 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   inline). Nicht übersetzt: verkettete Zeilen, Dateimasken, unbekannte Optionen und alles, was
   löscht (`/mir`, `/purge`, `/move`). Wines `start` kennt `/affinity` nicht (nimmt den Wert als
   Programm) — offen, Call of Juarez: Bound in Blood braucht die Kernbegrenzung.
+- **unrar und ping in Skripten:** `"%programfiles%\eti\lan launcher\unrar.exe" x …` wird im Filter
+  zu `"%NLL_UNRAR%" …` (`setup_script::swap_unrar`, auch `start /wait "…" "…unrar.exe" …` als
+  direkter Aufruf); `launch::unrar` schreibt `<data>/tools/unrar/nll-unrar.sh`, das den Launcher
+  selbst mit `--nll-unrar` aufruft (`$APPIMAGE`, nicht das Programm im Mount). `run()` erledigt das
+  ganz am Anfang und endet, entpackt wird mit der eingebauten UnRAR-Bibliothek — SteamOS hat kein
+  unrar. Ein Ziel wie `"%userprofile%\…\"` kommt mit dem schließenden Anführungszeichen im Argument
+  an (`\"`), `parse` streicht es; Laufwerke außer `Z:` gehen über `dosdevices` des Prefix. Wines
+  `ping` kennt `-4` nicht (gibt nur die Hilfe aus), `ping_without_ipv4` streicht es (Cossacks 3
+  fragte sonst endlos nach der Server-IP). Wie beim fnr-Tausch zählt ein Befehl nach `if …` nicht.
+- **Testen aus Claude Code:** Die Shell exportiert `NoDefaultCurrentDirectoryInExePath=1`; ein von
+  dort gestarteter Launcher oder `nll_try` gibt sie an Wine weiter, und Wines `CreateProcess` sucht
+  dann nicht im aktuellen Ordner (Tiberium Crisis 2 fand `GotoTC.exe` nicht). Für Tests immer mit
+  `env -u NoDefaultCurrentDirectoryInExePath` starten.
 - **Startskripte unter macOS/Linux:** `launch::unix::starts_through_script` entscheidet: Stammt
   die Startdatei nur aus `game_start.cmd` (`exe_from_script`, oder kein Profil) und hat niemand
   gewählt (keine Alternative, kein `exe_override`, keine eigene Konfiguration), startet das ganze

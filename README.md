@@ -239,6 +239,19 @@ again.
   is unchecked. Modern Warfare 2 (IW4x) dies a few seconds in with DXVK on the VM (a crash inside
   a 32-bit graphics library) and reaches its menu with `PROTON_USE_WINED3D=1`; check DXVK with a
   GPU before putting that into the profile.
+- **Red Alert 2 engine on an immutable system (Bazzite) — open:** Wine's `Z:` is `/`, which on
+  Bazzite reports 0 bytes free; Tiberium Crisis 2's `gamemd.exe` logs "Free disk space is 0 Mb"
+  and stops with "String Manager failed to initialize" (Red Alert 2 shows the same message). With
+  a drive letter on the game's own file system the check passes, and the game then fails under
+  Ares' Syringe on the VM (an access violation in `cryptbase.dll`). Whether the launcher should
+  give the library its own drive letter is to be decided; check on real hardware first.
+- **Company of Heroes — check on real hardware:** the setup's maps and profile now arrive
+  (`unrar.exe` stand-in, checked with Proton 11); the game itself says "Ein funktionierender
+  Vollbildmodus konnte nicht gefunden werden" on the VM without a GPU.
+- **Cossacks 3 — open:** the catalog names revision 20200527, the sync server's share holds
+  20200526, so the game stays at "Update available" after a fresh install. The player's profile
+  is asked for by the game's configuration utility each time (the active one sits in a binary
+  `resource.lib`).
 - **Call of Duty: World at War, Modern Warfare 2, Black Ops — check at the LAN:** the profiles
   reach the multiplayer menus under Proton 11 on the VM; joining a game, World at War's prewritten
   offline profile across PCs and Black Ops' bgT5 host mode with its dedicated server are untested.
@@ -319,8 +332,12 @@ again.
   game's `game_setup.cmd` runs in the game's prefix through Wine's own `cmd.exe`, with the
   runner the game starts with (CD keys, registry paths, the package's own helpers such as
   `wc3_keys.exe`). Lines a prefix has no use for are left out and logged: `netsh`, `dism`,
-  `taskkill`, `pause`/`timeout`/`choice`, and programs outside the game folder (mostly the old
-  launcher's `unrar.exe`/`fnr.exe`). Against the 32 public ETI setup scripts that leaves out 8
+  `taskkill`, `pause`/`timeout`/`choice`, and programs outside the game folder. The old
+  launcher's `fnr.exe` and `unrar.exe` run as the launcher's own (`launch::fnr`,
+  `launch::unrar`). The `unrar.exe` stand-in calls the launcher's binary back from the
+  prefix (checked with Proton 11 started directly); inside the Steam Linux Runtime container it
+  is untested — an AppImage there has no FUSE and unpacks itself first, a plain build may lack its
+  libraries. Against the 32 public ETI setup scripts that leaves out 8
   lines; the mechanism (paths with spaces and umlauts, the four arguments, `reg add`, exit code)
   was tried with Proton 11 on Linux. Not tried: CrossOver, plain Wine, and most games' real
   scripts. Games installed before this version get their setup at their next start.

@@ -95,6 +95,13 @@ pub enum Reason {
     /// Not left out: `fnr.exe` runs as the launcher's own find and replace
     /// (`launch::fnr`), the line stays as it was otherwise.
     FindAndReplace,
+    /// Not left out: `unrar.exe` runs as the launcher's own unpacking
+    /// (`launch::unrar`), the line stays as it was otherwise.
+    Unpack,
+    /// Not left out: Wine's ping knows no `-4` and prints only its usage,
+    /// so `ping … -4 | find "TTL="` never finds a server; it pings IPv4
+    /// without being asked, the switch goes.
+    PingIpv4,
     /// Not left out: the profile adds arguments to a program the line
     /// starts (`[[script_args]]`).
     Arguments,
@@ -124,6 +131,8 @@ impl std::fmt::Display for Reason {
             Reason::NotInWine(tool) => write!(f, "{tool} does not exist in Wine"),
             Reason::OutsideGame(program) => write!(f, "\"{program}\" is outside the game folder"),
             Reason::FindAndReplace => f.write_str("fnr.exe runs as the launcher's own"),
+            Reason::Unpack => f.write_str("unrar.exe runs as the launcher's own"),
+            Reason::PingIpv4 => f.write_str("Wine's ping knows no -4"),
             Reason::Arguments => f.write_str("arguments from the game's profile"),
             Reason::ArgumentsUnused => {
                 f.write_str("the profile's arguments found no such program in the script")
@@ -554,7 +563,109 @@ fn command_spans(line: &[u8], wanted: impl Fn(&str) -> bool) -> Vec<(usize, usiz
 /// `"%NLL_FNR%"` (`launch::fnr`), its arguments as they were. `None` when
 /// the line calls none.
 fn swap_fnr(line: &[u8]) -> Option<Vec<u8>> {
-    let spans = command_spans(line, |name| name == "fnr");
+    swap(line, "fnr", super::fnr::VAR)
+}
+
+/// The same for `unrar.exe` and `"%NLL_UNRAR%"` (`launch::unrar`), also
+/// where a line hands it to `start` (`start /wait "Update" "…unrar.exe" x
+/// …`, Company of Heroes' extra maps): Wine's start cannot open a host
+/// script, so such a line calls it directly and waits for it, as `/wait`
+/// asked anyway.
+fn swap_unrar(line: &[u8]) -> Option<Vec<u8>> {
+    swap(line, "unrar", super::unrar::VAR).or_else(|| unrar_through_start(line))
+}
+
+/// `line` without the `-4` of each `ping` it runs (Cossacks 3 finds its
+/// server with `ping %masterserver% -n 1 -4 | find /i "TTL="`). `None` when
+/// there is none.
+fn ping_without_ipv4(line: &[u8]) -> Option<Vec<u8>> {
+    let mut drop = Vec::new();
+    let parentheses = block_parentheses(line);
+    for (_, to) in command_spans(line, |name| name == "ping") {
+        // The ping's own arguments: up to the next `&`, `|`, `<`, `>`
+        // outside quotes or the block's parenthesis.
+        let mut quoted = false;
+        let mut end = parentheses
+            .iter()
+            .copied()
+            .find(|at| *at > to)
+            .unwrap_or(line.len());
+        for (at, b) in line.iter().enumerate().take(end).skip(to) {
+            match b {
+                b'"' => quoted = !quoted,
+                b'&' | b'|' | b'<' | b'>' if !quoted => {
+                    end = at;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        for (at, word, _) in command_words(&line[to..end]) {
+            if word == "-4" || word == "/4" {
+                drop.push(to + at);
+            }
+        }
+    }
+    if drop.is_empty() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(line.len());
+    let mut at = 0;
+    for from in drop {
+        // The switch and the space before it.
+        let start = if from > 0 && line[from - 1] == b' ' {
+            from - 1
+        } else {
+            from
+        };
+        out.extend_from_slice(&line[at..start]);
+        at = from + 2;
+    }
+    out.extend_from_slice(&line[at..]);
+    Some(out)
+}
+
+/// A line that is nothing but `start … unrar.exe …`, as a direct call.
+fn unrar_through_start(line: &[u8]) -> Option<Vec<u8>> {
+    let text: String = line.iter().map(|&b| b as char).collect();
+    let content = text.trim_end_matches(['\r', '\n']);
+    let statement = content.trim_start().trim_start_matches('@').trim_start();
+    if !block_parentheses(statement.as_bytes()).is_empty()
+        || super::windows::until_the_next_command(statement).len() != statement.len()
+    {
+        return None;
+    }
+    let program = program_of(statement)?;
+    if base_name(program.trim_matches('"')) != "unrar" {
+        return None;
+    }
+    let words = command_words(statement.as_bytes());
+    if !words.first()?.1.eq_ignore_ascii_case("start") {
+        return None;
+    }
+    // `start /d <folder>` runs it elsewhere; a direct call would read its
+    // relative paths from the wrong folder.
+    if words
+        .iter()
+        .any(|(_, word, _)| word.eq_ignore_ascii_case("/d"))
+    {
+        return None;
+    }
+    let (at, word, _) = words
+        .iter()
+        .skip(1)
+        .find(|(_, word, _)| word.trim_matches('"') == program.trim_matches('"'))?;
+    let indent = &content[..content.len() - content.trim_start().len()];
+    let eol = &text[content.len()..];
+    let rest = &statement[at + word.len()..];
+    let out = format!("{indent}\"%{}%\"{rest}{eol}", super::unrar::VAR);
+    Some(out.chars().map(|c| c as u8).collect())
+}
+
+/// `line` with every program named `name` where a command begins replaced
+/// by the quoted variable `var`. `None` when the line calls none.
+fn swap(line: &[u8], name: &str, var: &str) -> Option<Vec<u8>> {
+    let spans = command_spans(line, |found| found == name);
     if spans.is_empty() {
         return None;
     }
@@ -562,7 +673,7 @@ fn swap_fnr(line: &[u8]) -> Option<Vec<u8>> {
     let mut at = 0;
     for (from, to) in spans {
         out.extend_from_slice(&line[at..from]);
-        out.extend_from_slice(format!("\"%{}%\"", super::fnr::VAR).as_bytes());
+        out.extend_from_slice(format!("\"%{var}%\"").as_bytes());
         at = to;
     }
     out.extend_from_slice(&line[at..]);
@@ -852,6 +963,26 @@ pub fn filter(script: &[u8]) -> Filtered {
                 inline: true,
             });
         }
+        let unpacked = swap_unrar(raw);
+        let raw = unpacked.as_deref().unwrap_or(raw);
+        if unpacked.is_some() {
+            skipped.push(Skipped {
+                line: index + 1,
+                text: line.to_string(),
+                reason: Reason::Unpack,
+                inline: true,
+            });
+        }
+        let pinged = ping_without_ipv4(raw);
+        let raw = pinged.as_deref().unwrap_or(raw);
+        if pinged.is_some() {
+            skipped.push(Skipped {
+                line: index + 1,
+                text: line.to_string(),
+                reason: Reason::PingIpv4,
+                inline: true,
+            });
+        }
         let copied = as_xcopy(raw);
         let raw = copied.as_deref().unwrap_or(raw);
         if copied.is_some() {
@@ -1136,6 +1267,23 @@ mod tests {
     }
 
     #[test]
+    fn ping_loses_the_switch_wine_does_not_know() {
+        let filtered = filter(
+            b"ping %masterserver% -n 1 -4 | find /i \"TTL=\" >nul\r\necho -4\r\ncd x & ping -4 a & echo -4\r\nif x==y (ping a -4) else (echo -4 done)\r\n",
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&filtered.bytes),
+            "ping %masterserver% -n 1 | find /i \"TTL=\" >nul\r\necho -4\r\ncd x & ping a & echo -4\r\nif x==y (ping a) else (echo -4 done)\r\n"
+        );
+        assert_eq!(filtered.skipped.len(), 3);
+        assert_eq!(filtered.skipped[0].reason, Reason::PingIpv4);
+        // `start /d` runs it in another folder: not rewritten.
+        let filtered = filter(b"start /d \"%game_path%\" /wait \"\" \"%programfiles%\\eti\\lan launcher\\unrar.exe\" x maps.eti\r\n");
+        let out = String::from_utf8_lossy(&filtered.bytes);
+        assert!(out.starts_with("rem "), "{out}");
+    }
+
+    #[test]
     fn a_pipe_into_clip_does_not_end_the_script() {
         let filtered = filter(b"echo /statsetbyname rank 49;uploadstats| clip\r\nstart.exe\r\n");
         let text = String::from_utf8_lossy(&filtered.bytes);
@@ -1296,10 +1444,7 @@ mod tests {
                 (3, &Reason::EndsProcesses),
                 (4, &Reason::WaitsForKey),
                 (5, &Reason::WaitsForKey),
-                (
-                    6,
-                    &Reason::OutsideGame("%programfiles%\\eti\\lan launcher\\unrar.exe".into())
-                ),
+                (6, &Reason::Unpack),
                 (7, &Reason::OutsideGame("C:\\Tools\\patch.exe".into())),
                 (
                     9,
@@ -1321,7 +1466,21 @@ mod tests {
             .filter(|s| s.inline)
             .map(|s| s.line)
             .collect();
-        assert_eq!(inline, vec![7, 11]);
+        assert_eq!(inline, vec![6, 7, 11]);
+        // Handed to `start`: called directly, waited for.
+        let filtered = filter(
+            b"start /wait \"LAN Launcher Update: %game_id%\" \"%programfiles%\\eti\\lan launcher\\unrar.exe\" x -o -y \"%game_path%\\coh_maps.eti\" %cohpath%\r\n",
+        );
+        assert_eq!(
+            text(&filtered),
+            "\"%NLL_UNRAR%\" x -o -y \"%game_path%\\coh_maps.eti\" %cohpath%\r\n"
+        );
+        assert_eq!(filtered.skipped[0].reason, Reason::Unpack);
+        // ETI's unrar.exe runs as the launcher's own.
+        assert_eq!(
+            lines[5],
+            "\"%NLL_UNRAR%\" x -o -y \"demo_profile.eti\" %demopath%"
+        );
         // The `cd` the next lines depend on stays.
         assert_eq!(lines[6], "cd local && ver>nul ");
         assert_eq!(lines[10], "if exist x (echo ok) else ver>nul ");

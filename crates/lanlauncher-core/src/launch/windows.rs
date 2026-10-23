@@ -391,12 +391,26 @@ pub(super) fn tokens(line: &str) -> Vec<String> {
 pub(super) fn after_start_is_quoted(statement: &str) -> bool {
     let mut rest = statement.trim_start()[5..].trim_start();
     while let Some(after) = rest.strip_prefix('/') {
-        rest = after
+        let (switch, tail) = after
             .split_once(char::is_whitespace)
-            .map(|(_, r)| r.trim_start())
-            .unwrap_or("");
+            .map(|(s, r)| (s, r.trim_start()))
+            .unwrap_or((after, ""));
+        rest = tail;
+        // `/d <folder>`: the folder, quoted or not, is no title.
+        if switch.eq_ignore_ascii_case("d") {
+            rest = skip_word(rest);
+        }
     }
     rest.starts_with('"') && !rest.starts_with("\"\"")
+}
+
+/// `text` after its first word, a quoted one taken whole.
+fn skip_word(text: &str) -> &str {
+    let end = match text.strip_prefix('"') {
+        Some(inner) => inner.find('"').map_or(text.len(), |at| at + 2),
+        None => text.find(char::is_whitespace).unwrap_or(text.len()),
+    };
+    text[end..].trim_start()
 }
 
 /// The commands of one line: cmd chains them with `&`, `&&`, `|` and `||`,

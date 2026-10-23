@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.7.11
+
+- macOS/Linux: `unrar.exe` des alten ETI-Launchers in Setup- und Startskripten entpackt jetzt
+  wirklich. Bisher wurden diese Zeilen ausgelassen, weil kein Prefix das Programm hat; Company of
+  Heroes bekam so weder seine Zusatzkarten noch das mitgelieferte Spielerprofil. Der Launcher
+  entpackt dafür selbst mit seiner eingebauten UnRAR-Bibliothek, auch auf Systemen ohne `unrar`
+  (SteamOS). Auch die Form `start /wait "…" "…unrar.exe" …` wird erkannt.
+- macOS/Linux: `ping … -4` in Startskripten funktioniert jetzt. Wines `ping` kennt `-4` nicht und
+  gab nur seine Hilfe aus; Cossacks 3 fragte deshalb endlos nach der Server-IP.
+- Neue Startprofile: Call of Duty: Modern Warfare 3, Carmageddon: Reincarnation, C&C Tiberium
+  Crisis 2 (LAN-Name), Counter-Strike: Source, Cossacks 3 (Hinweis auf die Server-Abfrage).
+
 ## 0.7.10
 
 - macOS/Linux: Ein Startskript, das etwas an `clip` weiterreicht, läuft jetzt durch. Wine hat kein
