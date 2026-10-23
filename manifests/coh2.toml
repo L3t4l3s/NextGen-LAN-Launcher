@@ -1,0 +1,21 @@
+schema = 1
+id = "coh2"
+title = "Company of Heroes 2"
+revisions = ["20260304"]
+source = "NextGen LAN Launcher: start script with the server prompt and the German main menu checked with Proton 11 (2026-10); the COMRADE server and multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd looks for the
+# COMRADE server (coh2.servers.lan, else asks), fetches its certificate,
+# puts it into the prefix's root store with certutil (Proton has one) and
+# starts RelicCoH2.exe. The launcher sets gbe_fork's name and language.
+exe = ""
+args = []
+
+[setup]
+notes.de = "Das Startskript fragt nach der Adresse des COMRADE-Servers, wenn coh2.servers.lan nicht aufgelöst wird. Der Server liegt im Paket (coh2_server.exe, server_setup.cmd); ohne ihn bleibt das Spiel bei „Verbindung zum Relic-Server nicht möglich“."
+notes.en = "The start script asks for the COMRADE server's address when coh2.servers.lan does not resolve. The server comes with the package (coh2_server.exe, server_setup.cmd); without it the game stops at \"cannot connect to the Relic server\"."

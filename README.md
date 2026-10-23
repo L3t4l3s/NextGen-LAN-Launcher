@@ -248,6 +248,10 @@ again.
 - **Kane's Wrath — check on real hardware:** the game ends right after its shader builder on the
   VM without a GPU. Its profile gets the same prewritten `directory.ini` as Red Alert 3, where the
   format was checked; for Kane's Wrath it is untested.
+- **Company of Heroes 2 — open:** its server comes as `server_setup.cmd` with `coh2_server.exe`
+  beside `local/`, not as `server_start.cmd`, so the launcher offers no "Start server" for it
+  (`[server] exe` is relative to `local/`). The game reaches its German main menu under Proton 11;
+  the COMRADE server, its certificate under Wine and multiplayer are untested.
 - **Company of Heroes — check on real hardware:** the setup's maps and profile now arrive
   (`unrar.exe` stand-in, checked with Proton 11); the game itself says "Ein funktionierender
   Vollbildmodus konnte nicht gefunden werden" on the VM without a GPU.

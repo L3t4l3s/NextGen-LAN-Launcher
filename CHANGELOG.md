@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.7.14
+
+- Neues Startprofil: Company of Heroes 2 (Hinweis auf die Server-Abfrage).
+
 ## 0.7.13
 
 - macOS/Linux: Spiele mit eigener `steamclient.dll` im Paket (RevEmu, Goldberg) starten unter
