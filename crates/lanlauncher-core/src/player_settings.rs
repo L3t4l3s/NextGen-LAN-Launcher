@@ -1288,9 +1288,84 @@ pub fn epic_emu(local: &Path, player: &Player) -> Vec<Applied> {
     emulators(local, player).2
 }
 
+/// The files of a package's Steam emulators that `wanted` names (lower
+/// case): five folders deep, and where Unreal games keep Steam's DLL —
+/// `Engine/Binaries/ThirdParty/Steamworks/Steamv151/Win64/` (Aliens:
+/// Fireteam Elite) with the engine at the top or in the game's folder, or
+/// an engine plugin's `Plugins/OnlineSubsystemSteam/…/Win64/` (Battalion
+/// 1944, whose Goldberg named everybody "ChangeMe" until it was found
+/// there). Looked for there only, not by walking every package deeper.
+fn emulator_files(local: &Path, wanted: impl Fn(&str) -> bool + Copy) -> Vec<PathBuf> {
+    let mut found = find_files(local, 5, wanted);
+    let engines = std::iter::once(local.to_path_buf()).chain(
+        std::fs::read_dir(local)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .map(|e| e.path()),
+    );
+    for top in engines {
+        let third_party = top.join("Engine").join("Binaries").join("ThirdParty");
+        found.extend(find_files(&third_party, 3, wanted));
+        found.extend(find_files(&top.join("Plugins"), 6, wanted));
+    }
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// Whether a `rev.ini` is RevEmu's: the name alone is common, its
+/// `[Emulator]` section is not.
+fn is_revemu_ini(path: &Path) -> bool {
+    std::fs::read(path).is_ok_and(|bytes| {
+        String::from_utf8_lossy(&bytes)
+            .to_ascii_lowercase()
+            .contains("[emulator]")
+    })
+}
+
+/// Whether the package brings a Steam client of its own that a game starts
+/// with: Goldberg's `ColdClientLoader.ini`, a `steamclient(64).dll` that is
+/// Goldberg's, or one beside RevEmu's `rev.ini` (Counter-Strike: Global
+/// Offensive). Valve's own `steamclient.dll` in a Source game's `bin/` is
+/// none of these. Searched where [`emulators`] searches.
+pub fn brings_own_steam_client(local: &Path) -> bool {
+    let found = emulator_files(local, |name| {
+        matches!(
+            name,
+            "coldclientloader.ini"
+                | "steamclient.dll"
+                | "steamclient64.dll"
+                | "steamclient.ccl.dll"
+                | "steamclient64.ccl.dll"
+                | "rev.ini"
+        )
+    });
+    let name = |path: &Path| {
+        path.file_name()
+            .map(|n| n.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default()
+    };
+    let revemu_dirs: Vec<&Path> = found
+        .iter()
+        .filter(|path| name(path) == "rev.ini" && is_revemu_ini(path))
+        .filter_map(|path| path.parent())
+        .collect();
+    found.iter().any(|path| match name(path).as_str() {
+        "coldclientloader.ini" => true,
+        "rev.ini" => false,
+        _ => {
+            let (gbe, classic) = emulator_marks(path);
+            gbe || classic != Classic::No
+                || path.parent().is_some_and(|dir| revemu_dirs.contains(&dir))
+        }
+    })
+}
+
 /// The emulators from one walk through the package: [`goldberg`] (with
 /// gbe_fork), [`smart_steam_emu`] (with RELOADED's `steam_rld.ini` and
-/// ALI213's `ALI213.ini`) and [`epic_emu`].
+/// ALI213's `ALI213.ini` and RevEmu's `rev.ini`) and [`epic_emu`].
 pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>, Vec<Applied>) {
     let language = steam_language(&player.lang);
     // Goldberg as `steam_api`, or as `steamclient` behind its
@@ -1308,32 +1383,11 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>, 
                 | "smartsteamemu.ini"
                 | "steam_rld.ini"
                 | "ali213.ini"
+                | "rev.ini"
                 | "nemirtingasepicemu.json"
         )
     };
-    let mut found = find_files(local, 5, wanted);
-    // Unreal Engine games keep Steam's DLL deeper, in
-    // `Engine/Binaries/ThirdParty/Steamworks/Steamv151/Win64/` (Aliens:
-    // Fireteam Elite), with the engine at the top or in the game's folder:
-    // looked for there only, not by walking every package deeper.
-    let engines = std::iter::once(local.to_path_buf()).chain(
-        std::fs::read_dir(local)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-            .map(|e| e.path()),
-    );
-    // Or as an engine plugin of the game, in
-    // `Battalion/Plugins/OnlineSubsystemSteam/Binaries/ThirdParty/Steamv141/Win64/`
-    // (Battalion 1944, Goldberg there named everybody "ChangeMe").
-    for top in engines {
-        let third_party = top.join("Engine").join("Binaries").join("ThirdParty");
-        found.extend(find_files(&third_party, 3, wanted));
-        found.extend(find_files(&top.join("Plugins"), 6, wanted));
-    }
-    found.sort();
-    found.dedup();
+    let found = emulator_files(local, wanted);
     let (mut goldberg, mut sse) = (Vec::new(), Vec::new());
     // Which emulator each DLL is, one read per file; a folder once.
     let mut gbe_dirs = std::collections::BTreeSet::new();
@@ -1428,14 +1482,24 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>, 
             .file_name()
             .map(|n| n.to_string_lossy().to_ascii_lowercase())
             .unwrap_or_default();
-        let (file, section, name_key) = match name.as_str() {
-            "steam_rld.ini" => ("steam_rld.ini", "Settings", "UserName"),
-            "ali213.ini" => ("ALI213.ini", "Settings", "PlayerName"),
-            _ => ("SmartSteamEmu.ini", "SmartSteamEmu", "PersonaName"),
+        // RevEmu (Counter-Strike: Global Offensive) keeps the name in
+        // `[steamclient]` of its `rev.ini`, the language in `[Emulator]`.
+        if name == "rev.ini" && !is_revemu_ini(ini) {
+            continue;
+        }
+        let (file, name_at, language_at) = match name.as_str() {
+            "steam_rld.ini" => ("steam_rld.ini", ("Settings", "UserName"), "Settings"),
+            "ali213.ini" => ("ALI213.ini", ("Settings", "PlayerName"), "Settings"),
+            "rev.ini" => ("rev.ini", ("steamclient", "PlayerName"), "Emulator"),
+            _ => (
+                "SmartSteamEmu.ini",
+                ("SmartSteamEmu", "PersonaName"),
+                "SmartSteamEmu",
+            ),
         };
-        for (key, value) in [
-            (name_key, Some(player.name.as_str())),
-            ("Language", language),
+        for ((section, key), value) in [
+            (name_at, Some(player.name.as_str())),
+            ((language_at, "Language"), language),
         ] {
             if let Some(value) = value {
                 let kind = Kind::Ini {
@@ -2275,6 +2339,64 @@ mod tests {
                 .kind()
                 .is_err()
         );
+    }
+
+    #[test]
+    fn revemu_gets_the_name_and_the_language_in_its_sections() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("rev.ini"),
+            "[Emulator]\r\nLanguage =English\r\n\r\n[steamclient]\r\nPlayerName=Player\r\n",
+        )
+        .unwrap();
+        let player = Player {
+            name: "Bazzite".into(),
+            lang: "de".into(),
+            id: String::new(),
+        };
+        emulators(tmp.path(), &player);
+        let text = std::fs::read_to_string(tmp.path().join("rev.ini")).unwrap();
+        assert!(text.contains("Language =german"), "{text}");
+        assert!(
+            text.contains("[steamclient]\r\nPlayerName=Bazzite"),
+            "{text}"
+        ); // A `rev.ini` that is not RevEmu's stays as it is.
+        let other = tempfile::tempdir().unwrap();
+        std::fs::write(other.path().join("rev.ini"), "revision=12\n").unwrap();
+        emulators(other.path(), &player);
+        assert_eq!(
+            std::fs::read_to_string(other.path().join("rev.ini")).unwrap(),
+            "revision=12\n"
+        );
+    }
+
+    #[test]
+    fn an_emulators_own_steam_client_is_told_from_valves() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Valve's own in a Source game's bin/: no emulator.
+        std::fs::create_dir_all(tmp.path().join("bin")).unwrap();
+        std::fs::write(tmp.path().join("bin/steamclient.dll"), "MZ valve").unwrap();
+        assert!(!brings_own_steam_client(tmp.path()));
+        // Beside RevEmu's rev.ini (CS:GO), not beside another rev.ini.
+        std::fs::write(tmp.path().join("steamclient.dll"), "MZ").unwrap();
+        std::fs::write(tmp.path().join("rev.ini"), "revision=1\n").unwrap();
+        assert!(!brings_own_steam_client(tmp.path()));
+        std::fs::write(tmp.path().join("rev.ini"), "[Emulator]\nLanguage=english\n").unwrap();
+        assert!(brings_own_steam_client(tmp.path()));
+        // Goldberg's, two folders down.
+        let gb = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(gb.path().join("Game/Binaries/Win64")).unwrap();
+        std::fs::write(
+            gb.path().join("Game/Binaries/Win64/steamclient64.dll"),
+            "MZ force_account_name.txt",
+        )
+        .unwrap();
+        assert!(brings_own_steam_client(gb.path()));
+        // Goldberg's loader.
+        let cc = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(cc.path().join("Game")).unwrap();
+        std::fs::write(cc.path().join("Game/coldclientloader.INI"), "").unwrap();
+        assert!(brings_own_steam_client(cc.path()));
     }
 
     #[test]

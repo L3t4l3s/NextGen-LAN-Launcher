@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.7.13
+
+- macOS/Linux: Spiele mit eigener `steamclient.dll` im Paket (RevEmu, Goldberg) starten unter
+  Proton ohne dessen Brücke zum echten Steam. Bisher galt das nur für Goldbergs ColdClientLoader;
+  Counter-Strike: Global Offensive stürzte so beim Start in der `steamclient.dll` des Pakets ab.
+- Spielername und Sprache auch für RevEmu (`rev.ini`, Counter-Strike: Global Offensive).
+- Neue Startprofile: C&C Remastered Collection, Counter-Strike: Global Offensive.
+
 ## 0.7.12
 
 - Spielername für Red Alert 3: Das Spiel fragt beim ersten Start nach einem Profilnamen. Der

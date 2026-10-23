@@ -1,0 +1,17 @@
+schema = 1
+id = "cncremaster"
+title = "Command & Conquer Remastered Collection"
+revisions = ["20201005"]
+source = "NextGen LAN Launcher: start script, the collection's launcher and Red Alert's start checked with Proton 11 (2026-10, WineD3D on a VM without GPU); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# ClientLauncherG.exe, which picks Tiberian Dawn or Red Alert (ClientG.exe
+# with InstanceServerG.exe). The launcher sets Goldberg's name and
+# language (steam_settings).
+exe = ""
+args = []

@@ -379,13 +379,15 @@ fn wine_plan(
                         .map(|p| p.to_string_lossy().to_string())
                         .unwrap_or_default(),
                 );
-            if has_cold_client_loader(&ctx.paths.local_dir) {
-                // Goldberg's ColdClientLoader starts the game with the
-                // package's steamclient.dll; under Proton the game's
-                // steam_api loads Proton's bridge to the real Steam
-                // (lsteamclient) as well, and with no Steam running it ends
-                // with "Steam must be running" (Borderlands 2, 32 bit).
-                // The emulator has no use for the bridge.
+            if crate::player_settings::brings_own_steam_client(&ctx.paths.local_dir) {
+                // A package with its own steamclient (Goldberg's
+                // ColdClientLoader, RevEmu's loader) starts the game with it;
+                // under Proton the game's steam_api loads Proton's bridge to
+                // the real Steam (lsteamclient) as well, and with no Steam
+                // running it ends with "Steam must be running" (Borderlands
+                // 2, 32 bit) or crashes inside the emulator's DLL
+                // (Counter-Strike: Global Offensive). The emulator has no
+                // use for the bridge.
                 add_dll_override(&mut env, "lsteamclient", "d");
             }
             let wrapper = steam_runtime(&chosen, &ctx.paths.share_dir, &mut env);
@@ -646,30 +648,6 @@ pub fn server_plan(ctx: &LaunchContext<'_>) -> Result<Option<LaunchPlan>> {
         spec.map(|s| s.env).unwrap_or_default(),
     )
     .map(Some)
-}
-
-/// Whether the package starts through Goldberg's ColdClientLoader: its
-/// `ColdClientLoader.ini` in `local/` or one folder below.
-fn has_cold_client_loader(local: &Path) -> bool {
-    let is_ini = |e: &std::fs::DirEntry| {
-        e.file_name()
-            .to_string_lossy()
-            .eq_ignore_ascii_case("ColdClientLoader.ini")
-    };
-    let Ok(entries) = std::fs::read_dir(local) else {
-        return false;
-    };
-    entries.flatten().any(|e| {
-        if e.file_type().is_ok_and(|t| t.is_dir()) {
-            std::fs::read_dir(e.path())
-                .into_iter()
-                .flatten()
-                .flatten()
-                .any(|inner| is_ini(&inner))
-        } else {
-            is_ini(&e)
-        }
-    })
 }
 
 /// `WINEDLLOVERRIDES` with `dll=mode` added, unless the plan's (or else the
@@ -2076,13 +2054,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cold_client_loader_keeps_protons_steam_bridge_out() {
-        let tmp = tempfile::tempdir().unwrap();
-        assert!(!has_cold_client_loader(tmp.path()));
-        std::fs::create_dir_all(tmp.path().join("Game")).unwrap();
-        std::fs::write(tmp.path().join("Game/coldclientloader.INI"), "").unwrap();
-        assert!(has_cold_client_loader(tmp.path()));
-
+    fn a_dll_override_keeps_what_was_chosen() {
         let mut env = BTreeMap::new();
         env.insert("WINEDLLOVERRIDES".to_string(), "d3d9=n,b;".to_string());
         add_dll_override(&mut env, "lsteamclient", "d");
