@@ -494,7 +494,7 @@ export const de: Messages = {
   "config.entry_hint": "Füllt Startdatei, Argumente und Arbeitsordner mit einem Startpunkt des Profils; gilt nach dem Speichern bei jedem Start.",
   "config.exe": "Startdatei",
   "config.args": "Argumente",
-  "config.args_hint": "Leerzeichen trennen, Anführungszeichen halten zusammen. Windows-Pfade mit \\ gehen so, wie sie sind, auch mit \\ am Ende; Anführungszeichen im Text in einfache Anführungszeichen setzen. Platzhalter: %player%, %game_lang%, %game_path%.",
+  "config.args_hint": "Leerzeichen trennen, Anführungszeichen halten zusammen. Windows-Pfade mit \\ gehen so, wie sie sind, auch mit \\ am Ende; Anführungszeichen im Text in einfache Anführungszeichen setzen. Platzhalter: %player%, %game_lang%, %steam_lang% (german/english/french), %game_path%.",
   "config.workdir": "Arbeitsordner",
   "config.workdir_placeholder": "Ordner der Startdatei",
   "config.runner": "Kompatibilitätsschicht",

@@ -304,4 +304,5 @@ Resolution order: `<data dir>/manifests/<id>.toml` (user) → `<share>/nll-manif
 A manifest may leave `exe` empty: it then only carries setup notes (`flat2`, `cod2` — games whose
 working entry point nobody has established yet), and the executable still comes from the script
 probe or from the user's choice.
-Arguments may use `%player%`, `%game_lang%`, `%game_id%`, `%game_path%`.
+Arguments may use `%player%`, `%game_lang%`, `%steam_lang%` (the game language as Steam names it:
+`german`, `english`, `french`), `%game_id%`, `%game_path%`.

@@ -1682,7 +1682,9 @@ fn emulator_marks(path: &Path) -> (bool, Classic) {
 }
 
 /// The game language as Steam names it.
-fn steam_language(lang: &str) -> Option<&'static str> {
+/// The game language as Steam names it (`german`), for the emulators'
+/// files and for `%steam_lang%` in a profile's arguments.
+pub(crate) fn steam_language(lang: &str) -> Option<&'static str> {
     match lang.to_ascii_lowercase().as_str() {
         "de" => Some("german"),
         "en" => Some("english"),

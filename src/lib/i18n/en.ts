@@ -492,7 +492,7 @@ export const en: Messages = {
   "config.entry_hint": "Fills executable, arguments and working folder with one of the profile's entry points; applies to every start once saved.",
   "config.exe": "Executable",
   "config.args": "Arguments",
-  "config.args_hint": "Spaces separate, quotes keep together. Windows paths with \\ work as they are, a trailing \\ included; put quotes inside text in single quotes. Placeholders: %player%, %game_lang%, %game_path%.",
+  "config.args_hint": "Spaces separate, quotes keep together. Windows paths with \\ work as they are, a trailing \\ included; put quotes inside text in single quotes. Placeholders: %player%, %game_lang%, %steam_lang% (german/english/french), %game_path%.",
   "config.workdir": "Working folder",
   "config.workdir_placeholder": "Folder of the executable",
   "config.runner": "Compatibility layer",

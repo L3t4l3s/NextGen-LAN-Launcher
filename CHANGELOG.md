@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.7.18
+
+- macOS/Linux: Startprofile können die Spielsprache in Steams Schreibweise übergeben (`%steam_lang%`: german,
+  english, french). Left 4 Dead 2 startet damit unter Linux auf Deutsch (`-language`); bisher blieb es
+  englisch, obwohl der Steam-Emulator Deutsch meldete.
+- Neues Startprofil: Keep Talking and Nobody Explodes (Hinweis auf das Handbuch beim Start).
+
 ## 0.7.17
 
 - macOS/Linux: Weitere Pakete mit eigenem Steam-Client starten unter Proton. Eine `steamclient.dll`

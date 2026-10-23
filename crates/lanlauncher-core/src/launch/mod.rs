@@ -245,16 +245,33 @@ pub fn resolve_exe(ctx: &LaunchContext<'_>) -> Result<(PathBuf, Vec<String>, Pat
     Err(Error::Code("err.no_executable".into()))
 }
 
-/// Substitute ETI script variables the manifests may reference.
+/// Substitute ETI script variables the manifests may reference, and
+/// `%steam_lang%`: the game language as Steam names it (`german`), which
+/// Source games take as `-language %steam_lang%` (Left 4 Dead 2 stays
+/// English otherwise, whatever the Steam emulator says).
 pub fn expand_args(args: &[String], ctx: &LaunchContext<'_>) -> Vec<String> {
+    let share = ctx.paths.share_dir.to_string_lossy();
+    let player = ctx.settings.safe_player_name();
+    let lang = &ctx.settings.game_language;
+    let steam_lang = crate::player_settings::steam_language(lang).unwrap_or("english");
     args.iter()
-        .map(|a| {
-            a.replace("%player%", &ctx.settings.safe_player_name())
-                .replace("%game_lang%", &ctx.settings.game_language)
-                .replace("%game_id%", ctx.game_id)
-                .replace("%game_path%", &ctx.paths.share_dir.to_string_lossy())
-        })
+        .map(|a| fill_arg(a, &player, lang, steam_lang, ctx.game_id, &share))
         .collect()
+}
+
+fn fill_arg(
+    arg: &str,
+    player: &str,
+    lang: &str,
+    steam_lang: &str,
+    game_id: &str,
+    game_path: &str,
+) -> String {
+    arg.replace("%player%", player)
+        .replace("%game_lang%", lang)
+        .replace("%steam_lang%", steam_lang)
+        .replace("%game_id%", game_id)
+        .replace("%game_path%", game_path)
 }
 
 /// Receives the exit code of a started process once it ends (`None` when the
@@ -878,6 +895,37 @@ fn is_unix_executable(_m: &std::fs::Metadata) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arguments_get_the_language_as_steam_names_it() {
+        let steam = |lang| crate::player_settings::steam_language(lang).unwrap_or("english");
+        assert_eq!(
+            fill_arg(
+                "-language %steam_lang%",
+                "p",
+                "de",
+                steam("de"),
+                "l4d2",
+                "/g"
+            ),
+            "-language german"
+        );
+        assert_eq!(
+            fill_arg("%steam_lang%", "p", "xx", steam("xx"), "l4d2", "/g"),
+            "english"
+        );
+        assert_eq!(
+            fill_arg(
+                "+name %player% %game_lang%",
+                "Kev",
+                "fr",
+                steam("fr"),
+                "x",
+                "/g"
+            ),
+            "+name Kev fr"
+        );
+    }
 
     #[cfg(unix)]
     #[test]

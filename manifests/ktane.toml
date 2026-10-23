@@ -1,0 +1,20 @@
+schema = 1
+id = "ktane"
+title = "Keep Talking and Nobody Explodes"
+revisions = ["20211023"]
+source = "NextGen LAN Launcher: start script, the manual viewer and the German title screen checked with Proton 11 (2026-10)"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd opens the bomb
+# manual in the game's language (PDFXCview.exe) and starts ktane.exe once
+# the viewer is closed.
+exe = ""
+args = []
+
+[setup]
+notes.de = "Beim Start öffnet sich das Bombenhandbuch; das Spiel startet, sobald es geschlossen wird."
+notes.en = "The bomb manual opens first; the game starts once it is closed."

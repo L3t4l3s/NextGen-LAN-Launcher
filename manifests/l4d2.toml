@@ -1,13 +1,21 @@
 schema = 1
 id = "l4d2"
 title = "Left 4 Dead 2"
-revisions = ["20240115"]
-source = "macETI-LAN v0.6.1 docs (MIT)"
+revisions = ["20240115", "20201021"]
+source = "macETI-LAN v0.6.1 docs (MIT); start and the language argument checked with Proton 11 (2026-10, package 20201021)"
+
+[tested_with]
+linux = ["Proton 11.0"]
 
 [launch]
 exe = "left4dead2.exe"
 args = ["-novid"]
 required_files = ["left4dead2.exe", "bin/engine.dll"]
+
+# Goldberg says german, the game stays English without -language
+# (checked with Proton 11 on package 20201021).
+[platform.linux]
+args = ["-novid", "-language", "%steam_lang%"]
 
 [platform.macos]
 runner = "crossover"
