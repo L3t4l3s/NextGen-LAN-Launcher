@@ -250,6 +250,11 @@ again.
   format was checked; for Kane's Wrath it is untested.
 - **Die Siedler II – Die nächste Generation — check on real hardware:** under Proton 11 on the VM
   without a GPU the game shows only a white window at full load on one core (also with WineD3D).
+- **Portal Knights on Windows — package fix needed:** its `game_start.cmd` calls
+  `SmartSteamLoader.exe`, which the package does not contain (it brings Goldberg), so on Windows
+  nothing starts; the macOS/Linux profile starts `portal_knights_x64.exe` directly.
+- **Round O–R — check at the LAN:** OpenRA, Payday 2, Portal Knights, Quake 3, Renegade Ops and
+  Rune reach their menus under Proton 11; multiplayer is untested.
 - **Round G/H — check at the LAN:** Gang Beasts, GTA 2 (network through DirectPlay), Grey Goo,
   Grim Dawn, Half-Life 2: Deathmatch and Homefront reach their menus under Proton 11; multiplayer
   is untested. GTA 2's setup imports `gta2_install.reg` from the wrong folder, as Empire Earth

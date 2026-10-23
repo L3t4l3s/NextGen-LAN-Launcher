@@ -350,6 +350,10 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   beidseitig geprüft) — gesetzt vorab, erscheint der Dialog nicht, der sonst gern hinter dem
   Vollbild hängt. Herausfinden: `user.reg`/`system.reg` des Prefix vor und nach dem Klick
   vergleichen (der Wineserver schreibt die Dateien erst beim Beenden bzw. zeitverzögert).
+- **MiniYAML (`yaml = "Section.Key"`):** OpenRAs `settings.yaml` (portabel in `local/Support/`):
+  oberste Ebene `Player:`, darunter eingerückt `Name: …` (`set_yaml`: Tabs oder Leerzeichen,
+  Kommentare mit `#` werden übergangen, ein `#` im Namen wird `\#`; immer UTF-8). Mit gesetztem
+  Namen entfällt der Einstiegsdialog.
 - **Weitere Formen in `player_settings`:** `xml = "var[name=language]"` wählt das erste Element mit
   diesem Attributwert (Blobby Volley 2, `<var name="…" value="…"/>`); `create_only = true` legt
   eine ganze Datei (oder einen JSON-Schlüssel in einer neuen Datei; Factorios `player-data.json`,

@@ -1,0 +1,22 @@
+schema = 1
+id = "opencnc"
+title = "OpenRA"
+revisions = ["20260429"]
+source = "NextGen LAN Launcher: start script and the player name in its settings checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# RedAlert.exe (release-20250330, its settings portable in Support\). Its
+# setup installs OpenAL. Without a name OpenRA opens on "Establishing
+# Battlefield Control" and calls everybody "Commander".
+exe = ""
+args = []
+
+[[settings]]
+file = "Support/settings.yaml"
+yaml = "Player.Name"
+value = "%player%"

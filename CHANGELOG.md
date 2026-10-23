@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.7.19
+
+- Spielername auch in MiniYAML-Einstellungen (OpenRA: `yaml = "Player.Name"` in
+  `Support/settings.yaml`); OpenRA fragt damit beim ersten Start nicht mehr nach dem Namen.
+- Neue Startprofile: OpenRA, Payday 2, Portal Knights (startet das Spiel direkt, das Startskript
+  des Pakets ruft einen Loader auf, den es nicht enthält), Renegade Ops, Rune Classic (Name in
+  `User.ini`); Quake 3 mit Hinweis auf die CD-Key-Abfrage.
+
 ## 0.7.18
 
 - macOS/Linux: Startprofile können die Spielsprache in Steams Schreibweise übergeben (`%steam_lang%`: german,

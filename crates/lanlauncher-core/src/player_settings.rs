@@ -127,6 +127,10 @@ pub struct PlayerSetting {
     /// `ServerSettings.con` and `mapList.con`, and fills empty ones itself.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub create_only: Option<bool>,
+    /// A key of OpenRA's MiniYAML settings, `Section.Key`: a top-level
+    /// `Section:` and below it a tab-indented `Key: value`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub yaml: Option<String>,
     /// `file` is the profiles folder of an EA SAGE game (C&C 3, Kane's
     /// Wrath, Red Alert 3): where it has no `directory.ini` yet, one is
     /// written that names a profile called `value` as the only and current
@@ -247,6 +251,12 @@ pub enum Kind<'a> {
         /// The attribute set instead of the element's text.
         attribute: Option<&'a str>,
     },
+    /// A key in a MiniYAML section (`yaml`).
+    Yaml {
+        file: &'a str,
+        section: &'a str,
+        key: &'a str,
+    },
     /// The profiles folder of an EA SAGE game (`sage_profiles`).
     SageProfiles {
         file: &'a str,
@@ -287,6 +297,31 @@ impl PlayerSetting {
         }
         if self.folder.is_some_and(|f| f != Folder::Game) && self.file.is_none() {
             return Err("settings: folder is for files");
+        }
+        if let Some(path) = &self.yaml {
+            let parts: Option<(&str, &str)> = path.split_once('.');
+            let word =
+                |w: &str| !w.is_empty() && w.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            return match (self.file.as_deref(), parts) {
+                (Some(file), Some((section, key)))
+                    if crate::manifest::is_safe_relative(file)
+                        && word(section)
+                        && word(key)
+                        && self.section.is_none()
+                        && self.key.is_none()
+                        && self.line.is_none()
+                        && self.quote.is_none()
+                        && self.json.is_none()
+                        && self.xml.is_none()
+                        && self.registry.is_none()
+                        && self.create_only.is_none()
+                        && self.sage_profiles.is_none()
+                        && self.value_type.is_none() =>
+                {
+                    Ok(Kind::Yaml { file, section, key })
+                }
+                _ => Err("settings: yaml needs a file and Section.Key, nothing else"),
+            };
         }
         if let Some(path) = &self.json {
             if self.file.is_none()
@@ -634,6 +669,7 @@ pub fn apply(
             | Kind::WholeFile { file }
             | Kind::Json { file, .. }
             | Kind::Xml { file, .. }
+            | Kind::Yaml { file, .. }
             | Kind::SageProfiles { file } => file,
         };
         let root = match setting.folder.unwrap_or_default().below_profile() {
@@ -659,7 +695,8 @@ pub fn apply(
             done.push(Applied::Unchanged(path));
             continue;
         }
-        let utf8 = matches!(kind, Kind::Json { .. });
+        // JSON and OpenRA's MiniYAML are read as UTF-8, whatever was there.
+        let utf8 = matches!(kind, Kind::Json { .. } | Kind::Yaml { .. });
         let typed = setting.value_type.unwrap_or_default();
         done.push(if root == local {
             set_inside(local, path, &kind, &value, utf8, typed)
@@ -840,6 +877,7 @@ fn write(
         Kind::WholeFile { .. } => value.to_string(),
         Kind::SageProfiles { .. } => unreachable!("written by sage_profiles"),
         Kind::Ini { section, key, .. } => set_ini(&old.text, *section, key, value, old.eol),
+        Kind::Yaml { section, key, .. } => set_yaml(&old.text, section, key, value, old.eol),
         Kind::Line { line, quoted, .. } => set_line(&old.text, line, value, *quoted, old.eol),
         Kind::Json { path: key, .. } => match set_json(&old.text, key, value, typed) {
             Some(Some(new)) => new,
@@ -1213,6 +1251,80 @@ fn set_ini(text: &str, section: Option<&str>, key: &str, value: &str, eol: &str)
                         }
                     }
                 }
+            }
+        }
+    }
+    join(&out, text, eol)
+}
+
+/// `Section:` / `\tKey: value` in OpenRA's MiniYAML (`settings.yaml`): the
+/// key below its top-level section replaced, added as the section's first
+/// line, or the section added at the end. A `#` starts a comment there; one
+/// in the value is written as `\#`.
+fn set_yaml(text: &str, section: &str, key: &str, value: &str, eol: &str) -> String {
+    let value = value.trim().replace('#', "\\#");
+    let lines: Vec<&str> = text.lines().collect();
+    // A line's content without its comment (an unescaped `#`).
+    let content = |line: &str| -> String {
+        let mut out = String::new();
+        let mut escaped = false;
+        for c in line.chars() {
+            if c == '#' && !escaped {
+                break;
+            }
+            escaped = c == '\\';
+            out.push(c);
+        }
+        out.trim_end().to_string()
+    };
+    let indented = |line: &str| line.starts_with(['\t', ' ']);
+    // A top-level node's name: not indented, not a comment or blank.
+    let top = |line: &str| {
+        let c = content(line);
+        (!indented(line) && !c.trim().is_empty()).then(|| {
+            c.split_once(':')
+                .map_or(c.as_str(), |(name, _)| name)
+                .trim()
+                .to_string()
+        })
+    };
+    let wanted = format!("\t{key}: {value}");
+    let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+    match lines
+        .iter()
+        .position(|l| top(l).is_some_and(|h| h.eq_ignore_ascii_case(section)))
+    {
+        None => {
+            if out.last().is_some_and(|l| !l.trim().is_empty()) {
+                out.push(String::new());
+            }
+            out.push(format!("{section}:"));
+            out.push(wanted);
+        }
+        Some(start) => {
+            let end = lines[start + 1..]
+                .iter()
+                .position(|l| top(l).is_some())
+                .map_or(lines.len(), |at| start + 1 + at);
+            // The section's own keys: the shallowest indentation in it.
+            let depth = |l: &str| l.len() - l.trim_start_matches(['\t', ' ']).len();
+            let shallowest = (start + 1..end)
+                .filter(|&at| !content(lines[at]).trim().is_empty())
+                .map(|at| depth(lines[at]))
+                .min();
+            let is_key = |l: &str| {
+                Some(depth(l)) == shallowest
+                    && content(l)
+                        .trim()
+                        .split_once(':')
+                        .is_some_and(|(k, _)| k.trim().eq_ignore_ascii_case(key))
+            };
+            match (start + 1..end).find(|&at| is_key(lines[at])) {
+                Some(at) => {
+                    let pad = &lines[at][..depth(lines[at])];
+                    out[at] = format!("{pad}{key}: {value}");
+                }
+                None => out.insert(start + 1, wanted),
             }
         }
     }
@@ -2432,6 +2544,62 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(other.path().join("rev.ini")).unwrap(),
             "revision=12\n"
+        );
+    }
+
+    #[test]
+    fn openras_settings_get_the_name_below_player() {
+        let text = "Player:\r\n\r\nGame:\r\n\tMod: cnc\r\n\tName: not this\r\n";
+        assert_eq!(
+            set_yaml(text, "Player", "Name", "Bazzite", "\r\n"),
+            "Player:\r\n\tName: Bazzite\r\n\r\nGame:\r\n\tMod: cnc\r\n\tName: not this\r\n"
+        );
+        let text = "Player:\n\tColor: FF0000\n\tName: Old\nGame:\n";
+        assert_eq!(
+            set_yaml(text, "Player", "Name", "New # x", "\n"),
+            "Player:\n\tColor: FF0000\n\tName: New \\# x\nGame:\n"
+        );
+        // Spaces, a comment, a header with a comment.
+        let text = "Player: # options\n# a comment\n    Name: Old\n    Color: 1\nGame:\n";
+        assert_eq!(
+            set_yaml(text, "Player", "Name", "Kev", "\n"),
+            "Player: # options\n# a comment\n    Name: Kev\n    Color: 1\nGame:\n"
+        );
+        assert_eq!(
+            set_yaml("Game:\n\tMod: ra\n", "Player", "Name", "B", "\n"),
+            "Game:\n\tMod: ra\n\nPlayer:\n\tName: B\n"
+        );
+        assert!(
+            setting("file = 's.yaml'\nyaml = 'Player.Name'\nvalue = 'x'")
+                .kind()
+                .is_ok()
+        );
+        assert!(setting("file = 's.yaml'\nyaml = 'Player'\nvalue = 'x'")
+            .kind()
+            .is_err());
+        assert!(
+            setting("file = 's.yaml'\nyaml = 'Player.Name'\nvalue = 'x'\nquote = false")
+                .kind()
+                .is_err()
+        );
+        // Through the whole write: UTF-8, also where the file was ASCII.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("Support")).unwrap();
+        std::fs::write(
+            tmp.path().join("Support/settings.yaml"),
+            "Player:\r\n\r\nGame:\r\n\tMod: cnc\r\n",
+        )
+        .unwrap();
+        let player = Player {
+            name: "Jürgen".into(),
+            lang: "de".into(),
+            id: String::new(),
+        };
+        let s = setting("file = 'Support/settings.yaml'\nyaml = 'Player.Name'\nvalue = '%player%'");
+        apply(tmp.path(), None, &[s], &player);
+        assert_eq!(
+            std::fs::read(tmp.path().join("Support/settings.yaml")).unwrap(),
+            "Player:\r\n\tName: Jürgen\r\n\r\nGame:\r\n\tMod: cnc\r\n".as_bytes()
         );
     }
 

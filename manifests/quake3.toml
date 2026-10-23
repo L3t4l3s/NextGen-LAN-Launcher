@@ -13,6 +13,10 @@ args = []
 required_files = ["quake3.exe", "baseq3/pak0.pk3"]
 
 [setup]
+# The package has no q3key: the game asks for a CD key at every start,
+# Escape goes on to the menu (checked with Proton 11).
+notes.de = "Die Abfrage des CD-Keys beim Start mit Escape überspringen."
+notes.en = "Skip the CD key prompt at the start with Escape."
 
 # The package ships the q3config.cfg of whoever packed it, name included.
 [[settings]]

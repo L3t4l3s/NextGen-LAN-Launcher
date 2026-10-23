@@ -1,0 +1,15 @@
+schema = 1
+id = "pknights"
+title = "Portal Knights"
+revisions = ["20200721"]
+source = "NextGen LAN Launcher: the German title screen and Goldberg's name checked with Proton 11 (2026-10); multiplayer unchecked"
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# The package's game_start.cmd calls SmartSteamLoader.exe, which the
+# package does not have (it brings Goldberg); the game itself starts.
+exe = "portal_knights_x64.exe"
+args = []
+required_files = ["portal_knights_x64.exe"]

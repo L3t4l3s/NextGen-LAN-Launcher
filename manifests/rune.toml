@@ -1,0 +1,23 @@
+schema = 1
+id = "rune"
+title = "Rune Classic"
+revisions = ["20161206"]
+source = "NextGen LAN Launcher: setup, start script, the German menu and the name in User.ini checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# System\Rune.exe; its setup runs setupreg.exe. The launcher sets RELOADED's
+# steam_rld.ini; the name in a game is Unreal's [DefaultPlayer] in User.ini
+# (the package says Ragnar).
+exe = ""
+args = []
+
+[[settings]]
+file = "System/User.ini"
+section = "DefaultPlayer"
+key = "Name"
+value = "%player%"
