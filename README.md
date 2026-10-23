@@ -250,6 +250,10 @@ again.
   format was checked; for Kane's Wrath it is untested.
 - **Die Siedler II – Die nächste Generation — check on real hardware:** under Proton 11 on the VM
   without a GPU the game shows only a white window at full load on one core (also with WineD3D).
+- **Round G/H — check at the LAN:** Gang Beasts, GTA 2 (network through DirectPlay), Grey Goo,
+  Grim Dawn, Half-Life 2: Deathmatch and Homefront reach their menus under Proton 11; multiplayer
+  is untested. GTA 2's setup imports `gta2_install.reg` from the wrong folder, as Empire Earth
+  III's does; the profile sets name and language in the registry itself.
 - **Empire Earth III, Factorio, Far Cry 2 — check at the LAN:** the profiles reach the main menus
   under Proton 11; multiplayer is untested. Empire Earth III's setup imports `install.reg` from
   the game folder while the file lies in `local/` (on Windows too) — whether multiplayer misses

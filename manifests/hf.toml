@@ -1,0 +1,21 @@
+schema = 1
+id = "hf"
+title = "Homefront"
+revisions = ["20170119"]
+source = "NextGen LAN Launcher: start script, PhysX through winetricks and the emulator's name checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# SmartSteamLoader.exe, which starts Binaries\HOMEFRONT.exe. Without
+# NVIDIA's legacy PhysX runtime the game asks to install it and ends.
+exe = ""
+args = []
+winetricks = ["physx"]
+
+[setup]
+notes.de = "Braucht NVIDIAs PhysX-Laufzeit (Legacy). Unter Windows vorher installieren; unter Linux und macOS bietet der Launcher sie vor dem ersten Start an, das braucht einmal Internet."
+notes.en = "Needs NVIDIA's PhysX runtime (legacy). On Windows install it beforehand; on Linux and macOS the launcher offers it before the first start, which needs the internet once."

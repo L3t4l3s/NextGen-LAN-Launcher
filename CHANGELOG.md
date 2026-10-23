@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.7.17
+
+- macOS/Linux: Weitere Pakete mit eigenem Steam-Client starten unter Proton. Eine `steamclient.dll`
+  zählt jetzt auch neben der `steam_api.ini` eines Emulators (wie schon neben RevEmus `rev.ini`);
+  Grim Dawn meldete sonst „requires Steam“.
+- Spielername und Sprache auch für den Emulator mit `steam_api.ini` (`[Settings] UserName`,
+  Grim Dawn, Homefront).
+- Neue Startprofile: Gang Beasts, Grand Theft Auto 2 (Name und Sprache in der Registry), Grey Goo,
+  Grim Dawn, Half-Life 2: Deathmatch, Homefront (bietet PhysX über winetricks an).
+
 ## 0.7.16
 
 - Neue Startprofile: Empire Earth III (bietet NVIDIAs PhysX-Laufzeit über winetricks an, ohne die

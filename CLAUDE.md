@@ -322,7 +322,8 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   `force_*` (DLL nennt nur `account_name.txt` → nur `settings/`, AvP), RELOADED (`steam_rld.ini`
   `[Settings] UserName/Language`), ALI213 (`ALI213.ini` `[Settings] PlayerName/Language`),
   RevEmu (`rev.ini` mit `[Emulator]`-Abschnitt: `[steamclient] PlayerName`, `[Emulator] Language`;
-  ein anderes `rev.ini` bleibt), SmartSteamEmu (jede
+  ein anderes `rev.ini` bleibt), der Emulator mit `steam_api.ini` (`[Settings] UserName/Language`,
+  nur mit `UserName=`; Grim Dawn, Homefront), SmartSteamEmu (jede
   `SmartSteamEmu.ini`: `[SmartSteamEmu] PersonaName/Language`) und Nemirtingas' Epic-Emulator
   (jede vorhandene `NemirtingasEpicEmu.json`: `EOSEmu.User.UserName/Language`, Sprache als
   `de`/`en`/`fr`, dazu eigene `EpicId`/`ProductUserId` aus `%player_id%`: das Paket bringt
@@ -366,9 +367,11 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   (`folder`), nie im Paket. Der Ordnername wird für Windows tauglich gemacht (`profile_folder`). Mit Red Alert 3 geprüft („Kevin Ü“ ohne Rückfrage übernommen); wie die Datei
   mehrere Profile listet, ist nicht bekannt, deshalb wird eine vorhandene nie geändert.
 - **Eigener Steam-Client unter Proton:** Mit Goldbergs/gbe_forks `ColdClientLoader.ini`, einer
-  `steamclient(64).dll` von Goldberg oder einer neben RevEmus `rev.ini`
-  (`player_settings::brings_own_steam_client`, gesucht wo die Emulatoren gesucht werden; CS:GO
-  stürzte sonst in der DLL des Pakets ab; Valves echte DLL in `bin/` zählt nicht) setzt der Proton-Plan `WINEDLLOVERRIDES=lsteamclient=d`
+  `steamclient(64).dll` von Goldberg oder einer neben RevEmus `rev.ini` oder einer
+  `steam_api.ini` im selben Ordner (nur diese beiden sind gesehen;
+  `player_settings::brings_own_steam_client`, gesucht wo die Emulatoren gesucht werden; CS:GO
+  stürzte sonst in der DLL des Pakets ab, Grim Dawn meldete „requires Steam“; Valves echte DLL in
+  `bin/` zählt nicht) setzt der Proton-Plan `WINEDLLOVERRIDES=lsteamclient=d`
   (`add_dll_override`, eine vorhandene Angabe zur DLL gewinnt). Sonst lädt Protons Brücke zum
   echten Steam in den Spielprozess und das Spiel meldet „Steam must be running“ (Borderlands 2,
   32 bit; per `WINEDEBUG=+loaddll` gefunden).

@@ -1,0 +1,28 @@
+schema = 1
+id = "gta2"
+title = "Grand Theft Auto 2"
+revisions = ["20161206"]
+source = "NextGen LAN Launcher: start script, the GTA2 manager, the intro and the name and language in the registry checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd opens
+# gta2manager.exe; its "GTA2" button starts the game. Its setup imports
+# gta2_install.reg from the game folder while the file lies in local/, so
+# the manager writes its defaults: the computer's name as the player's.
+# Both values are text (REG_SZ), as the manager writes them itself.
+exe = ""
+args = []
+
+[[settings]]
+registry = 'HKCU\Software\DMA Design Ltd\GTA2\Network'
+key = "PlayerName"
+value = "%player%"
+
+[[settings]]
+registry = 'HKCU\Software\DMA Design Ltd\GTA2\Option'
+key = "Language"
+value = { de = "g", en = "e", fr = "f" }

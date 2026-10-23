@@ -1,0 +1,18 @@
+schema = 1
+id = "gdawn"
+title = "Grim Dawn"
+revisions = ["20180620"]
+source = "NextGen LAN Launcher: start script, the main menu and the emulator's name checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# Grim Dawn.exe, with its own steamclient.dll and a steam_api.ini emulator
+# beside it. Under Proton the launcher keeps Proton's Steam bridge out
+# (else "Grim Dawn requires Steam") and sets the emulator's name and
+# language. The game's menus stay English.
+exe = ""
+args = []

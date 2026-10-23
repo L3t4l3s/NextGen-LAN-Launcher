@@ -1,0 +1,16 @@
+schema = 1
+id = "ggoo"
+title = "Grey Goo"
+revisions = ["20200721"]
+source = "NextGen LAN Launcher: start script, the German first-start screen and SmartSteamEmu's name checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# GreyGoo_Launcher.exe. The launcher sets SmartSteamEmu's PersonaName and
+# Language.
+exe = ""
+args = []
