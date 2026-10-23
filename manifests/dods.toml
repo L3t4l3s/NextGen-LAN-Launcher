@@ -1,0 +1,16 @@
+schema = 1
+id = "dods"
+title = "Day of Defeat: Source"
+revisions = ["20240912", "20201023"]
+source = "NextGen LAN Launcher: start script, Goldberg's name and the German menu checked with Proton 11 (2026-10, WineD3D on a VM without GPU); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts hl2.exe
+# -game dod. The catalog names 20201023 for the package the sync server
+# holds as 20240912; both are this package. The launcher sets Goldberg's name and language (bin/).
+exe = ""
+args = []

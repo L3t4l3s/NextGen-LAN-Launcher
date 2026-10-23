@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.7.15
+
+- „Update verfügbar“ richtet sich nach der `version.ini` der Freigabe, also danach, was der
+  Sync-Server wirklich hat. Nennt der Katalog eine andere Revision, als die Freigabe hält, bot der
+  Launcher bisher ein Update an, das nur dieselben Dateien geholt hätte (Day of Defeat: Source:
+  Katalog 20201023, Server 20240912; Cossacks 3: Katalog 20200527, Server 20200526). Ohne
+  `version.ini`, oder solange die Sync-Engine die Freigabe nicht meldet, zählt weiter der Katalog.
+- Neue Startprofile: Day of Defeat: Source, Dead Island, Dead by Daylight (Sprache in den
+  Spieleinstellungen), Diablo II (Hinweis auf den Glide-Einrichter).
+
 ## 0.7.14
 
 - Neues Startprofil: Company of Heroes 2 (Hinweis auf die Server-Abfrage).

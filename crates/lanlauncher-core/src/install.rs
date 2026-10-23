@@ -279,16 +279,16 @@ impl Observation {
         // there: a game whose folder was emptied by hand is downloading
         // again, and for a folder-tree package there is no `.!sync` file to
         // notice that by.
-        // A tool's entry has no revision; its version.ini says what is
-        // current.
-        let current = if game.revision.is_empty() {
-            std::fs::read_to_string(&paths.version_file)
-                .map(|v| v.trim().to_string())
-                .unwrap_or_default()
-        } else {
-            game.revision.clone()
-        };
-        let settled = receipt.as_ref().is_some_and(|r| r.revision == current)
+        // What the share holds decides, as in `step`: its version.ini when
+        // there is one (read once, for both), else the catalog's revision.
+        let version_ini = std::fs::read_to_string(&paths.version_file)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty() && s.len() <= 64);
+        let current = version_ini.clone().unwrap_or_else(|| game.revision.clone());
+        let settled = receipt
+            .as_ref()
+            .is_some_and(|r| r.revision.trim() == current.trim())
             && archive_len.is_some()
             && paths.local_dir.is_dir();
         let share_bytes = if settled && partial_len.is_none() {
@@ -316,10 +316,6 @@ impl Observation {
                 .map(|m| m.len())
                 .sum()
         };
-        let version_ini = std::fs::read_to_string(&paths.version_file)
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty() && s.len() <= 64);
         let local_present = paths.local_dir.is_dir();
         let required_files_ok = local_present
             && if required_files.is_empty() {
@@ -460,6 +456,9 @@ pub struct Tracker {
     rate_bps: f64,
     verify_failed_at: Option<Instant>,
     verify_failed_len: Option<u64>,
+    /// The engine has reported this game's share in this run: its
+    /// version.ini then shows what the sync server has (see `step`).
+    share_seen: bool,
     pub problem: Option<Problem>,
     pub work_progress: f64,
     pub work_started_at: Option<Instant>,
@@ -504,6 +503,7 @@ impl Tracker {
             rate_bps: 0.0,
             verify_failed_at: None,
             verify_failed_len: None,
+            share_seen: false,
             problem: None,
             work_progress: 0.0,
             work_started_at: None,
@@ -684,15 +684,26 @@ impl Tracker {
         if !self.phase.is_busy() || self.phase == Phase::Queued {
             if let Some(r) = &obs.receipt {
                 if obs.local_present && !matches!(self.phase, Phase::Failed | Phase::Paused) {
-                    // A tool's catalog entry has no revision: what is on
-                    // disk is current until version.ini says otherwise.
-                    let newer_in_catalog =
-                        !obs.catalog_revision.is_empty() && r.revision != obs.catalog_revision;
+                    // While the engine has the share (seen in this run), its
+                    // version.ini is what the sync server has, and it alone
+                    // decides: a catalog that names another revision than
+                    // the share holds is no update in either direction — Day
+                    // of Defeat: Source (catalog 20201023, share 20240912),
+                    // Cossacks 3 (catalog 20200527, share 20200526) — and
+                    // downloading again would fetch the same files. A share
+                    // the engine does not keep (no engine, not added yet) or
+                    // a package without version.ini: any difference to the
+                    // catalog counts, as before. A tool's entry has no
+                    // revision; its version.ini says what is current.
+                    self.share_seen |= obs.transport.is_some();
+                    let share_decides = self.share_seen && obs.version_ini.is_some();
+                    let newer_in_catalog = !share_decides
+                        && !obs.catalog_revision.is_empty()
+                        && r.revision.trim() != obs.catalog_revision.trim();
                     let newer_on_disk = obs
                         .version_ini
                         .as_deref()
-                        .map(|v| v != r.revision)
-                        .unwrap_or(false);
+                        .is_some_and(|v| v.trim() != r.revision.trim());
                     self.phase = if newer_in_catalog || newer_on_disk {
                         Phase::UpdateAvailable
                     } else {
@@ -2455,6 +2466,56 @@ mod tests {
     }
 
     #[test]
+    fn an_installed_game_whose_share_says_its_revision_is_not_counted_again() {
+        // Day of Defeat: Source: the catalog says 20201023, the share and the
+        // receipt 20240912. Settled all the same, so the folder is not
+        // walked every couple of seconds.
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = GamePaths::new(tmp.path(), "dods");
+        std::fs::create_dir_all(&paths.local_dir).unwrap();
+        std::fs::write(paths.share_dir.join("dods.eti"), vec![0u8; 500]).unwrap();
+        std::fs::write(paths.share_dir.join("version.ini"), "20240912\r\n").unwrap();
+        Receipt {
+            version: 1,
+            game_id: "dods".into(),
+            revision: "20240912".into(),
+            installed_at: Utc::now(),
+            archive_bytes: 500,
+            files: 1,
+            setup_done: true,
+            exe_override: None,
+            adopted: false,
+            script_setup_prefixes: Vec::new(),
+        }
+        .save(&paths.receipt)
+        .unwrap();
+        let mut game = Game {
+            id: "dods".into(),
+            order: 0,
+            title: "Day of Defeat: Source".into(),
+            key: crate::catalog::ShareKey::parse(crate::catalog::BUILTIN_CATALOG_KEY).unwrap(),
+            revision: "20201023".into(),
+            size_bytes: 500,
+            release_year: None,
+            publisher: None,
+            max_players: None,
+            needs_master_server: false,
+            genre_id: None,
+            readme: Default::default(),
+            tool: false,
+        };
+        let disks = crate::library::DiskTable::default();
+        let obs = Observation::from_disk(&paths, &game, &[], &disks);
+        assert_eq!(obs.share_bytes, 0, "settled: not walked");
+        assert_eq!(obs.version_ini.as_deref(), Some("20240912"));
+        // A share that moved on is counted.
+        std::fs::write(paths.share_dir.join("version.ini"), "20250101").unwrap();
+        game.revision = "20250101".into();
+        let obs = Observation::from_disk(&paths, &game, &[], &disks);
+        assert!(obs.share_bytes > 0);
+    }
+
+    #[test]
     fn indexing_postpones_the_stall_warning_but_not_for_ever() {
         // Indexing a big share is work without bytes; the engine's own rate
         // is not consulted, it has been seen reporting hundreds of MB/s for a
@@ -3033,10 +3094,36 @@ mod tests {
         o.required_files_ok = true;
         assert_eq!(t.step(&o, &policy(), Instant::now()), Action::None);
         assert_eq!(t.phase, Phase::Ready);
+        // No version.ini in the share: the catalog decides.
+        o.version_ini = None;
         o.catalog_revision = "20260101".into();
         t.step(&o, &policy(), Instant::now());
         assert_eq!(t.phase, Phase::UpdateAvailable);
         assert!(t.phase.is_playable());
+        // While the engine has not reported the share, the catalog still
+        // counts, version.ini or not.
+        o.version_ini = Some("20250308".into());
+        t.step(&o, &policy(), Instant::now());
+        assert_eq!(t.phase, Phase::UpdateAvailable);
+        // Once it has, the share's version.ini decides: a catalog that
+        // names something else (older or newer) is no update…
+        o.transport = obs(None, None, None, Some(100)).transport;
+        for catalog in ["20201023", "20260101"] {
+            o.catalog_revision = catalog.into();
+            t.step(&o, &policy(), Instant::now());
+            assert_eq!(t.phase, Phase::Ready, "{catalog}");
+        }
+        // …a share that changed is, an older one included (a rollback),
+        // whatever the catalog says.
+        o.catalog_revision = "20250308".into();
+        o.version_ini = Some("20240101".into());
+        t.step(&o, &policy(), Instant::now());
+        assert_eq!(t.phase, Phase::UpdateAvailable);
+        o.version_ini = Some("20250308\r".into());
+        t.step(&o, &policy(), Instant::now());
+        assert_eq!(t.phase, Phase::Ready, "the same revision, however written");
+        o.transport = None;
+        o.version_ini = None;
         // manifest files missing but local/ present → stays playable with a warning
         o.required_files_ok = false;
         o.catalog_revision = "20250308".into();

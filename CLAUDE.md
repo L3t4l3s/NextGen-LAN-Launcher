@@ -762,6 +762,13 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   (`LaunchPlan::raw_command_line`), weil die Argument-Escapes der Standardbibliothek die
   cmd-Quoting-Regeln brechen. Das gilt auch für `game_setup.cmd` (Setup-Hook in
   `src-tauri/src/lib.rs`), das denselben Vier-Argumente-Vertrag wie `game_start.cmd` bekommt.
+- **Update erkennen:** Installierte Spiele bleiben als Freigabe in der Engine, ihre `version.ini`
+  ist also, was der Sync-Server hat. Liegt sie vor und hat die Engine die Freigabe in diesem Lauf
+  gemeldet (`Tracker::share_seen`), entscheidet nur sie (`step`; `settled` in
+  `Observation::from_disk` vergleicht ebenso mit ihr, einmal gelesen, getrimmt); eine andere Katalogrevision ist dann kein Update — der Katalog nennt
+  bei Day of Defeat: Source 20201023 für ein Paket mit 20240912, bei Cossacks 3 20200527 für
+  20200526. Ohne `version.ini` oder ohne gemeldete Freigabe (Engine aus, Freigabe noch nicht
+  angemeldet) zählt jeder Unterschied zum Katalog.
 - **Bestand übernehmen:** `adopt_existing` darf vorhandene Installationen nie neu entpacken
   (`local/` enthält Spielstände). Mit Receipt → `Queued` → Ready; ohne Receipt vergleicht
   `Action::Adopt` die Archivliste mit `local/` (`extract::matches_extracted`) und schreibt ein

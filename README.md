@@ -248,6 +248,8 @@ again.
 - **Kane's Wrath — check on real hardware:** the game ends right after its shader builder on the
   VM without a GPU. Its profile gets the same prewritten `directory.ini` as Red Alert 3, where the
   format was checked; for Kane's Wrath it is untested.
+- **Die Siedler II – Die nächste Generation — check on real hardware:** under Proton 11 on the VM
+  without a GPU the game shows only a white window at full load on one core (also with WineD3D).
 - **Company of Heroes 2 — open:** its server comes as `server_setup.cmd` with `coh2_server.exe`
   beside `local/`, not as `server_start.cmd`, so the launcher offers no "Start server" for it
   (`[server] exe` is relative to `local/`). The game reaches its German main menu under Proton 11;
@@ -255,8 +257,7 @@ again.
 - **Company of Heroes — check on real hardware:** the setup's maps and profile now arrive
   (`unrar.exe` stand-in, checked with Proton 11); the game itself says "Ein funktionierender
   Vollbildmodus konnte nicht gefunden werden" on the VM without a GPU.
-- **Cossacks 3 — open:** the catalog names revision 20200527, the sync server's share holds
-  20200526, so the game stays at "Update available" after a fresh install. The player's profile
+- **Cossacks 3 — open:** the player's profile
   is asked for by the game's configuration utility each time (the active one sits in a binary
   `resource.lib`).
 - **Call of Duty: World at War, Modern Warfare 2, Black Ops — check at the LAN:** the profiles

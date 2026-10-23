@@ -1,7 +1,7 @@
 schema = 1
 id = "cossacks"
 title = "Cossacks 3"
-revisions = ["20200526"]
+revisions = ["20200526", "20200527"]
 source = "NextGen LAN Launcher: start script with the LAN server prompt, the configuration utility and the game's start checked with Proton 11 (2026-10); the server and multiplayer unchecked"
 script_start_checked = ["linux"]
 
@@ -15,7 +15,8 @@ linux = ["Proton 11.0"]
 # configuration utility asks for a player profile (Documents\cossacks\
 # profiles\<name>\profile.dat holds `name = …`; the active one is kept in
 # resource.lib). Its `ping … -4` never answered under Wine until the
-# launcher took the -4 out.
+# launcher took the -4 out. The catalog names 20200527 for the package the
+# sync server holds as 20200526; both are this package.
 exe = ""
 args = []
 

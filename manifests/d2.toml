@@ -1,0 +1,21 @@
+schema = 1
+id = "d2"
+title = "Diablo II"
+revisions = ["20170912"]
+source = "NextGen LAN Launcher: start script, the Glide wrapper's setup and the German main menu checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd opens the Glide
+# wrapper's setup (glide-init.exe) and, once it is closed, starts
+# Game.exe -w -3dfx. An exe in this profile would not spare the setup: it
+# stands before the game in the script, so the preparation would run it.
+exe = ""
+args = []
+
+[setup]
+notes.de = "Vor jedem Start öffnet sich das Einrichtungsprogramm des Glide-Wrappers; „Beenden“ startet das Spiel."
+notes.en = "Before every start the Glide wrapper's setup opens; \"Beenden\" (quit) starts the game."

@@ -1,0 +1,25 @@
+schema = 1
+id = "daylight"
+title = "Dead by Daylight"
+revisions = ["20200210"]
+source = "NextGen LAN Launcher: start script, the main menu and the language setting checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# DeadByDaylight-Win64-Shipping.exe (its language branches set a variable
+# nothing reads). The launcher sets Goldberg's name (Unreal's Steamworks
+# folder); the game's own language comes from its user settings, not from
+# Steam's.
+exe = ""
+args = []
+
+[[settings]]
+folder = "localappdata"
+file = "DeadByDaylight/Saved/Config/WindowsNoEditor/GameUserSettings.ini"
+section = "/Script/DeadByDaylight.DBDGameUserSettings"
+key = "Language"
+value = { de = "de", en = "en", fr = "fr" }
