@@ -1,0 +1,24 @@
+schema = 1
+id = "swjkja"
+title = "Star Wars Jedi Knight: Jedi Academy"
+revisions = ["20161024"]
+source = "NextGen LAN Launcher: start script, the multiplayer menu and the name in jampconfig.cfg checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# GameData\jamp.exe. The Quake 3 engine copies OpenGL's extension list into
+# a fixed buffer; with today's drivers it ended at once (stack overflow), as
+# Call of Duty: United Offensive did. A list from 2003 fits.
+exe = ""
+args = []
+env = { MESA_EXTENSION_MAX_YEAR = "2003", __GL_ExtensionStringVersion = "17700" }
+
+# The package says Padawan.
+[[settings]]
+file = "GameData/base/jampconfig.cfg"
+line = "seta name"
+value = "%player%"

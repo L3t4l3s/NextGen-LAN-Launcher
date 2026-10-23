@@ -1,0 +1,23 @@
+schema = 1
+id = "supra"
+title = "Supraball"
+revisions = ["20251029"]
+source = "NextGen LAN Launcher: setup, start script (client unpacked by the launcher's unrar) and the German lobby checked with Proton 11 (2026-10, a VM without GPU); matches and the master server unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd unpacks
+# client.eti with ETI's unrar.exe and starts the lobby client, an Electron
+# program, which showed no window under Proton until it left the GPU out.
+# Its setup starts the training mode for ten seconds and ends it with
+# taskkill, which runs in a prefix since the launcher lets a taskkill of
+# the game's own programs through.
+exe = ""
+args = []
+
+[[script_args]]
+exe = "supraball-client.exe"
+args = ["--disable-gpu"]

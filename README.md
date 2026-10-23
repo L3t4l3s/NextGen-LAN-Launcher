@@ -250,6 +250,12 @@ again.
   format was checked; for Kane's Wrath it is untested.
 - **Die Siedler II – Die nächste Generation — check on real hardware:** under Proton 11 on the VM
   without a GPU the game shows only a white window at full load on one core (also with WineD3D).
+- **Supreme Commander 2 — check on real hardware:** the setup's `language.exe` (a .NET language
+  selector) stops under Wine-Mono with "Illegal byte sequence" and waits on its dialog; the game
+  itself ends right after starting on the VM without GPU (also with WineD3D).
+- **Supraball — check at the LAN:** lobby client and setup run under Proton 11; the lobby client
+  gets `--disable-gpu` (it drew no window without, on the VM; unchecked whether real hardware
+  needs it). The master server and matches are untested.
 - **Portal Knights on Windows — package fix needed:** its `game_start.cmd` calls
   `SmartSteamLoader.exe`, which the package does not contain (it brings Goldberg), so on Windows
   nothing starts; the macOS/Linux profile starts `portal_knights_x64.exe` directly.

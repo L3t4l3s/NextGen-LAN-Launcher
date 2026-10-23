@@ -539,6 +539,27 @@ pub(crate) async fn prepare_server(
 async fn with_helpers(state: &AppState, plan: &mut LaunchPlan) {
     with_fnr(state, plan).await;
     with_unrar(state, plan).await;
+    // Wine does not wait for those host programs; the rewritten calls wait
+    // through this script (`launch::host_wait`). Written once per run.
+    static WAIT: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    if WAIT.get().is_none() {
+        let tools = state.dirs.data.join("tools");
+        let installed =
+            tauri::async_runtime::spawn_blocking(move || launch::host_wait::install(&tools))
+                .await
+                .map_err(std::io::Error::other)
+                .and_then(|r| r);
+        match installed {
+            Ok(script) => {
+                let _ = WAIT.set(Some(setup_script::wine_path(&script)));
+            }
+            Err(e) => log::warn!("cannot write the wait script for host programs: {e}"),
+        }
+    }
+    if let Some(Some(path)) = WAIT.get() {
+        plan.env
+            .insert(launch::host_wait::VAR.to_string(), path.clone());
+    }
 }
 
 /// The old ETI launcher's `unrar.exe` as the launcher's own

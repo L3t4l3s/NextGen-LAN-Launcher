@@ -6,8 +6,9 @@
 //! Most call the copy that came with the original ETI launcher,
 //! `%programfiles%\eti\lan launcher\fnr.exe`, which no prefix has — and a
 //! .NET program besides. `setup_script::filter` turns those calls into
-//! `"%NLL_FNR%" …`; Wine starts a host program named by its `Z:` path and
-//! waits for it (tried with Proton 11), so this script does the replacing.
+//! `"%NLL_FNR%" …`; Wine starts a host program named by its `Z:` path (and
+//! does not wait for it: `launch::host_wait`), so this script does the
+//! replacing.
 //!
 //! What it understands is what the 23 calls in ETI's scripts use: `--dir`,
 //! `--fileMask` (comma-separated, `*`/`?`), `--includeSubDirectories`,
@@ -25,9 +26,18 @@ pub const VAR: &str = "NLL_FNR";
 /// Started by Wine with the host's environment as Proton changed it
 /// (`LD_LIBRARY_PATH` names Proton's libraries): no business of Perl's. `$0`
 /// is the path through the prefix's `dosdevices/z:`, a valid one.
-const SHELL: &str = "#!/bin/sh\n\
-# Written by NextGen LAN Launcher: fnr.exe's find and replace for Wine.\n\
-exec env -u LD_LIBRARY_PATH -u LD_PRELOAD perl \"${0%.sh}.pl\" \"$@\"\n";
+/// Wine does not wait for it: the mark lets the script wait
+/// (`launch::host_wait`).
+fn shell() -> String {
+    format!(
+        "#!/bin/sh\n\
+         # Written by NextGen LAN Launcher: fnr.exe's find and replace for Wine.\n\
+         {}env -u LD_LIBRARY_PATH -u LD_PRELOAD perl \"${{0%.sh}}.pl\" \"$@\"\n\
+         nll_rc=$?\n{}",
+        super::host_wait::SH_BEGIN,
+        super::host_wait::SH_END
+    )
+}
 
 const PERL: &str = r#"# Written by NextGen LAN Launcher: fnr.exe's find and replace for Wine.
 use strict;
@@ -157,10 +167,9 @@ exit 0;
 pub fn install(dir: &Path) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
     let shell = dir.join("nll-fnr.sh");
-    for (path, text) in [(&shell, SHELL), (&dir.join("nll-fnr.pl"), PERL)] {
-        if std::fs::read_to_string(path).ok().as_deref() != Some(text) {
-            std::fs::write(path, text)?;
-        }
+    let text = self::shell();
+    for (path, text) in [(&shell, text.as_str()), (&dir.join("nll-fnr.pl"), PERL)] {
+        super::setup_script::write_if_changed(path, text.as_bytes())?;
     }
     #[cfg(unix)]
     {

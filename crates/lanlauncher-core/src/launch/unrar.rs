@@ -6,7 +6,7 @@
 //! profile into `Documents\My Games`). No prefix has that program, and
 //! SteamOS has no unrar of its own. `setup_script::filter` turns those calls
 //! into `"%NLL_UNRAR%" …`; Wine starts the host script named by its `Z:`
-//! path and waits for it, as with `launch::fnr`, and the script starts the
+//! path (without waiting for it, `launch::host_wait`), and the script starts the
 //! launcher's own binary with [`FLAG`], which unpacks with the UnRAR library
 //! it carries anyway and exits before anything else of the launcher starts.
 //!
@@ -32,7 +32,10 @@ fn shell(launcher: &Path) -> String {
     format!(
         "#!/bin/sh\n\
          # Written by NextGen LAN Launcher: unrar.exe of ETI's scripts for Wine.\n\
-         exec env -u LD_LIBRARY_PATH -u LD_PRELOAD '{quoted}' {FLAG} \"$@\"\n"
+         {begin}env -u LD_LIBRARY_PATH -u LD_PRELOAD '{quoted}' {FLAG} \"$@\"\n\
+         nll_rc=$?\n{end}",
+        begin = super::host_wait::SH_BEGIN,
+        end = super::host_wait::SH_END
     )
 }
 
@@ -70,12 +73,14 @@ fn harmless(switch: &str) -> bool {
     ) || lower.starts_with("-id")
 }
 
-/// unrar's command line as ETI's scripts write it. A destination that cmd
-/// gave as `"C:\…\Company of Heroes\"` reaches a host program with its
-/// closing quote inside (`\"` is a literal quote to Windows' rules), so
-/// quotes around either path are dropped.
+/// unrar's command line as ETI's scripts write it. Windows programs take a
+/// quote anywhere in an argument for grouping, never as part of a path, and
+/// the scripts rely on it: `"%game_path%\client.eti"` with a quoted
+/// `game_path` reaches a host program as `"Z:\…\supra"\client.eti`
+/// (Supraball), and a destination given as `"C:\…\Company of Heroes\"`
+/// with its closing quote inside (`\"`). So every quote goes.
 fn parse(args: &[String]) -> Result<Call, String> {
-    let mut words = args.iter().map(|a| a.trim_matches('"').to_string());
+    let mut words = args.iter().map(|a| a.replace('"', ""));
     let command = words.next().ok_or("no command")?.to_ascii_lowercase();
     if command != "x" {
         return Err(format!("command {command:?} is not supported"));
@@ -221,6 +226,15 @@ mod tests {
                 dest: r"C:\users\steamuser\Documents\My Games\Company of Heroes".into(),
             }
         );
+        // A quoted `%game_path%` inside the scripts' own quotes.
+        let call = parse(&words(&[
+            "x",
+            r#""Z:\home\k\LAN\supra"\client.eti"#,
+            r#""Z:\home\k\LAN\supra"\local""#,
+        ]))
+        .unwrap();
+        assert_eq!(call.archive, r"Z:\home\k\LAN\supra\client.eti");
+        assert_eq!(call.dest, r"Z:\home\k\LAN\supra\local");
         let call = parse(&words(&["X", "-o+", "-inul", "a.eti"])).unwrap();
         assert_eq!(call.dest, ".");
         // What it would not do as asked: refused, not done otherwise.
@@ -302,6 +316,7 @@ mod tests {
         let script = install(tmp.path(), Path::new("/opt/it's here/launcher")).unwrap();
         let text = std::fs::read_to_string(&script).unwrap();
         assert!(text.contains(r"'/opt/it'\''s here/launcher' --nll-unrar"));
+        assert!(text.contains("--nll-mark"));
         assert!(text.contains("-u LD_LIBRARY_PATH"));
     }
 }

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 0.7.20
+
+- macOS/Linux: Startskripte warten jetzt auf `fnr.exe` und `unrar.exe` des alten ETI-Launchers.
+  Wine wartet nicht auf die Ersatzprogramme des Launchers; der nächste Befehl lief sofort, und
+  endete das Skript vorher, wurde das Programm abgebrochen. Supraball startete so seinen
+  Lobby-Client, während dessen Dateien noch entpackt wurden, und der Client beendete sich.
+  Spielername und Sprache über fnr waren bisher nur durch Glück rechtzeitig geschrieben.
+- macOS/Linux: `unrar.exe` mit einem Pfad aus `%game_path%` (in Anführungszeichen übergeben)
+  entpackt jetzt; bisher blieb ein Anführungszeichen mitten im Pfad stehen.
+- macOS/Linux: `taskkill /im <Programm des Spiels>` und `timeout /nobreak` laufen jetzt wie unter
+  Windows. Supraballs Setup ließ seinen Probestart sonst offen. `taskkill` auf Steam, Wine-Prozesse,
+  per Prozessnummer oder Variable bleibt gesperrt.
+- Startprofile können Argumente auch an ein Programm hängen, das das Skript mit `start "Titel"`
+  öffnet (Supraball: `--disable-gpu`, ohne zeigte der Lobby-Client kein Fenster).
+- Neue Startprofile: Supraball, Star Wars Jedi Knight: Jedi Academy (gekürzte OpenGL-Liste wie
+  bei Call of Duty: United Offensive, Spielername), Serious Sam: The Second Encounter,
+  Supreme Commander 2 (Hinweis auf den abstürzenden Sprachwähler im Setup).
+
 ## 0.7.19
 
 - Spielername auch in MiniYAML-Einstellungen (OpenRA: `yaml = "Player.Name"` in

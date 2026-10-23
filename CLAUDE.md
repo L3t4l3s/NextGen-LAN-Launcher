@@ -204,6 +204,8 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   Wine kann `set`/`if`/`for`/`%~dp0`/`reg add`. `launch::setup_script::filter` macht aus Zeilen,
   die ein Prefix nicht braucht oder die hängen würden, `rem`-Zeilen und nennt sie im Log
   (`netsh`, `dism`, `taskkill`, `pause`/`timeout`/`choice`, Programme außerhalb des Spielordners).
+  Ausnahmen (`harmless_use`): `taskkill /im <Programm>` ohne Steam-/Wine-Prozess, Variable oder
+  Platzhalter und `timeout /t 0…60 /nobreak` laufen.
   Gesperrte Programme und Programme außerhalb des Spielordners zählen dort, wo ein Befehl
   beginnt: am Zeilenanfang, nach `&`/`|` (ein `^` davor zählt nicht), nach einer Blockklammer,
   nach `do`/`else` (`for /f … do taskkill`, `)else(pause`) – nicht als Argument (`set choice=1`,
@@ -255,8 +257,8 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   direkter Aufruf); `launch::unrar` schreibt `<data>/tools/unrar/nll-unrar.sh`, das den Launcher
   selbst mit `--nll-unrar` aufruft (`$APPIMAGE`, nicht das Programm im Mount). `run()` erledigt das
   ganz am Anfang und endet, entpackt wird mit der eingebauten UnRAR-Bibliothek — SteamOS hat kein
-  unrar. Ein Ziel wie `"%userprofile%\…\"` kommt mit dem schließenden Anführungszeichen im Argument
-  an (`\"`), `parse` streicht es; Laufwerke außer `Z:` gehen über `dosdevices` des Prefix. Wines
+  unrar. Windows-Programme lesen Anführungszeichen überall im Argument als Gruppierung, `parse` streicht
+  alle (Supraball: `"%game_path%\client.eti"` mit gequotetem `game_path`); Laufwerke außer `Z:` gehen über `dosdevices` des Prefix. Wines
   `ping` kennt `-4` nicht (gibt nur die Hilfe aus), `ping_without_ipv4` streicht es (Cossacks 3
   fragte sonst endlos nach der Server-IP). Wie beim fnr-Tausch zählt ein Befehl nach `if …` nicht.
 - **Testen aus Claude Code:** Die Shell exportiert `NoDefaultCurrentDirectoryInExePath=1`; ein von
@@ -274,9 +276,16 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   Eingabe (mit Proton 11 und einer echten Eingabe geprüft); `start` ergab zwei Fenster.
   `fnr.exe` (Kopie des alten ETI-Launchers oder im Spielordner) wird im Filter zu `"%NLL_FNR%"`;
   der Launcher schreibt `launch::fnr` (Shell + Perl) nach `<data>/tools/fnr` und setzt die
-  Variable auf dessen `Z:`-Pfad. Wine startet ein Host-Programm über einen solchen Pfad und
-  wartet darauf (Exit-Code geht verloren) — aber nur mit einer Endung außer
-  `.com/.exe/.bat/.cmd` (ohne Endung sucht cmd genau diese und findet nichts), daher
+  Variable auf dessen `Z:`-Pfad. Wine startet ein Host-Programm über einen solchen Pfad — **und wartet nicht darauf**
+  (gemessen: die nächste Zeile lief 3 ms später, und endet das Skript vorher, wird das Programm
+  abgeschnitten; auch `start /wait /unix` wartet nicht). Deshalb trägt jeder umgeschriebene Aufruf
+  eine Marke (`--nll-mark <id>`) und dahinter `& call "%NLL_WAIT%" <id>` (`launch::host_wait`):
+  das Host-Skript schreibt `<id>.run`/`<id>.done` nach `<data>/tools/marks`, `nll-wait.cmd` fragt
+  jede Sekunde nach (Wines `timeout`, nicht `ping`), höchstens 30 Minuten; ohne beide Marken nach
+  fünf Sekunden lief das Programm gar nicht. Die Kennung enthält Skript und Spielordner
+  (`filter_for`), alte Marken räumt `host_wait::install` weg. Gefunden
+  mit Supraball (Lobby-Client startete, während `unrar` seine Dateien noch schrieb). Ohne Endung
+  sucht cmd nur `.com/.exe/.bat/.cmd`, daher
   `nll-fnr.sh`. `$0` ist dort ein Pfad über `dosdevices/z:`. Proton gibt sein `LD_LIBRARY_PATH`
   mit, das Skript startet Perl ohne. Verhalten wie fnr: ohne Groß-/Kleinschreibung, `^`/`$` pro
   Zeile, `.` nimmt `\r` mit, `Name=.*` trifft auch `ServerName=` — die Pakete vom Sync-Server

@@ -182,6 +182,82 @@ fn denied(base: &str) -> Option<Reason> {
     })
 }
 
+/// Processes of Wine, Proton and Steam that a script's `taskkill` must not
+/// end: the prefix needs them (Proton's `steam.exe` starts the game).
+const PREFIX_PROCESSES: [&str; 15] = [
+    "steam",
+    "explorer",
+    "services",
+    "winedevice",
+    "plugplay",
+    "svchost",
+    "rpcss",
+    "conhost",
+    "cmd",
+    "wineboot",
+    "winedbg",
+    "rundll32",
+    "start",
+    "tabtip",
+    "xalia",
+];
+
+/// A refused tool used in a way that is safe in a prefix and does what the
+/// script means: `taskkill /im <program>` that names only the game's own
+/// programs (Supraball's setup ends the training it started), and
+/// `timeout /nobreak`, which only waits (Wine has both). `taskkill` by
+/// process id, by filter or naming a prefix process stays refused.
+fn harmless_use(base: &str, statement: &str) -> bool {
+    let words = super::windows::tokens(statement);
+    let flag = |w: &str, f: &str| {
+        w.eq_ignore_ascii_case(f) || w.eq_ignore_ascii_case(&f.replace('/', "-"))
+    };
+    match base {
+        // Only a short, plain wait: `/t -1` waits for ever.
+        "timeout" => {
+            let plain = |w: &String| w.split(['>', '<']).next().unwrap_or_default().to_string();
+            let seconds = words
+                .iter()
+                .position(|w| flag(w, "/t"))
+                .and_then(|at| words.get(at + 1))
+                .and_then(|w| plain(w).parse::<i64>().ok());
+            words.iter().any(|w| flag(&plain(w), "/nobreak"))
+                && seconds.is_some_and(|s| (0..=60).contains(&s))
+        }
+        "taskkill" => {
+            let mut names = Vec::new();
+            let mut rest = words.iter().skip(1);
+            while let Some(word) = rest.next() {
+                if flag(word, "/im") {
+                    // `steam.exe>nul`: the name ends where a redirection
+                    // begins.
+                    match rest.next() {
+                        Some(name) => names.push(
+                            name.split(['>', '<'])
+                                .next()
+                                .unwrap_or_default()
+                                .trim_matches('"')
+                                .to_string(),
+                        ),
+                        None => return false,
+                    }
+                } else if flag(word, "/pid") || flag(word, "/fi") || flag(word, "/s") {
+                    return false;
+                }
+            }
+            !names.is_empty()
+                && names.iter().all(|name| {
+                    !name.is_empty() &&
+                    // A wildcard or a variable (`%%p` of a `for`) names
+                    // whatever it turns out to be.
+                    !name.contains(['*', '?', '%', '!'])
+                        && !PREFIX_PROCESSES.contains(&base_name(name).as_str())
+                })
+        }
+        _ => false,
+    }
+}
+
 /// Wine's own tools: wherever a script spells their path, they are there.
 const WINE_TOOLS: [&str; 10] = [
     "reg", "regedit", "cmd", "xcopy", "wmic", "find", "findstr", "attrib", "notepad", "start",
@@ -289,7 +365,11 @@ fn verdict(statement: &str) -> Option<Reason> {
             None => verdict(then),
         };
     }
-    judge(&program_of(command)?)
+    let program = program_of(command)?;
+    if harmless_use(&base_name(&program), command) {
+        return None;
+    }
+    judge(&program)
 }
 
 /// `text` split around an ` else ` outside quotes.
@@ -496,6 +576,9 @@ fn refused_in(command: &[u8]) -> Option<(usize, Reason)> {
         let program = word.trim_matches('"');
         let base = base_name(program);
         if let Some(reason) = denied(&base) {
+            if harmless_use(&base, &String::from_utf8_lossy(&command[*at..])) {
+                continue;
+            }
             return Some((*at, reason));
         }
         if !WINE_TOOLS.contains(&base.as_str()) && outside_root(program) {
@@ -562,8 +645,8 @@ fn command_spans(line: &[u8], wanted: impl Fn(&str) -> bool) -> Vec<(usize, usiz
 /// launcher's copy or one in the game's folder — replaced by
 /// `"%NLL_FNR%"` (`launch::fnr`), its arguments as they were. `None` when
 /// the line calls none.
-fn swap_fnr(line: &[u8]) -> Option<Vec<u8>> {
-    swap(line, "fnr", super::fnr::VAR)
+fn swap_fnr(line: &[u8], mark: &str) -> Option<Vec<u8>> {
+    swap(line, "fnr", super::fnr::VAR, mark)
 }
 
 /// The same for `unrar.exe` and `"%NLL_UNRAR%"` (`launch::unrar`), also
@@ -571,8 +654,8 @@ fn swap_fnr(line: &[u8]) -> Option<Vec<u8>> {
 /// …`, Company of Heroes' extra maps): Wine's start cannot open a host
 /// script, so such a line calls it directly and waits for it, as `/wait`
 /// asked anyway.
-fn swap_unrar(line: &[u8]) -> Option<Vec<u8>> {
-    swap(line, "unrar", super::unrar::VAR).or_else(|| unrar_through_start(line))
+fn swap_unrar(line: &[u8], mark: &str) -> Option<Vec<u8>> {
+    swap(line, "unrar", super::unrar::VAR, mark).or_else(|| unrar_through_start(line, mark))
 }
 
 /// `line` without the `-4` of each `ping` it runs (Cossacks 3 finds its
@@ -626,7 +709,7 @@ fn ping_without_ipv4(line: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// A line that is nothing but `start … unrar.exe …`, as a direct call.
-fn unrar_through_start(line: &[u8]) -> Option<Vec<u8>> {
+fn unrar_through_start(line: &[u8], mark: &str) -> Option<Vec<u8>> {
     let text: String = line.iter().map(|&b| b as char).collect();
     let content = text.trim_end_matches(['\r', '\n']);
     let statement = content.trim_start().trim_start_matches('@').trim_start();
@@ -651,33 +734,84 @@ fn unrar_through_start(line: &[u8]) -> Option<Vec<u8>> {
     {
         return None;
     }
-    let (at, word, _) = words
-        .iter()
-        .skip(1)
-        .find(|(_, word, _)| word.trim_matches('"') == program.trim_matches('"'))?;
+    let (at, word) = start_program_word(statement)?;
+    if word.trim_matches('"') != program.trim_matches('"') {
+        return None;
+    }
     let indent = &content[..content.len() - content.trim_start().len()];
     let eol = &text[content.len()..];
     let rest = &statement[at + word.len()..];
-    let out = format!("{indent}\"%{}%\"{rest}{eol}", super::unrar::VAR);
+    let id = format!("{mark}u0");
+    let out = format!(
+        "{indent}\"%{}%\" --nll-mark {id}{rest} & call \"%{}%\" {id}{eol}",
+        super::unrar::VAR,
+        super::host_wait::VAR
+    );
     Some(out.chars().map(|c| c as u8).collect())
 }
 
 /// `line` with every program named `name` where a command begins replaced
-/// by the quoted variable `var`. `None` when the line calls none.
-fn swap(line: &[u8], name: &str, var: &str) -> Option<Vec<u8>> {
+/// by the quoted variable `var` and a mark, and a `call` of the wait script
+/// chained behind the command (`launch::host_wait`: Wine does not wait for
+/// a host program). `mark` makes the marks of this line unique. `None` when
+/// the line calls none.
+fn swap(line: &[u8], name: &str, var: &str, mark: &str) -> Option<Vec<u8>> {
     let spans = command_spans(line, |found| found == name);
     if spans.is_empty() {
         return None;
     }
-    let mut out = Vec::with_capacity(line.len() + 16);
+    let parentheses = block_parentheses(line);
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for (n, (from, to)) in spans.into_iter().enumerate() {
+        let id = format!("{mark}{}{n}", &name[..1]);
+        edits.push((from, to, format!("\"%{var}%\" --nll-mark {id}")));
+        let (end, operator) = command_end(line, to, &parentheses);
+        let wait = format!("call \"%{}%\" {id}", super::host_wait::VAR);
+        let text = if operator {
+            format!("& {wait} ")
+        } else {
+            format!(" & {wait}")
+        };
+        edits.push((end, end, text));
+    }
+    edits.sort_by_key(|(from, ..)| *from);
+    let mut out = Vec::with_capacity(line.len() + 64);
     let mut at = 0;
-    for (from, to) in spans {
+    for (from, to, text) in edits {
         out.extend_from_slice(&line[at..from]);
-        out.extend_from_slice(format!("\"%{var}%\"").as_bytes());
+        out.extend_from_slice(text.as_bytes());
         at = to;
     }
     out.extend_from_slice(&line[at..]);
     Some(out)
+}
+
+/// Where the command whose program ends at `from` ends: before the next
+/// `&` or `|` outside quotes (not one of a redirection's `2>&1`, not one
+/// escaped with `^`) — `true` then — or before the block's next
+/// parenthesis or the line's end (`false`).
+fn command_end(line: &[u8], from: usize, parentheses: &[usize]) -> (usize, bool) {
+    let mut end = parentheses
+        .iter()
+        .copied()
+        .find(|at| *at >= from)
+        .unwrap_or(line.len());
+    while end > from && matches!(line[end - 1], b'\r' | b'\n') {
+        end -= 1;
+    }
+    let mut quoted = false;
+    let mut at = from;
+    while at < end {
+        match line[at] {
+            b'"' => quoted = !quoted,
+            b'^' if !quoted => at += 1,
+            b'&' if !quoted && at > 0 && matches!(line[at - 1], b'>' | b'<') => {}
+            b'&' | b'|' if !quoted => return (at, true),
+            _ => {}
+        }
+        at += 1;
+    }
+    (end, false)
 }
 
 /// A line that is nothing but `robocopy <from> <to> [options]` as the same
@@ -796,16 +930,71 @@ fn split_redirections(body: &str) -> (&str, String) {
     (body[..end].trim_end(), redirect)
 }
 
+/// In `statement` (beginning with `start`), the word that is the program:
+/// past start's switches, the folder of `/d` and a quoted window title —
+/// not merely the first word that reads like it (`start "game.exe"
+/// game.exe`).
+fn start_program_word(statement: &str) -> Option<(usize, String)> {
+    let words = command_words(statement.as_bytes());
+    let mut title = super::windows::after_start_is_quoted(statement);
+    let mut rest = words.into_iter().skip(1);
+    while let Some((at, word, _)) = rest.next() {
+        if word.eq_ignore_ascii_case("/d") {
+            rest.next();
+        } else if word.starts_with('/') {
+        } else if title {
+            title = false;
+        } else {
+            return Some((at, word));
+        }
+    }
+    None
+}
+
+/// In a line that is nothing but `start [switches] ["title"] program …`,
+/// the program's name (as [`base_name`] has it) and where its word ends.
+fn program_through_start(line: &[u8]) -> Option<(String, usize)> {
+    let text: String = line.iter().map(|&b| b as char).collect();
+    let content = text.trim_end_matches(['\r', '\n']);
+    let lead = content.len()
+        - content
+            .trim_start()
+            .trim_start_matches('@')
+            .trim_start()
+            .len();
+    let statement = &content[lead..];
+    if !block_parentheses(statement.as_bytes()).is_empty()
+        || super::windows::until_the_next_command(statement).len() != statement.len()
+    {
+        return None;
+    }
+    let words = command_words(statement.as_bytes());
+    if !words.first()?.1.eq_ignore_ascii_case("start") {
+        return None;
+    }
+    let (at, word) = start_program_word(statement)?;
+    Some((base_name(word.trim_matches('"')), lead + at + word.len()))
+}
+
 /// `line` with a profile's arguments right after each program they belong
 /// to (`wanted`: base name and the arguments as one string), where it
 /// begins a command; the line's own arguments follow them. `None` when the
 /// line calls none of them; `found` notes which entries matched.
 fn add_arguments(line: &[u8], wanted: &[(String, String)], found: &mut [bool]) -> Option<Vec<u8>> {
     let mut inserts = Vec::new();
+    let started = program_through_start(line);
     for ((name, args), seen) in wanted.iter().zip(found.iter_mut()) {
         for (_, to) in command_spans(line, |base| base == name) {
             inserts.push((to, args.as_str()));
             *seen = true;
+        }
+        // `start "Lobby" "client\supraball-client.exe"`: the program that
+        // start opens.
+        if let Some((base, to)) = &started {
+            if base == name {
+                inserts.push((*to, args.as_str()));
+                *seen = true;
+            }
         }
     }
     if inserts.is_empty() {
@@ -941,7 +1130,17 @@ fn neutralize(content: &[u8], parentheses: &[usize]) -> Option<(Vec<u8>, Reason)
 /// command becomes `ver>nul` ([`neutralize`]), so no `if` or `for` block
 /// loses its shape and no command chained to it (`cd local && …`) is lost.
 pub fn filter(script: &[u8]) -> Filtered {
+    filter_for(script, b"")
+}
+
+/// [`filter`], with `salt` (the game's folder) in the marks of host
+/// programs (`launch::host_wait`): two games' scripts may be the same and
+/// run at the same time.
+pub fn filter_for(script: &[u8], salt: &[u8]) -> Filtered {
     let script = script.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(script);
+    let fingerprint = salt.iter().chain(script).fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ u32::from(*b)).wrapping_mul(0x0100_0193)
+    });
     let mut bytes = Vec::with_capacity(script.len());
     let mut skipped = Vec::new();
     for (index, raw) in script.split_inclusive(|b| *b == b'\n').enumerate() {
@@ -953,7 +1152,8 @@ pub fn filter(script: &[u8]) -> Filtered {
             bytes.extend_from_slice(raw);
             continue;
         }
-        let swapped = swap_fnr(raw);
+        let mark = format!("{fingerprint:08x}l{}", index + 1);
+        let swapped = swap_fnr(raw, &mark);
         let raw = swapped.as_deref().unwrap_or(raw);
         if swapped.is_some() {
             skipped.push(Skipped {
@@ -963,7 +1163,7 @@ pub fn filter(script: &[u8]) -> Filtered {
                 inline: true,
             });
         }
-        let unpacked = swap_unrar(raw);
+        let unpacked = swap_unrar(raw, &mark);
         let raw = unpacked.as_deref().unwrap_or(raw);
         if unpacked.is_some() {
             skipped.push(Skipped {
@@ -1119,6 +1319,8 @@ pub fn prepare(
         },
         Script::Setup | Script::Start | Script::Settings | Script::Server => text,
     };
+    let salt = paths.share_dir.to_string_lossy();
+    let filter = |text: &[u8]| filter_for(text, salt.as_bytes());
     let filtered = match script {
         // Only a whole start script starts the game with what it asked:
         // a preparation's variables end with its own cmd.
@@ -1267,6 +1469,55 @@ mod tests {
     }
 
     #[test]
+    fn arguments_reach_a_program_that_start_opens() {
+        let filtered = filter(
+            b"cd local\r\nstart \"Supraball Lobby Client\" \"client\\supraball-client.exe\"\r\n",
+        );
+        let out = with_arguments(
+            filtered,
+            &[args("supraball-client.exe", &["--disable-gpu"])],
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.bytes),
+            "cd local\r\nstart \"Supraball Lobby Client\" \"client\\supraball-client.exe\" --disable-gpu\r\n"
+        );
+        assert!(out
+            .skipped
+            .iter()
+            .all(|s| s.reason != Reason::ArgumentsUnused)); // A window title that reads like the program is the title.
+        let filtered = filter(b"start \"game.exe\" game.exe\r\n");
+        let out = with_arguments(filtered, &[args("game.exe", &["-x"])]);
+        assert_eq!(
+            String::from_utf8_lossy(&out.bytes),
+            "start \"game.exe\" game.exe -x\r\n"
+        );
+    }
+
+    #[test]
+    fn a_taskkill_of_the_games_own_program_and_a_plain_wait_run() {
+        let script = b"start \"\" \"!TRAINING_EXE!\" -windowed\r\ntimeout /t 10 /nobreak >nul\r\ntaskkill /f /im UDK.exe >nul 2>&1\r\ntaskkill /f /im \"Steam.exe\"\r\ntimeout 5\r\ntaskkill /f /fi \"imagename eq x.exe\"\r\ntaskkill /im *.exe\r\nif x==x (taskkill /im Game.exe) else (taskkill /im explorer.exe)\r\n";
+        let filtered = filter(script);
+        let out = String::from_utf8_lossy(&filtered.bytes);
+        let lines: Vec<&str> = out.split("\r\n").collect();
+        assert_eq!(lines[1], "timeout /t 10 /nobreak >nul");
+        assert_eq!(lines[2], "taskkill /f /im UDK.exe >nul 2>&1");
+        assert!(lines[3].starts_with("rem "), "{}", lines[3]);
+        assert!(lines[4].starts_with("rem "), "{}", lines[4]);
+        assert!(lines[5].starts_with("rem "), "{}", lines[5]);
+        assert!(lines[6].starts_with("rem "), "{}", lines[6]);
+        assert_eq!(lines[7], "if x==x (taskkill /im Game.exe) else (ver>nul )");
+        // A redirection glued to the name, an endless or long wait.
+        for refused in [
+            "taskkill /f /im steam.exe>nul 2>&1",
+            "timeout /t -1 /nobreak",
+            "timeout /t 600 /nobreak",
+        ] {
+            let out = text(&filter(format!("{refused}\r\n").as_bytes()));
+            assert!(out.starts_with("rem "), "{out}");
+        }
+    }
+
+    #[test]
     fn ping_loses_the_switch_wine_does_not_know() {
         let filtered = filter(
             b"ping %masterserver% -n 1 -4 | find /i \"TTL=\" >nul\r\necho -4\r\ncd x & ping -4 a & echo -4\r\nif x==y (ping a -4) else (echo -4 done)\r\n",
@@ -1380,6 +1631,57 @@ mod tests {
         String::from_utf8(filtered.bytes.clone()).unwrap()
     }
 
+    /// The filtered script without the marks and waits of host programs
+    /// (`launch::host_wait`), for comparing what runs.
+    fn unmarked(filtered: &Filtered) -> String {
+        let mut out = String::new();
+        for line in text(filtered).split_inclusive('\n') {
+            let mut line = line.to_string();
+            while let Some(at) = line.find(" --nll-mark ") {
+                let end = line[at + 12..]
+                    .find(' ')
+                    .map_or(line.len(), |e| at + 12 + e);
+                line.replace_range(at..end, "");
+            }
+            while let Some(at) = line.find(" & call \"%NLL_WAIT%\" ") {
+                let end = line[at + 22..]
+                    .find([' ', '\r', '\n'])
+                    .map_or(line.len(), |e| at + 22 + e);
+                line.replace_range(at..end, "");
+            }
+            while let Some(at) = line.find("& call \"%NLL_WAIT%\" ") {
+                let end = line[at + 21..]
+                    .find(' ')
+                    .map_or(line.len(), |e| at + 21 + e + 1);
+                line.replace_range(at..end, "");
+            }
+            out.push_str(&line);
+        }
+        out
+    }
+
+    #[test]
+    fn a_host_program_is_waited_for() {
+        let script = b"\"fnr.exe\" --cl --find a --replace b >nul 2>&1 & echo next\r\nif x==x (fnr --find c --replace d)\r\n";
+        let out = text(&filter(script));
+        let lines: Vec<&str> = out.split("\r\n").collect();
+        let id = lines[0].split(' ').nth(2).unwrap().to_string();
+        assert_eq!(
+            lines[0],
+            format!("\"%NLL_FNR%\" --nll-mark {id} --cl --find a --replace b >nul 2>&1 & call \"%NLL_WAIT%\" {id} & echo next")
+        );
+        let id = lines[1].split(' ').nth(4).unwrap().to_string();
+        assert_eq!(
+            lines[1],
+            format!("if x==x (\"%NLL_FNR%\" --nll-mark {id} --find c --replace d & call \"%NLL_WAIT%\" {id})")
+        );
+        // Another script, other marks.
+        let other = text(&filter(
+            b"rem x\r\n\"fnr.exe\" --cl --find a --replace b >nul 2>&1 & echo next\r\n",
+        ));
+        assert!(!other.contains(lines[0].split(' ').nth(2).unwrap()));
+    }
+
     #[test]
     fn registry_keys_paths_and_the_packages_own_helpers_run() {
         // The shapes of ETI's setup scripts, with made-up values.
@@ -1422,14 +1724,14 @@ mod tests {
     fn what_a_prefix_has_no_use_for_becomes_a_remark() {
         let script = "cd /d \"%~dp0\"\r\n\
             netsh advfirewall firewall add rule name=\"demo\" dir=in action=allow program=\"%~dp0local\\demo.exe\"\r\n\
-            taskkill /f /im \"Demo.exe\"\r\n\
+            taskkill /f /im \"steam.exe\"\r\n\
             timeout 5\r\n\
             @pause\r\n\
             \"%programfiles%\\eti\\lan launcher\\unrar.exe\" x -o -y \"demo_profile.eti\" %demopath%\r\n\
             cd local && C:\\Tools\\patch.exe\r\n\
             reg add \"HKCU\\Software\\Demo\" /v Done /d 1 /f\r\n\
             if exist \"%~dp0x\" \"%programfiles%\\eti\\lan launcher\\fnr.exe\" --x\r\n\
-            if \"%a%\"==\"b\" taskkill /im x.exe\r\n\
+            if \"%a%\"==\"b\" taskkill /im steam.exe\r\n\
             if exist x (echo ok) else pause\r\n";
         let filtered = filter(script.as_bytes());
         let reasons: Vec<(usize, &Reason)> = filtered
@@ -1454,7 +1756,7 @@ mod tests {
                 (11, &Reason::WaitsForKey),
             ]
         );
-        let out = text(&filtered);
+        let out = unmarked(&filtered);
         let lines: Vec<&str> = out.split("\r\n").collect();
         assert_eq!(lines[0], "cd /d \"%~dp0\"");
         assert!(lines[1].starts_with("rem [NextGen LAN Launcher] skipped, Windows firewall: netsh"));
@@ -1472,7 +1774,7 @@ mod tests {
             b"start /wait \"LAN Launcher Update: %game_id%\" \"%programfiles%\\eti\\lan launcher\\unrar.exe\" x -o -y \"%game_path%\\coh_maps.eti\" %cohpath%\r\n",
         );
         assert_eq!(
-            text(&filtered),
+            unmarked(&filtered),
             "\"%NLL_UNRAR%\" x -o -y \"%game_path%\\coh_maps.eti\" %cohpath%\r\n"
         );
         assert_eq!(filtered.skipped[0].reason, Reason::Unpack);
@@ -1510,18 +1812,18 @@ mod tests {
             ) else ( pause\r\n\
             timeout 5 )\r\n\
             if exist z (for %%a in (1) do pause\r\n\
-            )else(taskkill /f /im game.exe\r\n\
+            )else(taskkill /f /im steam.exe\r\n\
             )\r\n\
             for /f \"tokens=2\" %%a in ('tasklist ^| findstr /i game.exe') do taskkill /f /pid %%a\r\n\
             if exist x (echo ok>log.txt) else pause\r\n\
             if exist y (start \"Setup\" /wait \"%programfiles%\\eti\\lan launcher\\unrar.exe\" x a.eti)\r\n\
-            if exist x (taskkill /im a.exe & reg add HKCU\\K /v k /d 1 /f)\r\n\
+            if exist x (taskkill /im steam.exe & reg add HKCU\\K /v k /d 1 /f)\r\n\
             if exist y (cd local & start \"\" \"%programfiles%\\eti\\x.exe\")\r\n\
             if exist x (\r\n\
             echo x\r\n\
-            ) else if exist y taskkill /im a.exe\r\n\
+            ) else if exist y taskkill /im steam.exe\r\n\
             %ProgramFiles(x86)%\\eti\\lan launcher\\unrar.exe x demo.eti %p%\r\n\
-            if exist x (taskkill /f /im game.exe >nul 2>&1)\r\n";
+            if exist x (taskkill /f /im steam.exe >nul 2>&1)\r\n";
         let filtered = filter(script.as_bytes());
         let summary: Vec<(usize, bool)> = filtered
             .skipped
@@ -1592,7 +1894,7 @@ mod tests {
             cd local && fnr --cl --find a --replace b\r\n\
             echo fnr.exe is a tool\r\n";
         let filtered = filter(script.as_bytes());
-        let out = text(&filtered);
+        let out = unmarked(&filtered);
         let lines: Vec<&str> = out.split("\r\n").collect();
         assert_eq!(
             lines[1],
@@ -1769,7 +2071,7 @@ mod tests {
     fn copy_has_fnr(paths: &crate::paths::GamePaths) -> bool {
         std::fs::read_to_string(paths.share_dir.join(".nll-prep.cmd"))
             .unwrap()
-            .contains("\"%NLL_FNR%\" --cl")
+            .contains("\"%NLL_FNR%\" --nll-mark")
     }
 
     #[test]

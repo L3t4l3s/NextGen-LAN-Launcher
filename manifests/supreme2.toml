@@ -1,0 +1,21 @@
+schema = 1
+id = "supreme2"
+title = "Supreme Commander 2"
+revisions = ["20181211"]
+source = "NextGen LAN Launcher: setup checked with Proton 11 (2026-10); the game ends right after starting on a VM without GPU, unchecked on real hardware"
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# "Supreme Commander 2.exe", SmartSteamEmu's loader, which starts
+# SupremeCommander2.exe. Its setup opens gamedata\language.exe, a .NET
+# language selector that stops under Wine with "Illegal byte sequence"
+# (its cfg.ini is Windows-1252) and waits on that dialog.
+exe = ""
+args = []
+
+[setup]
+notes.de = "Bei der Installation meldet der Sprachwähler des Pakets unter Linux einen Fehler; „Quit“ klicken, sonst wartet die Einrichtung bis zu 30 Minuten."
+notes.en = "During installation the package's language selector reports an error on Linux; click \"Quit\", or the setup waits up to 30 minutes."

@@ -9,6 +9,7 @@
 
 pub mod elevate;
 pub mod fnr;
+pub mod host_wait;
 pub mod proton;
 pub mod setup_script;
 pub mod unix;

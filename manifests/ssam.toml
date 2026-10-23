@@ -1,0 +1,16 @@
+schema = 1
+id = "ssam"
+title = "Serious Sam: The Second Encounter"
+revisions = ["20161206"]
+source = "NextGen LAN Launcher: start script and the main menu checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# Bin\SeriousSam.exe (1.07, English). The player's name lives in the
+# binary Players\Player0.plr and is set in the game.
+exe = ""
+args = []
