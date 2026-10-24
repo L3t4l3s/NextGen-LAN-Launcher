@@ -1,0 +1,21 @@
+schema = 1
+id = "trackmania"
+title = "Trackmania Nations Forever"
+revisions = ["20190102"]
+source = "NextGen LAN Launcher: setup, start script (fnr writes the language) checked with Proton 11 (2026-10); the race itself unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd writes the
+# language into Nadeo.ini with fnr and starts TmForever.exe /silent, which
+# asks for a registered player key. The setup opens TmForeverLauncher.exe
+# for that and waits until it is closed.
+exe = ""
+args = []
+
+[setup]
+notes.de = "Bei der Installation fragt der Trackmania-Launcher nach dem Player-Key; er steht in key.txt im Spielordner (local). Bis das Fenster geschlossen ist, wartet die Einrichtung."
+notes.en = "During installation the Trackmania launcher asks for the player key; it is in key.txt in the game folder (local). The setup waits until that window is closed."

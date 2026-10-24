@@ -1,0 +1,17 @@
+schema = 1
+id = "vegas2"
+title = "Tom Clancy's Rainbow Six Vegas 2"
+revisions = ["20251103"]
+source = "NextGen LAN Launcher: start script (core count prompt, language in the registry and PCKellerEngine.ini), German title and character creation checked with Proton 11 (2026-10); multiplayer and the player name unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd sets the language
+# and starts R6Vegas2AffinityFPSfixLauncher.exe, which asks for a core count
+# in its console and starts the game through TeknoR6Vegas2.exe. Its
+# emulator keeps no name file the launcher could fill.
+exe = ""
+args = []

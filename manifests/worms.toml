@@ -1,0 +1,23 @@
+schema = 1
+id = "worms"
+title = "Worms MEGA-Pack"
+revisions = ["20170121"]
+source = "NextGen LAN Launcher: start script menu, Armageddon, Reloaded, Revolution and Ultimate Mayhem started with Proton 11 (2026-10); World Party Remastered crashed on a VM without GPU (DXVK and WineD3D), unchecked on real hardware; multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd asks which of the
+# five games to start, each through its SmartSteamLoader; the launcher sets
+# SmartSteamEmu's PersonaName and Language in every folder.
+# Armageddon asks at its first start under Wine to enable its Wine tweaks and
+# the Windows 8 compatibility flags, then ends and wants to be started again
+# (Options\WineCompatibilitySuggested and Windows8CompatibilitySuggested
+# under HKCU\Software\Team17SoftwareLTD\WormsArmageddon; not preset, the
+# Windows 8 one would take the flags from Windows players).
+# Ultimate Mayhem asks for its language at the first start and keeps it in
+# SmartSteamEmu's binary SaveGame.xom.
+exe = ""
+args = []

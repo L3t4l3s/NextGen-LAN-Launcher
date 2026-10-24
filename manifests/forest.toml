@@ -1,0 +1,15 @@
+schema = 1
+id = "forest"
+title = "The Forest"
+revisions = ["20210309"]
+source = "NextGen LAN Launcher: start script, Unity's settings dialog, main menu and Goldberg's name checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# TheForest.exe from local/; the launcher sets Goldberg's name and language.
+exe = ""
+args = []

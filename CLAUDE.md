@@ -370,6 +370,12 @@ zusätzlich wie unter „Windows-Code hier prüfen“ beschrieben, sonst bricht 
   `General/Audio/Video/ServerSettings/mapList.con` daneben, leere reichen; per Halbierung
   ermittelt). Steam-Emulatoren werden zusätzlich unter `<Ordner>/Plugins` (6 Ebenen) gesucht:
   Battalion 1944 hat Goldberg in `Battalion/Plugins/OnlineSubsystemSteam/…/Win64`.
+  `bom = true` schreibt die Datei immer als UTF-8 mit BOM (auch eine vorhandene ohne): World in
+  Conflict verwirft `Player Profile.txt` ohne BOM und schreibt seine Vorgaben darüber, mit BOM
+  reichen die zwei Namenszeilen. `quote = false` schreibt den Wert wörtlich (WiC liest bis zum
+  Zeilenende); `escape_spaces = true` macht aus Leerzeichen `\ ` wie Armagetron. Beim Nachstellen eines
+  Spiels mit Steam-Emulator nie die Spiel-EXE ohne den Loader starten: Valves echte
+  `steam_api.dll` startet dann den Steam-Client des Benutzers (auf dem Testbildschirm).
 - **Profile der SAGE-Spiele (`sage_profiles = true`):** Red Alert 3 führt seine Profile in
   `<AppData>/Red Alert 3/Profiles/directory.ini` (Kane's Wrath legt denselben Ordner an, sein
   Format ist ungeprüft, C&C 3 ganz); jedes Byte des UTF-16LE-Texts steht

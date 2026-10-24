@@ -21,6 +21,7 @@ folder = "appdata"
 file = "Armagetron/var/user.cfg"
 line = "PLAYER_1"
 quote = false
+escape_spaces = true
 value = "%player%"
 
 [[settings]]
@@ -28,7 +29,8 @@ folder = "appdata"
 file = "Armagetron/var/user.cfg"
 line = "LANGUAGE_FIRST"
 quote = false
-value = { de = 'Deutsch', en = 'British\ English', fr = 'Francais' }
+escape_spaces = true
+value = { de = 'Deutsch', en = 'British English', fr = 'Francais' }
 
 [[settings]]
 folder = "appdata"

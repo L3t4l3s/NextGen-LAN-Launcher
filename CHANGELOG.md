@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.7.21
+
+- Einstellungen können eine Datei als UTF-8 mit Byte-Order-Mark schreiben (`bom = true`). World in
+  Conflict verwirft ein `Player Profile.txt` ohne und schreibt seine Vorgaben darüber; der Name
+  steht so schon beim ersten Start im LAN-Bildschirm.
+- Werte ohne Anführungszeichen (`quote = false`) werden wörtlich geschrieben; die Schreibweise
+  `\ ` für Leerzeichen gilt nur noch mit `escape_spaces = true` (Armagetron). Armagetron bekam auf
+  Englisch bisher `British\\ English` statt `British\ English`.
+- Neue Startprofile: The Forest, Rainbow Six Vegas 2, Trackmania Nations Forever
+  (Hinweis auf den Spielerschlüssel), Tricky Towers, Team Fortress 2, Unreal Tournament (Name und
+  Sprache), Viking Squad, World in Conflict (Name), Worms MEGA-Pack; Warcraft III auch für das
+  Paket mit Version 1.30.4.
+
 ## 0.7.20
 
 - macOS/Linux: Startskripte warten jetzt auf `fnr.exe` und `unrar.exe` des alten ETI-Launchers.

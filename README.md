@@ -253,6 +253,18 @@ again.
 - **Supreme Commander 2 — check on real hardware:** the setup's `language.exe` (a .NET language
   selector) stops under Wine-Mono with "Illegal byte sequence" and waits on its dialog; the game
   itself ends right after starting on the VM without GPU (also with WineD3D).
+- **Round T–Z on the VM — check on real hardware:** Torchlight II draws only its menu's
+  background (DXVK: ends at once; WineD3D: "Starting Up" stays), Worms World Party Remastered
+  ends with an access violation in `w2.exe` right after the Steam emulator's stats (DXVK and
+  WineD3D, any language); Rainbow Six Vegas 2 (General protection fault in ReShade's `d3d9.dll`)
+  and Tricky Towers and World in Conflict run with `PROTON_USE_WINED3D=1` only, the 32-bit DXVK
+  pattern of round C. Rainbow Six Siege (86 GB archive, 178 GB with the unpacked files) did not
+  fit the VM and is untested.
+- **Warcraft III 1.30.4: setup without keys once — not reproduced:** with 0.7.8 the setup ran in a
+  fresh prefix (exit code 0) but left neither the keys (`wc3_keys.exe`, a RAR SFX into
+  `C:\ProgramData\Blizzard Entertainment\Warcraft III`) nor `Documents\Warcraft III`, and the game
+  asked for keys. Run again in the same prefix and in a new one, the same script did both. If a
+  tester sees the key prompt, "Setup wiederholen" fixes it; the log of that run may show why.
 - **Supraball — check at the LAN:** lobby client and setup run under Proton 11; the lobby client
   gets `--disable-gpu` (it drew no window without, on the VM; unchecked whether real hardware
   needs it). The master server and matches are untested.

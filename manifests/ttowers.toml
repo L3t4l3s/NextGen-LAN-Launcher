@@ -1,0 +1,15 @@
+schema = 1
+id = "ttowers"
+title = "Tricky Towers"
+revisions = ["20190317"]
+source = "NextGen LAN Launcher: start script, German main menu and Goldberg's name and language checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# TrickyTowers.exe from local/; the launcher sets Goldberg's name and language.
+exe = ""
+args = []

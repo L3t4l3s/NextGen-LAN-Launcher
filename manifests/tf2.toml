@@ -1,0 +1,15 @@
+schema = 1
+id = "tf2"
+title = "Team Fortress 2"
+revisions = ["20161023"]
+source = "NextGen LAN Launcher: start script, the German loading screen and SmartSteamEmu's name checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# hl2.exe through SmartSteamEmu; the launcher sets its PersonaName and Language.
+exe = ""
+args = []

@@ -1,0 +1,28 @@
+schema = 1
+id = "ut99"
+title = "Unreal Tournament"
+revisions = ["20250304"]
+source = "NextGen LAN Launcher: start script, language and player name checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# System/UnrealTournament.exe (patch 469 with SystemLocalized).
+exe = ""
+args = []
+
+# The package ships Player and the international texts.
+[[settings]]
+file = "System/User.ini"
+section = "DefaultPlayer"
+key = "Name"
+value = "%player%"
+
+[[settings]]
+file = "System/UnrealTournament.ini"
+section = "Engine.Engine"
+key = "Language"
+value = { de = "det", en = "int", fr = "frt" }

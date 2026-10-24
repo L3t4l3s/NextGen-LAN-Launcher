@@ -1,0 +1,15 @@
+schema = 1
+id = "viking"
+title = "Viking Squad"
+revisions = ["20170304"]
+source = "NextGen LAN Launcher: start script, main menu (English) and SmartSteamEmu's name checked with Proton 11 (2026-10); multiplayer unchecked"
+script_start_checked = ["linux"]
+
+[tested_with]
+linux = ["Proton 11.0"]
+
+[launch]
+# No entry point of its own: the package's game_start.cmd starts
+# VikingSquad.exe through SmartSteamLoader; the launcher sets its PersonaName and Language.
+exe = ""
+args = []

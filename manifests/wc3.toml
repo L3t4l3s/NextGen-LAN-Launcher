@@ -1,8 +1,11 @@
 schema = 1
 id = "wc3"
 title = "Warcraft III: The Frozen Throne"
-revisions = ["20201021"]
-source = "macETI-LAN v0.6.1 docs (MIT) – window/OpenGL mode tested on Apple M2 Pro"
+revisions = ["20201021", "20260308"]
+source = "macETI-LAN v0.6.1 docs (MIT) – window/OpenGL mode tested on Apple M2 Pro; NextGen LAN Launcher: package 1.30.4 with setup (keys, profile), German Frozen Throne menu and the LAN name checked with Proton 11 (2026-10); multiplayer unchecked"
+
+[tested_with]
+linux = ["Proton 11.0"]
 
 [launch]
 exe = "Warcraft III.exe"
@@ -20,6 +23,8 @@ args = ["-window", "-opengl", "-frozenthrone"]
 [setup]
 # game_setup.cmd writes the CD keys (wc3_keys.exe), makes the profile in
 # Documents\Warcraft III and sets registry values; on Mac/Linux it runs in the prefix.
+# Opening the LAN screen the first time, 1.30 asks to enable Bonjour; yes
+# installs Blizzard's Bonjour service into the prefix (checked with Proton 11).
 
 # The name for LAN games, which Warcraft III otherwise asks for.
 [[settings]]

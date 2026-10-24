@@ -99,6 +99,11 @@ pub struct PlayerSetting {
     /// (`seta name "Bazzite"`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quote: Option<bool>,
+    /// With `quote = false`: a space in the value is written as `\ `, as
+    /// Armagetron writes `LANGUAGE_FIRST British\ English`. Without it the
+    /// value stands as it is (World in Conflict reads to the end of the line).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub escape_spaces: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub registry: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -127,6 +132,11 @@ pub struct PlayerSetting {
     /// `ServerSettings.con` and `mapList.con`, and fills empty ones itself.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub create_only: Option<bool>,
+    /// The file is written as UTF-8 with a byte order mark, whatever it held
+    /// before. World in Conflict throws away a `Player Profile.txt` without
+    /// one and writes its defaults over it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bom: Option<bool>,
     /// A key of OpenRA's MiniYAML settings, `Section.Key`: a top-level
     /// `Section:` and below it a tab-indented `Key: value`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -233,6 +243,7 @@ pub enum Kind<'a> {
         file: &'a str,
         line: &'a str,
         quoted: bool,
+        escaped: bool,
     },
     WholeFile {
         file: &'a str,
@@ -298,6 +309,15 @@ impl PlayerSetting {
         if self.folder.is_some_and(|f| f != Folder::Game) && self.file.is_none() {
             return Err("settings: folder is for files");
         }
+        if self.bom == Some(true)
+            && (self.json.is_some()
+                || self.yaml.is_some()
+                || self.xml.is_some()
+                || self.registry.is_some()
+                || self.sage_profiles.is_some())
+        {
+            return Err("settings: bom is for text files; JSON, YAML, XML and the registry have their own encoding");
+        }
         if let Some(path) = &self.yaml {
             let parts: Option<(&str, &str)> = path.split_once('.');
             let word =
@@ -335,6 +355,9 @@ impl PlayerSetting {
         }
         if self.quote.is_some() && self.line.is_none() {
             return Err("settings: quote is for config lines");
+        }
+        if self.escape_spaces.is_some() && self.quote != Some(false) {
+            return Err("settings: escape_spaces is for config lines with quote = false");
         }
         if let Some(tag) = &self.xml {
             let name = |n: &str| {
@@ -421,6 +444,7 @@ impl PlayerSetting {
                 file,
                 line,
                 quoted: self.quote.unwrap_or(true),
+                escaped: self.escape_spaces == Some(true),
             }),
             (Some(file), None, None, Some(key)) => Ok(Kind::Ini {
                 file,
@@ -696,7 +720,13 @@ pub fn apply(
             continue;
         }
         // JSON and OpenRA's MiniYAML are read as UTF-8, whatever was there.
-        let utf8 = matches!(kind, Kind::Json { .. } | Kind::Yaml { .. });
+        let utf8 = if matches!(kind, Kind::Json { .. } | Kind::Yaml { .. }) {
+            Utf8::Always
+        } else if setting.bom == Some(true) {
+            Utf8::WithBom
+        } else {
+            Utf8::AsFound
+        };
         let typed = setting.value_type.unwrap_or_default();
         done.push(if root == local {
             set_inside(local, path, &kind, &value, utf8, typed)
@@ -853,18 +883,35 @@ fn read(path: &Path) -> std::io::Result<Text> {
     })
 }
 
+/// How a file's encoding is chosen.
+#[derive(Clone, Copy, PartialEq)]
+enum Utf8 {
+    /// As [`read`] finds it.
+    AsFound,
+    /// UTF-8, whatever the file held before: its reader wants nothing else.
+    Always,
+    /// UTF-8 with a byte order mark, whatever the file held before.
+    WithBom,
+}
+
 /// Set `value` as `kind` says; `false` when the file already said it.
-/// `utf8` for a file whose reader wants UTF-8 whatever it held before.
 fn write(
     path: &Path,
     kind: &Kind<'_>,
     value: &str,
-    utf8: bool,
+    utf8: Utf8,
     typed: ValueType,
 ) -> std::io::Result<bool> {
     let mut old = read(path)?;
+    // A file that only lacks the mark is written all the same.
+    let with_bom = utf8 == Utf8::WithBom;
+    let had_bom = old.bom == b"\xEF\xBB\xBF";
+    if with_bom {
+        old.encoding = encoding_rs::UTF_8;
+        old.bom = b"\xEF\xBB\xBF";
+    }
     // XML without a byte order mark is UTF-8 unless it declares otherwise.
-    let utf8 = utf8
+    let utf8 = utf8 == Utf8::Always
         || matches!(kind, Kind::Xml { .. })
             && old.bom.is_empty()
             && xml_declared(&old.text).is_none_or(|e| e.eq_ignore_ascii_case("utf-8"));
@@ -878,7 +925,12 @@ fn write(
         Kind::SageProfiles { .. } => unreachable!("written by sage_profiles"),
         Kind::Ini { section, key, .. } => set_ini(&old.text, *section, key, value, old.eol),
         Kind::Yaml { section, key, .. } => set_yaml(&old.text, section, key, value, old.eol),
-        Kind::Line { line, quoted, .. } => set_line(&old.text, line, value, *quoted, old.eol),
+        Kind::Line {
+            line,
+            quoted,
+            escaped,
+            ..
+        } => set_line(&old.text, line, value, *quoted, *escaped, old.eol),
         Kind::Json { path: key, .. } => match set_json(&old.text, key, value, typed) {
             Some(Some(new)) => new,
             // The key holds that value already: the file stays as it is,
@@ -906,7 +958,7 @@ fn write(
         }
         Kind::Registry { .. } => return Ok(false),
     };
-    if new == old.text && path.exists() {
+    if new == old.text && path.exists() && (had_bom || !with_bom) {
         return Ok(false);
     }
     if let Some(dir) = path.parent() {
@@ -965,7 +1017,7 @@ fn set_inside(
     path: PathBuf,
     kind: &Kind<'_>,
     value: &str,
-    utf8: bool,
+    utf8: Utf8,
     typed: ValueType,
 ) -> Applied {
     if !stays_inside(local, &path) {
@@ -975,7 +1027,7 @@ fn set_inside(
 }
 
 /// [`write`], the outcome as the log wants it.
-fn set_at(path: PathBuf, kind: &Kind<'_>, value: &str, utf8: bool, typed: ValueType) -> Applied {
+fn set_at(path: PathBuf, kind: &Kind<'_>, value: &str, utf8: Utf8, typed: ValueType) -> Applied {
     match write(&path, kind, value, utf8, typed) {
         Ok(true) => Applied::Written(path),
         Ok(false) => Applied::Unchanged(path),
@@ -1334,7 +1386,7 @@ fn set_yaml(text: &str, section: &str, key: &str, value: &str, eol: &str) -> Str
 /// `line "value"` (`seta name "Player"`), or `line value` unquoted: the line
 /// starting with `line`,
 /// any spacing between its words, replaced, or added at the end.
-fn set_line(text: &str, line: &str, value: &str, quoted: bool, eol: &str) -> String {
+fn set_line(text: &str, line: &str, value: &str, quoted: bool, escaped: bool, eol: &str) -> String {
     let words: Vec<String> = line
         .split_whitespace()
         .map(str::to_ascii_lowercase)
@@ -1346,10 +1398,10 @@ fn set_line(text: &str, line: &str, value: &str, quoted: bool, eol: &str) -> Str
     let value = value.replace('"', "");
     let wanted = if quoted {
         format!("{line} \"{value}\"")
-    } else {
-        // A space in a bare value is escaped, as Armagetron writes
-        // `LANGUAGE_FIRST British\ English`.
+    } else if escaped {
         format!("{line} {}", value.replace(' ', "\\ "))
+    } else {
+        format!("{line} {value}")
     };
     let mut out: Vec<String> = text.lines().map(|l| l.to_string()).collect();
     match out.iter().position(|l| starts(l)) {
@@ -1577,7 +1629,7 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>, 
                     file.clone(),
                     &kind,
                     value,
-                    true,
+                    Utf8::Always,
                     ValueType::Text,
                 ));
             }
@@ -1598,7 +1650,7 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>, 
                     settings.join(name),
                     &kind,
                     value,
-                    true,
+                    Utf8::Always,
                     ValueType::Text,
                 ));
             }
@@ -1614,7 +1666,14 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>, 
             let path = local_save.join(name);
             if let (Some(value), true) = (value, path.is_file()) {
                 let kind = Kind::WholeFile { file: name };
-                goldberg.push(set_inside(local, path, &kind, value, true, ValueType::Text));
+                goldberg.push(set_inside(
+                    local,
+                    path,
+                    &kind,
+                    value,
+                    Utf8::Always,
+                    ValueType::Text,
+                ));
             }
         }
     }
@@ -1657,7 +1716,7 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>, 
                     ini.clone(),
                     &kind,
                     value,
-                    false,
+                    Utf8::AsFound,
                     ValueType::Text,
                 ));
             }
@@ -1708,7 +1767,7 @@ pub fn emulators(local: &Path, player: &Player) -> (Vec<Applied>, Vec<Applied>, 
                     json.clone(),
                     &kind,
                     value,
-                    true,
+                    Utf8::Always,
                     ValueType::Text,
                 ));
             }
@@ -2221,6 +2280,52 @@ mod tests {
     }
 
     #[test]
+    fn bom_writes_utf8_with_a_byte_order_mark_whatever_the_file_held() {
+        let tmp = tempfile::tempdir().unwrap();
+        let line = |l: &str, file: &str| {
+            setting(&format!(
+                "file = '{file}'\nline = '{l}'\nquote = false\nvalue = '%player%'\nbom = true"
+            ))
+        };
+        // Two settings in turn on a file the first one makes, as World in
+        // Conflict's profile has them; and an ANSI file that was there.
+        let settings = [
+            line("myLANPlayerName", "new.txt"),
+            line("myPlayerName", "new.txt"),
+            line("myLANPlayerName", "ansi.txt"),
+        ];
+        std::fs::write(tmp.path().join("ansi.txt"), b"myLANPlayerName Gr\xFCn\r\n").unwrap();
+        let (done, _) = apply(tmp.path(), None, &settings, &player());
+        assert!(done.iter().all(|d| matches!(d, Applied::Written(_))));
+        assert_eq!(
+            std::fs::read(tmp.path().join("new.txt")).unwrap(),
+            "\u{feff}myLANPlayerName Jürgen\r\nmyPlayerName Jürgen\r\n".as_bytes()
+        );
+        assert_eq!(
+            std::fs::read(tmp.path().join("ansi.txt")).unwrap(),
+            "\u{feff}myLANPlayerName Jürgen\r\n".as_bytes()
+        );
+        // The same value in a file without the mark still gets it.
+        std::fs::write(tmp.path().join("ansi.txt"), "myLANPlayerName Jürgen\r\n").unwrap();
+        let (again, _) = apply(tmp.path(), None, &settings[2..], &player());
+        assert!(matches!(again[0], Applied::Written(_)));
+        let (again, _) = apply(tmp.path(), None, &settings[2..], &player());
+        assert!(matches!(again[0], Applied::Unchanged(_)));
+        for refused in [
+            "file = 'a.json'\njson = 'a'\nvalue = 'x'\nbom = true",
+            "file = 'a.yaml'\nyaml = 'A.b'\nvalue = 'x'\nbom = true",
+            "registry = 'HKCU\\\\Software\\\\X'\nkey = 'k'\nvalue = 'x'\nbom = true",
+        ] {
+            assert!(setting(refused).kind().is_err(), "{refused}");
+        }
+        assert!(
+            setting("file = 'a.json'\njson = 'a'\nvalue = 'x'\nbom = false")
+                .kind()
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn a_config_line_and_a_registry_value() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join("baseq3")).unwrap();
@@ -2322,12 +2427,13 @@ mod tests {
                 "PLAYER_1",
                 "Bazzite",
                 false,
+                false,
                 "\n"
             ),
             "A 1\nPLAYER_1 Bazzite\n"
         );
         assert_eq!(
-            set_line("", "seta name", "B", true, "\n"),
+            set_line("", "seta name", "B", true, false, "\n"),
             "seta name \"B\"\n"
         );
         assert!(
@@ -2474,7 +2580,7 @@ mod tests {
             tag: "name",
             attribute: None,
         };
-        write(&plain, &kind, "Jürgen", false, ValueType::Text).unwrap();
+        write(&plain, &kind, "Jürgen", Utf8::AsFound, ValueType::Text).unwrap();
         assert_eq!(
             std::fs::read_to_string(&plain).unwrap(),
             "<p><name>Jürgen</name></p>"
@@ -2732,10 +2838,33 @@ mod tests {
     }
 
     #[test]
-    fn a_bare_value_escapes_its_spaces_and_an_empty_key_is_filled() {
+    fn a_bare_value_escapes_its_spaces_when_asked_and_an_empty_key_is_filled() {
         assert_eq!(
-            set_line("PLAYER_1\n", "PLAYER_1", "Max Mustermann", false, "\n"),
+            set_line(
+                "PLAYER_1\n",
+                "PLAYER_1",
+                "Max Mustermann",
+                false,
+                true,
+                "\n"
+            ),
             "PLAYER_1 Max\\ Mustermann\n"
+        );
+        assert_eq!(
+            set_line(
+                "myPlayerName Spieler\r\n",
+                "myPlayerName",
+                "Max Mustermann",
+                false,
+                false,
+                "\r\n"
+            ),
+            "myPlayerName Max Mustermann\r\n"
+        );
+        assert!(
+            setting("file = 'a.cfg'\nline = 'n'\nvalue = 'x'\nescape_spaces = true")
+                .kind()
+                .is_err()
         );
     }
 

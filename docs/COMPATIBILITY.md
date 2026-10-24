@@ -195,7 +195,9 @@ folder = "appdata"
 file = "Armagetron/var/user.cfg"
 line = "PLAYER_1"
 quote = false
+escape_spaces = true                   # a space as `\ ` (Armagetron); without it the value stands as it is
 value = "%player%"
+# bom = true                           # the file is written as UTF-8 with a byte order mark
 
 [[settings]]                           # the text of an XML element (the file must have it)
 folder = "documents"
@@ -222,7 +224,7 @@ game's prefix elsewhere (Proton's `steamuser`, Wine's login). A prefix that is n
 by an empty run in it first, so the first start already finds the file. JSON files are read and
 written as UTF-8; a file that is not JSON is left alone, a value that is already set leaves the file
 untouched, and a changed one rewrites it in key order (games read JSON by name). Files keep their encoding (a byte order mark says it, valid UTF-8 beyond ASCII says UTF-8, anything
-else is Windows' ANSI) and a key that is there keeps its spelling and spacing. Registry values go
+else is Windows' ANSI; `bom = true` writes the file as UTF-8 with a byte order mark whatever it held, which World in Conflict wants) and a key that is there keeps its spelling and spacing. Registry values go
 in with `reg add` on Windows (HKLM needs rights the launcher does not have) and through a batch
 in the game's prefix elsewhere, the values passed as variables so a name with an umlaut survives.
 Without a profile, two Steam emulators get the name and language anyway: Goldberg (a
