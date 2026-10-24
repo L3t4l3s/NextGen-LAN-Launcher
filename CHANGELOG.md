@@ -2,6 +2,75 @@
 
 ## Unreleased
 
+## 0.8.0 – Linux
+
+Der NextGen LAN Launcher läuft jetzt auch unter Linux: Spiele starten mit Proton samt ihren
+ETI-Skripten, Name und Sprache landen im Spiel, und ein serverloser LAN-Chat kommt dazu. Erstes
+Release, das neben Windows offiziell zum Testen unter Linux gedacht ist (AppImage). Die Spiele
+sind mit Proton 11 auf einer Bazzite-VM ohne GPU geprüft, Mehrspieler zwischen echten Rechnern
+noch nicht; was „ungetestet“ heißt, steht unten dabei.
+
+### Neue Funktionen
+
+- **Spiele unter Linux** — Proton wird in allen Steam-Bibliotheken gefunden (auch SD-Karte und
+  systemweite Installationen), dazu Wine und GE-Proton. Die Steam Linux Runtime wird genutzt,
+  wenn sie installiert ist (ungetestet).
+- **ETI-Skripte im Prefix** — `game_setup.cmd` und `game_start.cmd` laufen wie unter Windows:
+  CD-Keys, Registry, Auswahlmenüs, SmartSteamLoader. `fnr.exe` und `unrar.exe` ersetzt der
+  Launcher selbst, `robocopy`, `wmic` und `ping -4` werden für Wine umgeschrieben.
+- **87 Startprofile** — statt 8 in 0.2.0, die meisten unter Linux bis ins Menü geprüft. Wo ein
+  Spiel auf der VM nicht lief, sagt das Profil es.
+- **Startkonfiguration pro Spiel** — Startdatei, Argumente, Proton-/Wine-Version mit eigenem
+  Prefix je Version, `gamemoderun`/`gamescope`, DLL-Overrides, Umgebungsvariablen.
+  „Funktioniert – teilen“ schickt eine laufende Einstellung zurück.
+- **Windows-Komponenten** — DirectPlay, VC++-Laufzeiten, d3dx9, PhysX und .NET per winetricks,
+  nach Rückfrage vor dem Start. winetricks und cabextract sind dabei.
+- **Spielername und Sprache** — werden vor jedem Start gesetzt, auf allen Plattformen. Ohne eigenes
+  Profil für Goldberg, gbe_fork, SmartSteamEmu, RevEmu, RELOADED, ALI213, den
+  `steam_api.ini`-Emulator und Nemirtingas' Epic-Emulator. Eine eigene Spieler-ID pro Rechner gibt
+  es für Anno 1404 und Aliens: Fireteam Elite (ungetestet im Mehrspieler).
+- **LAN-Chat** — ohne Server: private Nachrichten (Ende-zu-Ende verschlüsselt), Themen, Umfragen,
+  Spielwahl, Reaktionen, verlinkte Spiele und eine Personenliste mit dem laufenden Spiel. Dazu
+  das optionale Archiv `nll-chat-relay`. Auf einer echten LAN ungetestet.
+- **LANPage als Reiter** — die Seite der Veranstaltung erscheint im Launcher. Mit der
+  erweiterten LANPage (`stats.php?online=1`) stehen auch Spieler mit ETI-Launcher in der
+  Personenliste.
+- **Werkzeuge** — Masterserver, LANshare und Sync-VM aus dem ETI-Katalog lassen sich
+  installieren und starten. „Server starten“ geht jetzt auch unter Linux.
+- **Battlelog-Links unter Linux** — `bf3lan://` und `bfbc2lan://` öffnen das Spiel im Prefix.
+  Gegen einen echten Masterserver ungetestet.
+- **Infobereich** — Schließen versteckt den Launcher nur, die Sync-Engine lädt weiter. Ein
+  zweiter Start holt das Fenster. Auf echtem Windows und dem Steam Deck ungetestet.
+- **Controller-Steuerung** — D-Pad bzw. Stick, A und B bedienen die Oberfläche.
+- **Kommandozeile** — `--install`, `--play`, `--uninstall`, `--server`, `--components` und
+  `--status` steuern den laufenden Launcher.
+- **Ein Fortschrittsbalken** — einer für die ganze Installation: Laden, Prüfen, Entpacken,
+  Einrichten.
+- **Problem melden** — pro Spiel und für den Launcher, mit Rechnerangaben und Protokollauszug.
+
+### Fehlerbehebungen
+
+- **AppImage friert nicht mehr ein** — GStreamer-Plugins sind jetzt dabei. Ohne sie froren
+  Oberfläche und Vorschauvideos auf dem Steam Deck ein.
+- **Farb-Emojis** — die Emoji-Auswahl im Chat bringt die Oberfläche unter Fedora/Bazzite nicht
+  mehr zum Absturz.
+- **Fedora Atomic / Bazzite** — fertige Downloads mit `/home` → `/var/home` werden geprüft und
+  entpackt.
+- **Downloads bei 99,9 %** — eine fremde Restdatei neben einem vollständigen Archiv hält die
+  Installation nicht mehr auf. Fehlt der Quelle ein Teil des Spiels oder das Archiv, sagt der
+  Launcher das, statt stehen zu bleiben.
+- **„Resilio ist beschäftigt“** — erscheint statt „Sync gestört“, wenn die Engine beim Schreiben
+  kurz nicht antwortet. Installieren klappt trotzdem.
+- **Kein falsches „Update verfügbar“** — es zählt die `version.ini` des Sync-Servers, nicht
+  der Katalog.
+- **Kein falsches „Festplatte voll“** — der Platzbedarf großer Spiele wird nicht mehr doppelt
+  gerechnet.
+- **Deinstallieren** — wird abgelehnt, solange noch ein Programm aus dem Spielordner läuft.
+- **Neue Version löst die alte ab (Linux)** — ein Start ersetzt die Version, die im Infobereich läuft.
+- **Fortschrittsbalken** — springt beim Wechsel der Schritte nicht mehr zurück.
+
+**Vollständiger Changelog**: https://github.com/L3t4l3s/NextGen-LAN-Launcher/compare/v0.2.0...v0.8.0
+
 ## 0.7.21
 
 - Einstellungen können eine Datei als UTF-8 mit Byte-Order-Mark schreiben (`bom = true`). World in
